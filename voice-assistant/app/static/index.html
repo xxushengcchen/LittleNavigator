@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>iRacing 小小领航员</title></head><body>
+<div id="ira-app" class="ira" lang="zh-Hans" data-sim="online" data-density="standard">
+<style>
+html,body {margin:0;width:100%;height:100%;background:#fff;}
+body.desktop-shell .ira {max-width:none;padding:0;margin:0;height:100vh;}
+body.desktop-shell .ira-window {height:100%;border:0;border-radius:0;box-shadow:none;display:flex;flex-direction:column;}
+body.desktop-shell .ira-body {flex:1;min-height:0;overflow:hidden;}
+body.desktop-shell .ira-nav {overflow-y:auto;}
+body.desktop-shell .ira-main {overflow-y:auto;}
+.window-controls {display:none;gap:3px;margin-left:8px;}
+body.desktop-shell .window-controls {display:flex;}
+.window-controls button {width:34px;height:30px;border:0;background:transparent;border-radius:5px;font-size:20px;cursor:pointer;}
+.window-controls button:hover {background:#e8edf4;}
+.window-controls button:last-child:hover {background:#e5484d;color:white;}
+.partner-logos {display:grid;grid-template-columns:1fr 1fr;gap:3px;width:100%;margin:10px 0;border-radius:6px;overflow:hidden;background:#1a1b1d;}
+.partner-logo {aspect-ratio:500/199;background-image:url('/static/partner-logos.png');background-size:200% 200%;background-repeat:no-repeat;}
+.partner-logo:nth-child(1){background-position:0 0;}
+.partner-logo:nth-child(2){background-position:100% 0;}
+.partner-logo:nth-child(3){background-position:0 100%;}
+.partner-logo:nth-child(4){background-position:100% 100%;}
+.ira {
+  --ira-bg: #FFFFFF;
+  --ira-panel: #FFFFFF;
+  --ira-panel-2: #F7FAFD;
+  --ira-well: #F1F6FC;
+  --ira-line: rgba(14, 27, 46, 0.08);
+  --ira-line-strong: rgba(14, 27, 46, 0.14);
+  --ira-fg: #0E1B2E;
+  --ira-fg2: #56657C;
+  --ira-dim: #8494A8;
+  --ira-accent: #1A6FE0;
+  --ira-green: #0E9F6E;
+  --ira-red: #6E7F97;
+  --ira-blue: #4A9BE8;
+  --ira-num-size: 48px;
+  --ira-radius: 12px;
+  --ira-card-pad: 14px 16px;
+  --ira-gap: 12px;
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ira-fg);
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 10px;
+}
+.ira, .ira *, .ira *::before, .ira *::after { box-sizing: border-box; }
+.ira p, .ira ul, .ira ol, .ira h2, .ira h3 { margin: 0; padding: 0; }
+.ira ul, .ira ol { list-style: none; }
+.ira button { font: inherit; color: inherit; }
+.ira [hidden] { display: none !important; }
+
+.ira-num, .ira code { font-family: "Roboto Mono", ui-monospace, "Cascadia Mono", monospace; }
+.ira-num { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+
+/* ---------- window shell ---------- */
+.ira-window {
+  background: var(--ira-bg);
+  border: 1px solid var(--ira-line-strong);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(14, 27, 46, 0.12);
+}
+.ira-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--ira-panel-2);
+  border-bottom: 1px solid var(--ira-line);
+}
+.ira-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: url("/static/avatar.png") center/cover no-repeat;
+  background-color: rgba(26, 111, 224, 0.14);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ira-accent);
+  flex: none;
+}
+.ira-brand { display: flex; flex-direction: column; line-height: 1.25; }
+.ira-brand strong { font-size: 14px; font-weight: 500; }
+.ira-brand span { font-size: 10.5px; color: var(--ira-dim); letter-spacing: 0.04em; }
+.ira-session {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ira-fg2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 6px;
+}
+.ira-topright { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.ira-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ira-line-strong);
+  background: rgba(14, 27, 46, 0.03);
+  font-size: 11.5px;
+  color: var(--ira-fg2);
+  white-space: nowrap;
+}
+.ira-chip .ira-num { font-size: 12px; color: var(--ira-fg); }
+.ira-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ira-dim); flex: none; }
+.ira-dot[data-state="on"], .ira-dot[data-state="speak"] { background: var(--ira-green); box-shadow: 0 0 8px rgba(14, 159, 110, 0.30); }
+.ira-dot[data-state="off"] { background: var(--ira-red); box-shadow: 0 0 8px rgba(110, 127, 151, 0.30); }
+.ira-dot[data-state="listen"] { background: var(--ira-blue); box-shadow: 0 0 8px rgba(74, 155, 232, 0.30); }
+.ira-dot[data-state="think"] { background: var(--ira-accent); box-shadow: 0 0 8px rgba(26, 111, 224, 0.30); }
+.ira-dot[data-state="idle"] { background: var(--ira-dim); }
+.ira-chip[data-state="off"] { color: var(--ira-red); border-color: rgba(110, 127, 151, 0.32); }
+.ira-chip[data-state="listen"] { color: var(--ira-blue); border-color: rgba(74, 155, 232, 0.30); }
+.ira-chip[data-state="think"] { color: var(--ira-accent); border-color: rgba(26, 111, 224, 0.32); }
+.ira-chip[data-state="speak"] { color: var(--ira-green); border-color: rgba(14, 159, 110, 0.30); }
+.ira-simctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ira-dim);
+  padding-left: 6px;
+  border-left: 1px solid var(--ira-line);
+  cursor: pointer;
+}
+
+/* ---------- body layout ---------- */
+.ira-body { display: grid; grid-template-columns: 206px minmax(0, 1fr); }
+.ira-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 10px;
+  background: #F7FAFD;
+  border-right: 1px solid var(--ira-line);
+}
+.ira-navbtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ira-fg2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.ira-navbtn:hover { background: rgba(14, 27, 46, 0.04); color: var(--ira-fg); }
+.ira-navbtn.is-active {
+  background: rgba(26, 111, 224, 0.10);
+  border-color: rgba(26, 111, 224, 0.24);
+  color: #0B54B4;
+}
+.ira-navbtn i, .ira-navbtn svg { width: 16px; height: 16px; flex: none; }
+.ira-navfoot {
+  margin-top: auto;
+  padding: 10px 11px 4px;
+  font-size: 10.5px;
+  color: var(--ira-dim);
+  border-top: 1px solid var(--ira-line);
+  line-height: 1.7;
+}
+.ira-main { padding: 14px; display: flex; flex-direction: column; gap: var(--ira-gap); min-width: 0; }
+.ira-view { display: flex; flex-direction: column; gap: var(--ira-gap); }
+.ira-view[hidden] { display: none; }
+
+.ira-vhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ira-vhead h2 { font-size: 16px; font-weight: 500; }
+.ira-vmeta { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- cards & rows ---------- */
+.ira-card {
+  background: var(--ira-panel);
+  border: 1px solid var(--ira-line);
+  border-radius: var(--ira-radius);
+  padding: var(--ira-card-pad);
+}
+.ira-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ira-fg2);
+  margin-bottom: 6px;
+}
+.ira-meta { font-size: 11.5px; color: var(--ira-dim); }
+.ira-metarow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ira-state { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+
+.ira-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--ira-line-strong);
+  color: var(--ira-fg2);
+}
+.ira-badge.l1, .ira-badge.hit { color: var(--ira-green); border-color: rgba(14, 159, 110, 0.32); background: rgba(14, 159, 110, 0.08); }
+.ira-badge.l2 { color: var(--ira-blue); border-color: rgba(74, 155, 232, 0.32); background: rgba(74, 155, 232, 0.08); }
+.ira-badge.l3 { color: var(--ira-accent); border-color: rgba(26, 111, 224, 0.34); background: rgba(26, 111, 224, 0.08); }
+.ira-badge.miss, .ira-badge.low { color: var(--ira-red); border-color: rgba(110, 127, 151, 0.34); background: rgba(110, 127, 151, 0.10); }
+.ira-badge.skip { color: var(--ira-dim); }
+
+/* ---------- dashboard ---------- */
+.ira-dash { display: flex; flex-direction: column; gap: var(--ira-gap); min-height: 408px; }
+.ira-statusrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ira-gap); }
+.ira-statusrow .ira-card { display: flex; flex-direction: column; gap: 6px; }
+.ira-card-tight { padding: 12px 14px; }
+.ira-answer .ira-q { font-size: 13px; color: var(--ira-fg2); }
+.ira-answer .ira-a { font-size: 30px; font-weight: 500; line-height: 1.35; margin: 4px 0 10px; }
+.ira-answer .ira-metarow { gap: 12px; }
+
+.ira-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: var(--ira-gap);
+}
+.ira-tile {
+  background: var(--ira-panel);
+  border: 1px solid var(--ira-line);
+  border-radius: var(--ira-radius);
+  padding: 10px 14px;
+}
+.ira-tile .ira-label { margin-bottom: 2px; }
+.ira-tile .ira-val { display: flex; align-items: baseline; gap: 6px; }
+.ira-tile-num { font-size: 24px; font-weight: 700; line-height: 1.2; }
+.ira-unit { font-size: 12px; color: var(--ira-fg2); }
+.ira-tile .ira-meta { display: block; margin-top: 2px; }
+
+.ira-dashb { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: var(--ira-gap); min-height: 408px; align-items: start; }
+.ira-sidecol { display: flex; flex-direction: column; gap: var(--ira-gap); }
+.ira-chatlist li { padding: 9px 0; border-top: 1px solid var(--ira-line); }
+.ira-chatlist li:first-child { border-top: 0; padding-top: 2px; }
+.ira-chatlist .ira-a-sm { font-size: 15px; margin: 2px 0 4px; }
+.ira-minigrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.ira-minigrid .ira-meta { display: block; }
+.ira-minigrid .ira-num { font-size: 15px; font-weight: 500; }
+
+/* ---------- offline ---------- */
+.ira-offline-only { display: none; }
+.ira-dash > .ira-online-only, .ira-dashb .ira-online-only { display: contents; }
+.ira[data-sim="offline"] .ira-online-only { display: none; }
+.ira[data-sim="offline"] .ira-offline-only { display: block; }
+.ira-offline { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 44px 20px; }
+.ira .ira-offline i, .ira .ira-offline svg { width: 28px; height: 28px; color: var(--ira-red); }
+.ira-offline strong { font-size: 17px; font-weight: 500; }
+.ira-offline span { font-size: 12px; color: var(--ira-fg2); max-width: 380px; }
+
+/* ---------- log ---------- */
+.ira-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.ira-filterbtn {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--ira-line-strong);
+  background: transparent;
+  color: var(--ira-fg2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ira-filterbtn:hover { color: var(--ira-fg); border-color: rgba(14, 27, 46, 0.22); }
+.ira-filterbtn.is-active {
+  background: rgba(26, 111, 224, 0.12);
+  border-color: rgba(26, 111, 224, 0.32);
+  color: #0B54B4;
+}
+.ira-logrows { display: flex; flex-direction: column; }
+.ira-logrow {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 2px;
+  border-top: 1px solid var(--ira-line);
+}
+.ira-logrow:first-child { border-top: 0; }
+.ira-logtime { font-size: 11.5px; color: var(--ira-dim); padding-top: 2px; }
+.ira-logq { font-size: 13px; color: var(--ira-fg); }
+.ira-loga { font-size: 13.5px; color: var(--ira-fg2); }
+.ira-logside { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.ira-logside .ira-num { font-size: 12px; color: var(--ira-fg2); }
+.ira-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 38px 16px; text-align: center; }
+.ira .ira-empty i, .ira .ira-empty svg { width: 22px; height: 22px; color: var(--ira-dim); }
+.ira-empty strong { font-size: 14px; font-weight: 500; color: var(--ira-fg2); }
+
+/* ---------- debug console ---------- */
+.ira-debug { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr); gap: var(--ira-gap); align-items: start; }
+.ira-qrow { display: flex; gap: 8px; }
+.ira-input, .ira-select {
+  width: 100%;
+  background: var(--ira-well);
+  border: 1px solid var(--ira-line-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--ira-fg);
+  font: inherit;
+  font-size: 13px;
+}
+.ira-input::placeholder { color: var(--ira-dim); }
+.ira-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--ira-line-strong);
+  background: rgba(14, 27, 46, 0.04);
+  color: var(--ira-fg);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ira-btn:hover { background: rgba(14, 27, 46, 0.07); }
+.ira-btn-primary { background: var(--ira-accent); border-color: transparent; color: #EAF2FE; font-weight: 500; }
+.ira-btn-primary:hover { background: #4A9BE8; }
+.ira-btn:disabled { opacity: 0.55; cursor: default; }
+.ira i[data-lucide], .ira svg.lucide { width: 16px; height: 16px; }
+.ira-chipbtn {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--ira-line-strong);
+  background: transparent;
+  color: var(--ira-fg2);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ira-chipbtn:hover { color: var(--ira-fg); border-style: solid; }
+.ira-examples { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+.ira-funnel { margin-top: 12px; border-top: 1px solid var(--ira-line); }
+.ira-frow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ira-line);
+}
+.ira-frow:last-child { border-bottom: 0; }
+.ira-frow .ira-fname { width: 96px; flex: none; font-size: 12px; color: var(--ira-fg2); display: flex; gap: 6px; align-items: center; }
+.ira-fstate { font-size: 12.5px; flex: none; }
+.ira-fstate[data-state="hit"] { color: var(--ira-green); }
+.ira-fstate[data-state="miss"] { color: var(--ira-red); }
+.ira-fstate[data-state="low"] { color: var(--ira-accent); }
+.ira-fstate[data-state="skip"] { color: var(--ira-dim); }
+.ira-fdetail { font-size: 11.5px; color: var(--ira-dim); min-width: 0; }
+.ira-kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 12.5px; }
+.ira-kv > span:first-child { color: var(--ira-fg2); }
+.ira-kv .ira-num, .ira-kv code { font-size: 12px; }
+.ira code {
+  background: var(--ira-well);
+  border: 1px solid var(--ira-line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 12px;
+}
+.ira-hr { border: 0; border-top: 1px solid var(--ira-line); margin: 10px 0; }
+
+/* ---------- settings forms ---------- */
+.ira-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
+.ira-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ira-field > label { font-size: 11px; letter-spacing: 0.06em; color: var(--ira-fg2); }
+.ira-field .ira-hint { font-size: 11px; color: var(--ira-dim); }
+.ira-inline { display: flex; gap: 8px; align-items: center; }
+.ira-inline .ira-input { flex: 1 1 auto; }
+.ira-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ira-duo .ira-hint { display: block; margin-top: 4px; }
+.ira-switchrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.ira-switchrow .ira-swtitle { font-size: 13px; }
+.ira-switchrow .ira-hint { display: block; font-size: 11px; color: var(--ira-dim); }
+.ira-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #E4ECF7;
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s ease;
+  margin: 0;
+}
+.ira-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #8494A8;
+  transition: transform 0.15s ease;
+}
+.ira-switch:checked { background: var(--ira-accent); }
+.ira-switch:checked::after { transform: translateX(14px); background: #EAF2FE; }
+.ira-range { width: 100%; accent-color: var(--ira-accent); }
+.ira-rangeval { font-size: 12px; color: var(--ira-fg2); }
+
+/* ---------- routing ---------- */
+.ira-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ira-node {
+  padding: 6px 11px;
+  border: 1px solid var(--ira-line-strong);
+  border-radius: 8px;
+  background: var(--ira-well);
+  font-size: 12px;
+  color: var(--ira-fg2);
+}
+.ira-node.hot { color: #0B54B4; border-color: rgba(26, 111, 224, 0.30); }
+.ira-node.ok { color: var(--ira-green); border-color: rgba(14, 159, 110, 0.28); }
+.ira-arrow { color: var(--ira-dim); font-size: 12px; }
+
+/* ---------- stats ---------- */
+.ira-statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--ira-gap); }
+.ira-stat { background: var(--ira-panel); border: 1px solid var(--ira-line); border-radius: var(--ira-radius); padding: 12px 14px; }
+.ira-stat .ira-num { font-size: 26px; font-weight: 700; }
+.ira-bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: end; height: 132px; padding-top: 8px; }
+.ira-bar { display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; height: 100%; min-width: 0; }
+.ira-barval { font-size: 11.5px; color: var(--ira-fg2); text-align: center; }
+.ira-barfill { background: linear-gradient(180deg, rgba(26, 111, 224, 0.40), rgba(26, 111, 224, 0.34)); border-radius: 6px 6px 0 0; min-height: 4px; }
+.ira-barlabel { font-size: 11px; color: var(--ira-dim); text-align: center; }
+.ira-share { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--ira-well); }
+.ira-share > span { display: block; height: 100%; }
+.ira-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.ira-legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ira-fg2); }
+.ira-swatch { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.ira-missrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ira-line); }
+.ira-missrow:first-child { border-top: 0; }
+.ira-missrow .ira-misscount { margin-left: auto; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 880px) {
+  .ira-body { grid-template-columns: 1fr; }
+  .ira-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--ira-line); padding: 8px; }
+  .ira-navbtn { width: auto; padding: 7px 10px; }
+  .ira-navfoot { display: none; }
+  .ira-statusrow { grid-template-columns: 1fr; }
+  .ira-debug, .ira-dashb { grid-template-columns: 1fr; }
+  .ira-dash, .ira-dashb { min-height: 720px; }
+  .ira-answer .ira-a { font-size: 24px; }
+}
+.ira[data-density="compact"] { --ira-card-pad: 10px 12px; --ira-gap: 8px; }
+.ira[data-density="compact"] .ira-tile { padding: 8px 11px; }
+.ira[data-density="compact"] .ira-answer .ira-a { font-size: 26px; }
+</style>
+
+<div class="ira-window" role="application" aria-label="iRacing 小小领航员">
+  <header class="ira-top">
+    <span class="ira-mark"><i data-lucide="radio" aria-hidden="true"></i></span>
+    <div class="ira-brand pywebview-drag-region">
+      <strong>iRacing 小小领航员</strong>
+      <span>语音问答助手</span>
+    </div>
+    <span class="ira-session pywebview-drag-region">等待遥测…</span>
+    <div class="ira-topright">
+      <span class="ira-chip" data-state="on" data-conn-state="on"><span class="ira-dot" data-conn-state="on" data-state="on"></span><span data-conn-label>已连接</span></span>
+      <span class="ira-chip ira-chip-ptt" data-ptt-chip data-state="idle">
+        <span class="ira-dot" data-state="idle" data-ptt-state="idle"></span><span data-ptt-label>待机</span>
+      </span>
+      <span class="ira-chip"><i data-lucide="timer" aria-hidden="true"></i><span class="ira-num">—</span>&nbsp;s</span>
+      <div class="window-controls"><button type="button" id="window-minimize" aria-label="最小化">−</button><button type="button" id="window-close" aria-label="关闭程序">×</button></div>
+    </div>
+  </header>
+
+  <div class="ira-body">
+    <nav class="ira-nav" role="tablist" aria-label="功能页面">
+      <button class="ira-navbtn" role="tab" id="ira-tab-dash" aria-controls="ira-panel-dash" aria-selected="true" data-nav="dash" type="button"><i data-lucide="gauge" aria-hidden="true"></i><span>主面板</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-log" aria-controls="ira-panel-log" aria-selected="false" data-nav="log" type="button"><i data-lucide="history" aria-hidden="true"></i><span>问答记录</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-debug" aria-controls="ira-panel-debug" aria-selected="false" data-nav="debug" type="button"><i data-lucide="bug" aria-hidden="true"></i><span>意图调试台</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-model" aria-controls="ira-panel-model" aria-selected="false" data-nav="model" type="button"><i data-lucide="cpu" aria-hidden="true"></i><span>设置 · 意图</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-asr" aria-controls="ira-panel-asr" aria-selected="false" data-nav="asr" type="button"><i data-lucide="mic" aria-hidden="true"></i><span>设置 · 语音输入</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-pack" aria-controls="ira-panel-pack" aria-selected="false" data-nav="pack" type="button"><i data-lucide="volume-2" aria-hidden="true"></i><span>设置 · 播报</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-route" aria-controls="ira-panel-route" aria-selected="false" data-nav="route" type="button"><i data-lucide="share-2" aria-hidden="true"></i><span>音频路由</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-stats" aria-controls="ira-panel-stats" aria-selected="false" data-nav="stats" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>诊断 · 统计</span></button>
+      <div class="ira-navfoot">
+        小小领航员 v1.0.0<br>xushengchen from Moondrop-Dox Racing<br>语音包 v2.0.0
+      </div>
+    </nav>
+
+    <main class="ira-main">
+
+      <!-- ============ 1. 主面板 ============ -->
+      <section class="ira-view" id="ira-panel-dash" data-view-panel="dash" role="tabpanel" aria-labelledby="ira-tab-dash">
+        <div class="ira-vhead">
+          <h2>主面板</h2>
+        </div>
+        <div class="ira-dashwrap">
+          <section data-variant="单题焦点" aria-label="主面板：单题焦点">
+            <div class="ira-dash">
+              <div class="ira-online-only">
+                <div class="ira-statusrow">
+                  <div class="ira-card ira-card-tight">
+                    <span class="ira-label">连接</span>
+                    <div class="ira-state"><span class="ira-dot" data-conn-state="on" data-state="on"></span><strong data-conn-label>iRacing 已连接</strong></div>
+                    <span class="ira-meta">等待遥测…</span>
+                  </div>
+                  <div class="ira-card ira-card-tight">
+                    <span class="ira-label">按住说话（PTT）</span>
+                    <div class="ira-state"><span class="ira-dot" data-state="idle" data-ptt-state="idle"></span><strong data-ptt-label>待机</strong></div>
+                    <div class="ira-metarow">
+                      <button class="ira-btn" type="button" data-ptt-next>模拟按下</button>
+                      <span class="ira-meta">按键：—</span>
+                    </div>
+                  </div>
+                  <div class="ira-card ira-card-tight">
+                    <span class="ira-label">上次回应</span>
+                    <div class="ira-state"><span class="ira-num" style="font-size: 26px; font-weight: 700;">—</span><span class="ira-unit">秒</span></div>
+                    <span class="ira-meta">等待第一条问答</span>
+                  </div>
+                </div>
+                <div class="ira-card ira-answer">
+                  <span class="ira-label">最后一条问答</span>
+                  <div class="ira-q">—</div>
+                  <div class="ira-a">还没有问答，按 PTT 问一句吧</div>
+                  <div class="ira-metarow">
+                    <span class="ira-badge">—</span>
+                  </div>
+                </div>
+                <div class="ira-strip">
+                  <div class="ira-tile"><span class="ira-label">油量</span><div class="ira-val"><span class="ira-num ira-tile-num">—</span><span class="ira-unit">L</span></div><span class="ira-meta">等待遥测</span></div>
+                  <div class="ira-tile"><span class="ira-label">名次</span><div class="ira-val"><span class="ira-num ira-tile-num">—</span><span class="ira-unit">/ 18</span></div><span class="ira-meta">等待遥测</span></div>
+                  <div class="ira-tile"><span class="ira-label">落差</span><div class="ira-val"><span class="ira-num ira-tile-num">—</span><span class="ira-unit">秒 · 后车</span></div><span class="ira-meta">等待遥测</span></div>
+                  <div class="ira-tile"><span class="ira-label">赛道</span><div class="ira-val"><span class="ira-tile-num" style="font-size: 19px;">—</span><span class="ira-unit">绿旗</span></div><span class="ira-meta">等待遥测</span></div>
+                </div>
+              </div>
+              <div class="ira-offline-only">
+                <div class="ira-card ira-offline">
+                  <i data-lucide="wifi-off" aria-hidden="true"></i>
+                  <strong>iRacing 未启动</strong>
+                  <span>游戏开起来就会自动连接；麦克风与播报维持待机，不会占用资源。</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============ 2. 问答记录 ============ -->
+      <section class="ira-view" id="ira-panel-log" data-view-panel="log" role="tabpanel" aria-labelledby="ira-tab-log" hidden>
+        <div class="ira-vhead">
+          <h2>问答记录</h2>
+          <div class="ira-vmeta">
+            <span class="ira-chip">本场 7 笔</span>
+            <span class="ira-chip">平均 <span class="ira-num">0.26</span> s</span>
+          </div>
+        </div>
+        <div class="ira-card">
+          <div class="ira-filters" role="group" aria-label="筛选">
+            <button class="ira-filterbtn is-active" type="button" data-logfilter="all" aria-pressed="true">全部</button>
+                <button class="ira-filterbtn" type="button" data-logfilter="miss" aria-pressed="false">只看未命中</button>
+            <button class="ira-filterbtn" type="button" data-logfilter="none" aria-pressed="false">未识别</button>
+          </div>
+          <div class="ira-logrows" style="margin-top: 10px;"></div>
+                <div class="ira-empty" id="ira-log-empty" aria-live="polite" hidden>
+            <i data-lucide="check" aria-hidden="true"></i>
+            <strong>还没有记录</strong>
+            <span class="ira-meta">按 PTT 问一句，或到「意图调试台」用打字试</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 3. 意图调试台 ============ -->
+      <section class="ira-view" id="ira-panel-debug" data-view-panel="debug" role="tabpanel" aria-labelledby="ira-tab-debug" hidden>
+        <div class="ira-vhead">
+          <h2>意图调试台</h2>
+          <div class="ira-vmeta"><span class="ira-chip">打字代替麦克风</span></div>
+        </div>
+        <div class="ira-debug">
+          <div class="ira-card">
+            <span class="ira-label">模拟提问</span>
+            <form class="ira-qrow" id="ira-qform" novalidate>
+              <input class="ira-input" id="ira-q" value="油还够吗" aria-label="模拟提问文字" autocomplete="off">
+              <button class="ira-btn ira-btn-primary" type="button" id="ira-send">送出</button>
+            </form>
+            <div class="ira-examples">
+              <span class="ira-meta">试试：</span>
+              <button class="ira-chipbtn" type="button" data-q="油还够吗">油还够吗</button>
+              <button class="ira-chipbtn" type="button" data-q="还有几圈">还有几圈</button>
+              <button class="ira-chipbtn" type="button" data-q="后面那台车什么情况">后面那台车什么情况</button>
+            </div>
+            <div class="ira-funnel" aria-live="polite">
+              <div class="ira-frow">
+                <span class="ira-fname">短语库</span>
+                <span class="ira-fstate" data-state="miss" data-dbg-l1-state>— 还没提问</span>
+                <span class="ira-fdetail" data-dbg-l1-detail>输入一句试试</span>
+              </div>
+              <div class="ira-frow">
+                <span class="ira-fname">关键词兜底</span>
+                <span class="ira-fstate" data-state="hit" data-dbg-l2-state>— 还没提问</span>
+                <span class="ira-fdetail" data-dbg-l2-detail>输入一句试试</span>
+              </div>
+              <div class="ira-frow">
+                <span class="ira-fname">遥测路由</span>
+                <span class="ira-fstate" data-state="skip" data-dbg-l3-state>— 还没提问</span>
+                <span class="ira-fdetail" data-dbg-l3-detail>输入一句试试</span>
+              </div>
+            </div>
+            <hr class="ira-hr">
+            <div class="ira-metarow">
+              <span class="ira-meta">判定结果</span>
+              <span class="ira-badge" data-dbg-intent>等待输入</span>
+              <span class="ira-meta" data-dbg-totaltime>判定耗时 — ms</span>
+            </div>
+          </div>
+          <div class="ira-card">
+            <span class="ira-label">遥测快照</span>
+            <div data-dbg-tele>
+              <div class="ira-kv"><span>快照</span><span class="ira-num">—</span></div>
+            </div>
+            <hr class="ira-hr">
+            <span class="ira-label">播报合成</span>
+            <div class="ira-kv"><span>选中 msgId</span><code data-dbg-msgid>—</code></div>
+            <div class="ira-kv"><span>即将播放</span><code data-dbg-file>—</code></div>
+            <div class="ira-metarow" style="margin-top: 8px;">
+              <button class="ira-btn" type="button" data-audition>试听</button>
+              <span class="ira-meta" data-dbg-note>—</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 4. 设置 · 意图 ============ -->
+      <section class="ira-view" id="ira-panel-model" data-view-panel="model" role="tabpanel" aria-labelledby="ira-tab-model" hidden>
+        <div class="ira-vhead">
+          <h2>设置 · 意图</h2>
+          <span class="ira-savehint" data-savehint></span>
+        </div>
+        <div class="ira-card"></div>
+      </section>
+
+      <!-- ============ 5. 设置 · 语音输入 ============ -->
+      <section class="ira-view" id="ira-panel-asr" data-view-panel="asr" role="tabpanel" aria-labelledby="ira-tab-asr" hidden>
+        <div class="ira-vhead">
+          <h2>设置 · 语音输入</h2>
+          <span class="ira-savehint" data-savehint></span>
+        </div>
+        <div class="ira-card"></div>
+      </section>
+
+      <!-- ============ 6. 设置 · 播报 ============ -->
+      <section class="ira-view" id="ira-panel-pack" data-view-panel="pack" role="tabpanel" aria-labelledby="ira-tab-pack" hidden>
+        <div class="ira-vhead">
+          <h2>设置 · 播报</h2>
+          <span class="ira-savehint" data-savehint></span>
+        </div>
+        <div class="ira-card"></div>
+      </section>
+
+      <!-- ============ 7. 音频路由 ============ -->
+      <section class="ira-view" id="ira-panel-route" data-view-panel="route" role="tabpanel" aria-labelledby="ira-tab-route" hidden>
+        <div class="ira-vhead">
+          <h2>音频路由</h2>
+          <span class="ira-savehint" data-savehint></span>
+        </div>
+        <div class="ira-card"></div>
+      </section>
+
+      <!-- ============ 8. 诊断 · 统计 ============ -->
+      <section class="ira-view" id="ira-panel-stats" data-view-panel="stats" role="tabpanel" aria-labelledby="ira-tab-stats" hidden>
+        <div class="ira-vhead">
+          <h2>诊断 · 统计</h2>
+        </div>
+        <div class="ira-statgrid"></div>
+        <div class="ira-card">
+          <span class="ira-label">首包延迟分布</span>
+          <div class="ira-bars" role="img" aria-label="首包延迟分布"></div>
+        </div>
+        <div class="ira-card">
+          <span class="ira-label">命中路径</span>
+          <div class="ira-share" role="img" aria-label="命中路径占比"></div>
+          <div class="ira-legend"></div>
+        </div>
+        <div class="ira-card" data-misscard>
+          <span class="ira-label">没听明白的问法（补进 intents_examples.yaml 就好）</span>
+        </div>
+        <div class="ira-metarow"><span class="ira-meta">识别与匹配全程本地执行</span></div>
+      </section>
+    </main>
+
+
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body></html>
+</div>

@@ -1,0 +1,13 @@
+.venv/
+build/
+models/
+tmp/
+**/__pycache__/
+*.py[cod]
+**/config.local.yaml
+**/logs/
+**/state/
+.env
+.env.*
+*.pem
+*.key

@@ -1,0 +1,44 @@
+![Moondrop · Moondrop Gravity · Drag-On XT · Moondrip Racing](https://raw.githubusercontent.com/xxushengcchen/LittleNavigator/v1.3.2/assets/banner.png)
+
+## ✨ 小小领航员 v1.3.2 — 首次公开发布
+
+iRacing 中文语音问答助手，支持按住键盘或方向盘按钮提问。本次首次公开发布完整 Windows 安装版，包含本地语音识别模型和同音色语音资源。
+
+- 1,742 条问法、14 类遥测意图，覆盖燃油、圈速、比赛进度、前后车、进站、天气和车辆状态。
+- 支持全场第一名及赛道前后车的上一完整圈、最佳圈速。
+- 支持方向盘按键绑定；界面采用固定大小无边框窗口。
+- 修复安装后 WebView2 DLL 缺失的问题。
+- 删除各功能区域标题旁的说明小字；安装目录的文档仅保留使用说明，覆盖升级会清理旧版随包文档。
+
+源码采用 MIT License，欢迎 iRacing 中文社区的玩家一起反馈问题、补充问法和提交改进。开发与贡献方式见仓库 README。
+
+## 📦 下载与安装
+
+下载下方 **LittleNavigator-1.3.2-Setup-x64.exe**，运行后选择安装位置。安装文件约 **562 MiB**。
+
+支持 **Windows 10 2004 及以上、Windows 11 x64**。完整包含模型、语音和 WebView2 离线组件；正常运行无需联网或 API Key。
+
+升级前关闭软件，选择原安装范围和目录覆盖安装。设置和日志保存在 `%LOCALAPPDATA%\LittleNavigator`，升级和卸载均保留。
+
+## ✅ 核验与使用边界
+
+已核对安装文件 SHA-256、打包后的界面及必需资源，并验证实际 WebView2 窗口和页面加载。下方提供 **SHA256SUMS.txt** 供下载校验。
+
+当前安装包未代码签名，Windows 可能显示未知发布者或 SmartScreen 提示。缺少有效游戏遥测时会说明原因，不能将其他指标替代所问数据。轮胎检测和车损查询受 SDK 可用数据限制。
+
+## 🎙️ 单独使用中文 Spotter
+
+只想在游戏里使用语音包，可以下载 **LittleNavigator-iRacing-VoicePack-v2.0.0.zip**，解压后把整个 `Mandarin-CNTW-Xusheng_Chen` 文件夹放到 iRacing 游戏安装目录的 `sound\spcc` 中，再在模拟器 **Options → Sound → Voice Pack** 选择它，并重新加载模拟器。完整步骤见 [项目说明](https://github.com/xxushengcchen/LittleNavigator#语音包单独装进-iracing)。
+
+## 🛠️ 后续计划
+
+- 增加可选的脏话版，保留普通版，并持续扩充语音数量。
+- 提供用户自行接入大模型 API 的接口，逐步支持更自然的对话和追问。
+
+以上都是后续计划，当前版本没有可用的自由大模型对话功能。
+
+## 🙏 赞赏
+
+给不给都无所谓。如果觉得我做得还不错，愿意支持一下，感谢支持。赞赏完全自愿，不影响使用。
+
+<img src="https://raw.githubusercontent.com/xxushengcchen/LittleNavigator/v1.3.2/assets/support.jpg" width="360" alt="作者赞赏码">
