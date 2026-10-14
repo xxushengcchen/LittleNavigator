@@ -28,6 +28,45 @@ def timed(code,value):
     if not valid(value,0,604799):return refuse('没有有效的时间读数')
     return Decision(['AST2_'+code+'_LEAD',*duration(value)],f'{code} = {value:.1f}s')
 
+_CN={'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10}
+def _cn_num(t):
+    """中文或阿拉伯数字的名次。"""
+    if t.isdigit():return int(t)
+    try:
+        if t=='十':return 10
+        if t.startswith('十'):return 10+_CN[t[1]]
+        if '十' in t:
+            a,b=t.split('十');return _CN[a]*10+(_CN[b] if b else 0)
+        return _CN[t]
+    except (KeyError,IndexError):return None
+
+def _interval(s,idx):
+    """我与指定车辆索引的赛道间隔（秒）；跨线补一个圈周期，算法与前后车一致。"""
+    me,dist,times=s.car_idx,s.car_lap_dist,s.car_est_times
+    if me is None or not dist or not times:return None
+    if not (0<=me<len(dist) and 0<=idx<len(dist)):return None
+    if any(v is None or v<0 for v in (dist[me],dist[idx])):return None
+    if times[me] is None or times[idx] is None:return None
+    dd=(dist[idx]-dist[me])%1
+    if dd<=0 or dd>0.5:return None
+    gap=times[idx]-times[me]
+    if dist[idx]<dist[me]:
+        period=s.lap_best if s.lap_best and s.lap_best>0 else s.lap_last
+        if not period or period<=0:return None
+        gap+=period
+    return gap if math.isfinite(gap) and 0<=gap<=300 else None
+
+def _rubber(s):
+    """SessionTrackRubberState 是英文串，按关键字分档；档位集齐后可再收紧。"""
+    v=(s.track_rubber or '').strip()
+    low=v.lower()
+    if not low:return state('RUBBER_UNKNOWN','没有读到赛道橡胶状态')
+    if 'moderate' in low:return state('RUBBER_MODERATE',f'橡胶状态 {v}')
+    if any(w in low for w in ('low','little','light','new')):return state('RUBBER_LOW',f'橡胶状态 {v}')
+    if any(w in low for w in ('max','extreme','very','extensive','heavy')):return state('RUBBER_MAX',f'橡胶状态 {v}')
+    if 'high' in low:return state('RUBBER_HIGH',f'橡胶状态 {v}')
+    return state('RUBBER_UNKNOWN',f'橡胶状态 {v} 未识别')
+
 def answer(intent,s,q):
     if intent=='query_opponent':
         if any(w in q for w in ('这圈','当前圈','差多少','快多少','慢多少','剩几圈','还剩')):
@@ -53,6 +92,8 @@ def answer(intent,s,q):
         kind='BEST_LAP' if best else 'LAST_LAP'
         return Decision(['AST2_'+code+'_'+kind+'_LEAD',*numbers.laptime_to_msgids(value)],f'{code} 车辆索引 {idx}，{kind} {value:.3f}s')
     if intent=='query_weather':
+        if any(w in q for w in ('橡胶','鋪膠','铺胶','使用率','胶量','膠量','rubber')):
+            return _rubber(s)
         if any(w in q for w in ('会','什么时候','预测','雨胎','要不要')):return refuse('当前遥测不提供未来天气或换胎建议')
         if any(w in q for w in ('地温','路温','赛道温','路面温')):return numeric('TRACK_TEMP',s.track_temp,'DEGREE',lo=-60,hi=100)
         if any(w in q for w in ('气温','外面多少度','温度')):return numeric('AIR_TEMP',s.air_temp,'DEGREE',lo=-60,hi=70)
@@ -60,11 +101,67 @@ def answer(intent,s,q):
         if '风' in q:return numeric('WIND',s.wind_vel,'MPS',hi=100)
         if '湿度' in q:return numeric('HUMIDITY',s.relative_humidity*100 if valid(s.relative_humidity,0,1) else None,percent=True,hi=100)
         if any(w in q for w in ('雨大','雨量','降水','降雨强度')):return numeric('PRECIP',s.precip*100 if valid(s.precip,0,1) else None,percent=True,hi=100)
+    if intent=='query_gap':
+        # 「前车/后车是第几名」会被 L1 关键词送进差距意图，这里先转派成名次回答
+        if any(w in q for w in ('第几','名次','排名')) and any(w in q for w in ('前车','前車','后车','後車')):
+            ahead=any(w in q for w in ('前车','前車'))
+            lead='AST2_AHEAD_POSITION_LEAD' if ahead else 'AST2_BEHIND_POSITION_LEAD'
+            target=s.gap_ahead_idx if ahead else s.gap_behind_idx
+            pos=s.car_positions[target] if (target is not None and s.car_positions
+                                           and 0<=target<len(s.car_positions)) else None
+            if not valid(pos,1,999):return refuse('那台车还没有有效名次')
+            return Decision([lead,*numbers.int_to_msgids(int(pos)),'AST2_UNIT_POSITION_END'],
+                            f'对手名次 {pos}')
+        import re as _re
+        m=_re.search(r'第\s*([0-9]+|[一二三四五六七八九十]+)\s*名',q)
+        head=None;idx=None;n=None
+        if any(w in q for w in ('组别第一','同组第一','分组第一','組別第一','同組第一')):
+            if s.car_class_positions and s.car_idx is not None:
+                idx=next((i for i,p in enumerate(s.car_class_positions)
+                          if p==1 and i!=s.car_idx and i not in s.pace_car_indices),None)
+            head='AST2_GAP_TO_CLASS_LEADER_LEAD'
+        elif any(w in q for w in ('第一名','全场第一','領先','领先')):
+            if s.car_positions and s.car_idx is not None:
+                idx=next((i for i,p in enumerate(s.car_positions)
+                          if p==1 and i!=s.car_idx and i not in s.pace_car_indices),None)
+            head='AST2_GAP_TO_LEADER_LEAD'
+        elif m:
+            n=_cn_num(m.group(1))
+            if n and s.car_positions and s.car_idx is not None:
+                idx=next((i for i,p in enumerate(s.car_positions)
+                          if p==n and i!=s.car_idx),None)
+        if idx is None:
+            if head or m:return refuse('没有找到那台车，或它还没有有效位置')
+        else:
+            gap=_interval(s,idx)
+            if gap is None:return refuse('读不到与那台车的有效间隔，不能拿别人代替')
+            if head:
+                return Decision([head,'AST2_GAP_TO_POSITION_TAIL',
+                                 *numbers.decimal_to_msgids(gap,1),'SPCC_GAPIS_PT2'],
+                                f'与目标车 {gap:.1f}s')
+            return Decision(['AST2_GAP_TO_POSITION_LEAD',*numbers.int_to_msgids(n),
+                             'AST2_GAP_TO_POSITION_MID',
+                             *numbers.decimal_to_msgids(gap,1),'SPCC_GAPIS_PT2'],
+                            f'离第 {n} 名 {gap:.1f}s')
     if intent=='query_fuel':
         if '多久' in q:
             if not valid(s.laps_of_fuel,0,999) or not valid(s.lap_last,.001,36000):return refuse('尚无完整圈油耗及有效上一圈计时，无法估计燃油时间')
             return timed('FUEL_TIME',s.laps_of_fuel*s.lap_last)
-        if '油耗' in q:return numeric('FUEL_USE',s.fuel_per_lap,'LITRE',digits=2,hi=100)
+        if '油耗' in q:
+            if any(w in q for w in ('实际','即时','实时','现在的油耗','当前的油耗')):
+                hour=s.fuel_use_per_hour
+                if not valid(hour,0.1,500):return refuse('没有读到当前油耗')
+                if any(w in q for w in ('差','差多少','差别')):
+                    if not valid(s.fuel_per_lap,0.01,100) or not valid(s.lap_last,.001,36000):
+                        return refuse('要比较每圈油耗，需要先有一个完整圈的圈速与油耗')
+                    now=hour*s.lap_last/3600
+                    delta=now-s.fuel_per_lap
+                    lead='AST2_FUEL_VS_AVG_MORE_LEAD' if delta>=0 else 'AST2_FUEL_VS_AVG_LESS_LEAD'
+                    return Decision([lead,*numbers.decimal_to_msgids(abs(delta),2),'AST2_UNIT_LITRE'],
+                                    f'本圈即时 {now:.2f} 对平均 {s.fuel_per_lap:.2f} L/圈')
+                return Decision(['AST2_FUEL_USE_HOUR_LEAD',*numbers.decimal_to_msgids(hour,1),
+                                 'AST2_UNIT_LITRE_PER_HOUR'],f'即时油耗 {hour:.1f} L/h')
+            return numeric('FUEL_USE',s.fuel_per_lap,'LITRE',digits=2,hi=100)
         if any(w in q for w in ('几圈','多少圈','跑多久','撑几','再撑','够跑')) and not '跑完' in q:
             result=numeric('FUEL_LAPS',s.laps_of_fuel,hi=999)
             if result.ok:result.plan+=['AST_LAPS_TAIL']
@@ -76,6 +173,8 @@ def answer(intent,s,q):
             result.reason='按时间结束的比赛：分别播报估计燃油圈数与剩余时间，不猜能否跑完'
             return result
     if intent=='query_laps':
+        if any(w in q for w in ('雨','天气','湿','放晴')):
+            return refuse('这是天气问题，当前不提供降雨预测')
         if any(w in q for w in ('第几圈','当前第','这第','现在第')):
             result=numeric('LAP_NUMBER',s.lap,integer=True,lo=1)
             if result.ok:result.plan+=['AST_LAPS_TAIL']
@@ -86,9 +185,27 @@ def answer(intent,s,q):
             return result
         if s.laps_remain is None or any(w in q for w in ('时间','多久','分钟','几分')):return timed('TIME_REMAIN',s.time_remain_s)
     if intent=='query_position':
+        lead=target=None
+        if any(w in q for w in ('前车','前面','前車')):lead,target='AST2_AHEAD_POSITION_LEAD',s.gap_ahead_idx
+        elif any(w in q for w in ('后车','后面','後車')):lead,target='AST2_BEHIND_POSITION_LEAD',s.gap_behind_idx
+        if lead:
+            pos=s.car_positions[target] if (target is not None and s.car_positions
+                                            and 0<=target<len(s.car_positions)) else None
+            if not valid(pos,1,999):return refuse('那台车还没有有效名次')
+            return Decision([lead,*numbers.int_to_msgids(int(pos)),'AST2_UNIT_POSITION_END'],
+                            f'对手名次 {pos}')
+        if any(w in q for w in ('对手','第一名','领跑')):
+            return refuse('这个目标的名次还没支持，可以说前车或后车')
         if any(w in q for w in ('组别','同组','组里','分组')):return numeric('CLASS_POSITION',s.class_position,'POSITION_END',integer=True,lo=1)
         if valid(s.position,6,999):return numeric('POSITION',s.position,'POSITION_END',integer=True,lo=1)
     if intent=='query_laptime':
+        if (s.lap_completed is not None and s.lap_completed>=1
+                and not valid(s.lap_last,.001,36000) and not valid(s.lap_best,.001,36000)
+                and not any(w in q for w in ('当前圈','这一圈','这圈已'))):
+            return state('NO_VALID_LAP','跑完了圈但没有有效成绩，不能说成没有数据')
+        if (any(w in q for w in ('极速','最高速','最快速度','最高速度'))
+                and not any(w in q for w in ('圈速','上一圈','上圈','最佳','最快圈','当前圈'))):
+            return refuse('单圈最高速度还没有采集，不能拿当前速度或当前圈时间代替')
         if any(w in q for w in ('前车','后车','对手','前面','后面','第一名','领跑')):return refuse('当前圈速问答仅读取自己的车辆')
         if any(w in q for w in ('慢多少','快多少','差多少','差几秒')):
             if not valid(s.lap_last,.001,36000) or not valid(s.lap_best,.001,36000):return refuse('需要有效上一圈和最佳圈才能比较')
@@ -129,9 +246,13 @@ def answer(intent,s,q):
         if not s.session_flags_known:return refuse('没有有效旗号读数，不能将缺字段当作无旗号')
         if 'red' in s.flags and not set(s.flags)&{'disqualify','repair'}:return state('RED_FLAG','SDK 红旗')
         if not s.flags and not s.session_flags & ~(0xF0000000|0x40000):return state('NO_FLAG','SDK 当前无旗号；灯光/服务许可不是旗号')
-    if intent=='query_speed':return numeric('SPEED',s.speed_kph,'KMH',hi=600)
+    if intent=='query_speed':
+        if any(w in q for w in ('最高','极速','最快')):
+            return refuse('单圈或本场最高速度还没有采集，不能拿当前速度代替')
+        return numeric('SPEED',s.speed_kph,'KMH',hi=600)
     if intent=='query_engine':
         if any(w in q for w in ('abs','tc','防抱死','牵引','循迹')):return refuse('车辆辅助设置不能用当前挡位代替')
+        if any(w in q for w in ('模式','map','混合比','增压','boost')):return refuse('引擎模式与燃油混合比尚未采集，不能拿变速箱挡位代替')
         if any(w in q for w in ('转速','rpm')):return numeric('RPM',round(s.rpm) if valid(s.rpm,0,30000) else None,'RPM',integer=True,hi=30000)
         if '电压' in q:return numeric('VOLTAGE',s.voltage,'VOLT',hi=100)
         if any(w in q for w in ('档','挡','gear')):
@@ -145,6 +266,14 @@ def answer(intent,s,q):
         if any(w in q for w in ('刹车','煞车','制动','前后比例')):return numeric('BRAKE_BIAS',s.brake_bias,percent=True,hi=100)
         if any(w in q for w in ('防抱死','防锁死','abs')):return numeric('ABS',s.abs_level,'LEVEL',integer=True,hi=30)
         if any(w in q for w in ('循迹','牵引','tc')):return numeric('TC',s.tc_level,'LEVEL',integer=True,hi=30)
+        # 防倾杆 / 尾翼在 session YAML 的 CarSetup 里（实测：MX-5 是 AntiRollBar，保时捷是 ArbSetting），
+        # 值可能是字符串也可能是数字；先把"这台车有没有"分开说清楚。
+        if any(w in q for w in ('防倾','倾杆','arb')):
+            value=s.setup_value('ArbSetting','AntiRollBar')
+            return refuse(f'读到防倾杆设定是 {value}，但还没有对应语音' if value is not None else '这台车的调教数据里没有防倾杆')
+        if any(w in q for w in ('尾翼','wing')):
+            value=s.setup_value('WingAngle','Wing')
+            return refuse(f'读到尾翼设定是 {value}，但还没有对应语音' if value is not None else '这台车的调教数据里没有尾翼')
         return refuse('这项车内设置尚未提供')
     if intent=='query_tyre':
         wheels=[w for w,words in [('LF',('左前',)),('RF',('右前',)),('LR',('左后',)),('RR',('右后',))] if any(word in q for word in words)]

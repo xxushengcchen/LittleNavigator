@@ -1,23 +1,28 @@
 """同音色批量合成，凭据仅在环境或不回显输入中使用；完整后再打包。"""
 import argparse,concurrent.futures,getpass,json,os,pathlib,subprocess,sys,threading,time
 from tts_doubao import synthesize,DEFAULT_SPEAKER,DEFAULT_RESOURCE,TtsError
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+from content_loader import load_items
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--probe',action='store_true');ap.add_argument('--workers',type=int,default=2)
+    ap.add_argument('--content',nargs='+',default=['content/assistant-telemetry-v1.1.json'],
+                    help='文案檔（可多個；預設只讀 v1.1）')
+    ap.add_argument('--version',default='1.1.0',help='寫進語音包頭部註解的版本號')
     args=ap.parse_args();os.chdir(ROOT)
-    doc=json.loads((ROOT/'content/assistant-telemetry-v1.1.json').read_text(encoding='utf-8'))
+    items,instructs=load_items(ROOT,patterns=args.content)
     key=os.getenv('DOUBAO_API_KEY') or getpass.getpass('豆包语音 API Key（不回显）：').strip()
     if not key:raise SystemExit('未收到凭据，未调用 API')
     raw=ROOT/'build/telemetry-tts';raw.mkdir(exist_ok=True)
-    jobs=[(item,i,text) for item in doc['items'] for i,text in enumerate(item['variants'],1)]
+    jobs=[(item,i,text) for item in items for i,text in enumerate(item['variants'],1)]
     def synth(job,force=False):
         item,i,text=job;stem=f"{item['msgId']}__{i:02d}";path=raw/(stem+'.mp3')
         if not force and path.exists() and path.stat().st_size>100:return stem,'cached'
         for attempt in range(3):
             try:
                 data=synthesize(text,api_key=key,speaker=DEFAULT_SPEAKER,resource_id=DEFAULT_RESOURCE,
-                    instruct=item.get('instruct') or doc['meta']['instructs']['normal'],speech_rate=item.get('speechRate'))
+                    instruct=item.get('instruct') or instructs.get('normal'),speech_rate=item.get('speechRate'))
                 tmp=path.with_suffix('.tmp');tmp.write_bytes(data);tmp.replace(path)
                 return stem,'ok'
             except TtsError as exc:
@@ -38,9 +43,9 @@ def main():
     key=''
     if failed:raise SystemExit(f'有 {len(failed)} 条未完成；保留已完成音频，请重新运行补齐')
     subprocess.run([sys.executable,'-X','utf8',str(ROOT/'scripts/build_pack.py'),
-        '--content','content/assistant-telemetry-v1.1.json','--audio','build/telemetry-tts',
+        '--content',*args.content,'--audio','build/telemetry-tts',
         '--out','build','--name','assistant-telemetry','--rate','24000','--display','simplified',
-        '--no-null','--version','1.1.0'],check=True)
+        '--no-null','--version',args.version],check=True)
     expected=len(jobs);actual=len(list((ROOT/'build/assistant-telemetry').glob('*.WAV')))
     if actual!=expected:raise SystemExit(f'打包未完整：{actual}/{expected}')
     print(f'完成：{actual} 条 WAV，24 kHz/16-bit/单声道，原裁剪与 -17 dBFS RMS 流程',flush=True)

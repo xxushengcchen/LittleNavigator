@@ -18,11 +18,11 @@
 - 本地 SenseVoice 识别，短语和意图匹配，离线语音播放。日常使用不需要大模型或语音 API Key。
 - 自动记录没听明白的问法，便于后续补充。
 
-v1.3.2 当前有 1,742 条问法、14 类遥测意图；助手合并语音资源有 2,937 条音频。语音数量和可回答的问题不是一回事：有些问题需要先读到有效遥测才能回答。
+v1.4.0 当前有 1,790 条问法、14 类遥测意图；助手合并语音资源有 3,076 条音频。语音数量和可回答的问题不是一回事：有些问题需要先读到有效遥测才能回答。
 
 ## 下载和安装助手
 
-在 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases) 下载 `LittleNavigator-1.3.2-Setup-x64.exe`。
+在 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases) 下载 `LittleNavigator-1.4.0-Setup-x64.exe`。本版按实测反馈修订问答行为：处罚三种状态（让回优势 / 进站受罚 / 取消资格）分开播报且不解释原因，新增离指定名次差距、对手名次、赛道橡胶与没有有效圈提示，并修好了一直读不到的胎温。详见 [RELEASE_NOTES](RELEASE_NOTES.md)。
 
 1. 运行安装文件，自行选择安装位置。
 2. 启动软件，在「设置 · 语音输入」选好麦克风，采集键盘或方向盘按钮。

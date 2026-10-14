@@ -554,6 +554,8 @@ body.desktop-shell .window-controls {display:flex;}
             <span class="ira-chip">本场 7 笔</span>
             <span class="ira-chip">平均 <span class="ira-num">0.26</span> s</span>
           </div>
+          <button class="ira-btn" type="button" id="ira-export-logs" title="把运行日志打包成 zip，方便随 bug 反馈提交"
+            onclick="(async()=>{const b=document.getElementById('ira-export-logs');b.disabled=true;const t=b.textContent;b.textContent='导出中…';try{const d=await (await fetch('/api/export-logs')).json();alert(d&&d.ok?('已导出：\n'+d.path+'\n（'+d.files+' 个文件）'):('导出失败：'+(d&&d.error)));}catch(e){alert('导出失败：'+e);}b.disabled=false;b.textContent=t;})()">导出运行日志</button>
         </div>
         <div class="ira-card">
           <div class="ira-filters" role="group" aria-label="筛选">

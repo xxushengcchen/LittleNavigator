@@ -285,6 +285,31 @@ class Service:
         return {"qa": list(reversed(qa)), "miss": list(reversed(miss)),
                 "console": self.log.tail(60)}
 
+    def export_logs(self) -> dict:
+        """把运行日志打包成 zip，方便随 bug 反馈一起提交。"""
+        import datetime, platform, sys as _sys, zipfile
+        log_dir = self.asst.log_dir
+        out_dir = log_dir.parent / "日志导出"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = out_dir / f"LittleNavigator-logs-{stamp}.zip"
+        note = out_dir / f"环境-{stamp}.txt"
+        note.write_text("\n".join([
+            f"导出时间：{datetime.datetime.now().isoformat(timespec='seconds')}",
+            f"语音包：{self.asst.pack_info()}",
+            f"配置：{self.asst.config_view()}",
+            f"Python：{_sys.version.split()[0]}  {platform.platform()}",
+        ]), encoding="utf-8")
+        count = 0
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
+            for path in sorted(log_dir.rglob("*")):
+                if path.is_file() and path.resolve() != target.resolve():
+                    z.write(path, path.relative_to(log_dir))
+                    count += 1
+            z.write(note, note.name)
+        note.unlink(missing_ok=True)
+        return {"ok": True, "path": str(target), "size": target.stat().st_size, "files": count}
+
     def stats(self) -> dict:
         qa = self._tail_jsonl(self.qa_log, 1000)
         miss = self._tail_jsonl(self.miss_log, 1000)
@@ -488,6 +513,8 @@ class Handler(BaseHTTPRequestHandler):
                 from src.wheel import get_input
                 wheel=get_input()
                 self._json({'wheels':wheel.devices(),'wheel_error':wheel.error})
+            elif u.path == '/api/export-logs':
+                self._json(self.service.export_logs())
             else:
                 self.send_error(404)
         except ValueError as exc:

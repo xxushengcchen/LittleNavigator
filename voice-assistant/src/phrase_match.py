@@ -105,6 +105,8 @@ def load_library(path: str | pathlib.Path = DEFAULT_LIBRARY) -> list[Phrase]:
     data = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8"))
     out: list[Phrase] = []
     for intent, spec in (data or {}).items():
+        if not isinstance(spec, dict):
+            continue                      # refuse_phrases 这类非意图条目
         if (spec or {}).get("route") != "state_layer":
             continue                      # 只认能直接回答的意图
         for raw in (spec or {}).get("examples") or []:
@@ -116,10 +118,23 @@ def load_library(path: str | pathlib.Path = DEFAULT_LIBRARY) -> list[Phrase]:
     return out
 
 
+def load_negatives(path: str | pathlib.Path = DEFAULT_LIBRARY) -> list[str]:
+    """短语库里的显式拒绝清单：命中即拒绝，不看相似度。
+
+    背景：拼接拼音串的相似度通道对「共享长拼音子串」很宽松（实测
+    「现在几点了」对「abs现在几档」能拿到 0.80），这类越界句靠阈值堵不干净。
+    """
+    if path == DEFAULT_LIBRARY:
+        path = default_library()
+    data = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8")) or {}
+    return [str(x) for x in (data.get("refuse_phrases") or []) if str(x).strip()]
+
+
 class PhraseMatcher:
     def __init__(self, library: str | pathlib.Path = DEFAULT_LIBRARY,
                  accept: float = 0.66, margin: float = 0.05):
         self.phrases = load_library(library)
+        self.negatives = [normalize(x) for x in load_negatives(library)]
         self.accept = accept
         self.margin = margin
         unique={}
@@ -164,6 +179,8 @@ class PhraseMatcher:
         return sorted(best.values(), key=lambda x: x[1], reverse=True)
 
     def match(self, text: str) -> Hit:
+        if normalize(text) in self.negatives:
+            return Hit(None, 0.0, "", 0.0, "命中短语库的拒绝清单")
         ranked = self.rank(text)
         if not ranked:
             return Hit(None, 0.0, "", 0.0, f"「{text}」太短或为空，拒绝", ranked)

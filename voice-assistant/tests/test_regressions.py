@@ -94,7 +94,8 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(router.route('query_flags', self.s(session_flags=0x104)).plan, ['SPCC_YELOUT'])
 
     def test_dq_overrides_green(self):
-        self.assertEqual(router.route('query_flags', self.s(session_flags=0x20004)).plan, ['SPCC_DQ'])
+        self.assertEqual(router.route('query_flags', self.s(session_flags=0x20004)).plan,
+                         ['AST2_DISQUALIFY_OUT'])
 
     def test_zero_laptime_refuses(self):
         self.assertFalse(router.route('query_laptime', self.s(lap_last=0), '上圈多少').ok)

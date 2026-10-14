@@ -55,6 +55,11 @@ def route(intent: str, s: Snapshot, query: str = "") -> Decision:
         return _refuse("iRacing 没连上，现在拿不到任何数据")
     if any(word in query for word in ("为什么", "什么原因", "分析", "如何", "怎么开", "怎么办")):
         return _refuse("当前仅回答遥测状态，不能分析原因或提供驾驶建议")
+    if any(word in query for word in ("的原因", "处罚是什么", "什么处罚", "怎么判", "会被罚")):
+        return _refuse("处罚原因和规则解释不在遥测范围内，只能播报当前旗号与指示")
+    if any(word in query for word in ("几点", "几月", "几号", "星期几", "什么时间",
+                                      "备用胎", "备用轮", "库存")):
+        return _refuse("这不在比赛遥测的范围里")
     if any(word in query for word in ('调高','调低','调到','改成','设置为','怎么调','替我开','替我关')):
         return _refuse('这里只读取遥测，不操作车辆或提供调校指令')
     from .telemetry_answers import answer
@@ -71,7 +76,8 @@ def route(intent: str, s: Snapshot, query: str = "") -> Decision:
         return _refuse("遥测数值无效或超出语音包的可表达范围")
 
 
-_WANTS_QUERY = {"query_laptime", "query_tyre", "query_laps", "query_fuel", "query_gap", "query_weather"}
+_WANTS_QUERY = {"query_laptime", "query_tyre", "query_laps", "query_fuel",
+                "query_gap", "query_weather", "query_pit"}
 
 
 # ---------------------------------------------------------------- 天气
@@ -130,6 +136,8 @@ def _tyre(s: Snapshot, q: str = "") -> Decision:
 
 
 def _gap(s: Snapshot, q: str = "") -> Decision:
+    if any(w in q for w in ('第几', '名次', '排名')):
+        return _refuse('这是名次问题，不是前后车距离')
     if any(w in q for w in ('比我快','比我慢','圈速差')):
         return _refuse('圈速差不能用前后车时间间隔代替，请分别查询圈速')
     ahead = any(w in q for w in ("前车", "前面", "前方"))
@@ -157,6 +165,10 @@ def _gap(s: Snapshot, q: str = "") -> Decision:
 
 
 def _laptime(s: Snapshot, q: str = "") -> Decision:
+    if (s.lap_completed is not None and s.lap_completed >= 1
+            and (s.lap_last is None or s.lap_last <= 0)
+            and (s.lap_best is None or s.lap_best <= 0)):
+        return _d("AST2_NO_VALID_LAP", "完成了圈数但没有有效圈速，不能拿 -1 当成绩")
     if any(word in q for word in ("前车", "后车", "对手", "前面", "后面", "第一名", "领跑")):
         return _refuse("当前仅采集自己的圈速，不能以它代替对手圈速")
     if any(w in q for w in ("最快", "最佳", "这圈", "当前圈")):
@@ -194,6 +206,8 @@ def _position(s: Snapshot) -> Decision:
 
 
 def _laps(s: Snapshot, q: str = "") -> Decision:
+    if any(w in q for w in ("雨", "天气", "湿", "放晴")):
+        return _refuse("这是天气问题，当前不提供降雨预测")
     n = s.laps_remain
     if n is None or not 0 <= n <= 9999:
         if s.time_remain_s:
@@ -228,14 +242,17 @@ def _damage(s: Snapshot) -> Decision:
 
 def _flags(s: Snapshot) -> Decision:
     f = set(s.flags)
-    if "disqualify" in f:
-        return _d("SPCC_DQ", "取消资格")
+    if "disqualify" in f or "dq_scoring_invalid" in f:
+        return _d("AST2_DISQUALIFY_OUT", "取消资格")
     if "repair" in f:
         return _d("SPCC_REPAIR", "维修旗")
+    if "black" in f:
+        return Decision(["AST2_PENALTY_SERVE", "AST2_PENALTY_NO_REASON"],
+                        "黑旗：本轮必须进站受罚，但不解释原因")
+    if "furled" in f:
+        return _d("AST2_GIVEBACK_ADVANTAGE", "卷起黑旗：切弯占了便宜，要减速把优势还回去")
     if "red" in f:
         return _refuse("红旗；当前素材没有对应红旗播报")
-    if "black" in f:
-        return _d("SPCC_BLACKFLG", "黑旗")
     if "checkered" in f:
         return _d("SPCC_CHECKFLG", "格子旗")
     if "white" in f:
@@ -252,7 +269,10 @@ def _flags(s: Snapshot) -> Decision:
 # ---------------------------------------------------------------- 进站
 
 
-def _pit(s: Snapshot) -> Decision:
+def _pit(s: Snapshot, q: str = "") -> Decision:
+    if any(w in q for w in ("前车", "后车", "对手", "第一名", "领跑", "别人",
+                            "上次", "最近一次", "第几圈", "了吗")):
+        return _refuse("对手的进站记录当前没有采集，不能拿自己的策略代替")
     if s.on_pit_road:
         return _refuse("已经在维修区，不能再用即将进站的语音回答")
     if s.laps_of_fuel is not None and math.isfinite(s.laps_of_fuel) and s.laps_of_fuel >= 0 and s.laps_remain is not None and 0 < s.laps_remain <= 9999:

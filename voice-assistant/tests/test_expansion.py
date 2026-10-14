@@ -90,7 +90,8 @@ class ExpansionTests(unittest.TestCase):
         s=self.s(car_idx=0,car_lap_dist=[.5,.52,.53],car_est_times=[50,52,53],pace_car_indices={1})
         telemetry.DerivedTracker().update(s);self.assertEqual(s.gap_ahead_idx,2)
     def test_red_flag_coexisting_dq_prefers_dq(self):
-        self.assertEqual(router.route('query_flags',self.s(session_flags=.0 if False else 0x20010)).plan,['SPCC_DQ'])
+        self.assertEqual(router.route('query_flags',self.s(session_flags=0x20010)).plan,
+                         ['AST2_DISQUALIFY_OUT'])
     def test_absent_flags_not_reported_as_no_flag(self):
         self.assertFalse(router.route('query_flags',self.s(session_flags_known=False),'现在什么旗').ok)
     def test_brake_bias_percent(self):
