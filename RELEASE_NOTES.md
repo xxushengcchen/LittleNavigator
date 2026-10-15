@@ -1,4 +1,18 @@
-![Moondrop · Moondrop Gravity · Drag-On XT · Moondrip Racing](https://raw.githubusercontent.com/xxushengcchen/LittleNavigator/v1.4.0/assets/banner.png)
+![Moondrop · Moondrop Gravity · Drag-On XT · Moondrip Racing](https://raw.githubusercontent.com/xxushengcchen/LittleNavigator/v1.4.1/assets/banner.png)
+
+## ✨ 小小领航员 v1.4.1 — 语音包人工校准版
+
+按逐条校对表（205 条）重录 203 条播报，音色与后处理不变（小何 2.0、24 kHz·16-bit·单声道）。**问答逻辑、界面与遥测代码本版没有改动。**
+
+- **术语统一**：前导车 → 安全车、裁判 → 赛事干事、暖身 → 热身、`两 wide` → `two wide`。
+- **播报更干净**：去掉句尾语气词（嘿／捏／喔）与拖音，旗语与判罚播报一并重写。
+- **个别播报改成更有情绪的版本**：车损严重、修不好、危险驾驶取消资格、胜利播报等。
+- 音档 2,498 → **2,496 条**：两个 msgId 改后出现同一说法，去重合并，变体数 6 → 5。
+- 从这一版起，**语音包与安装包共用同一个版本号**（此前语音包单独走 2.0.x）。
+
+验证：132 项测试通过；合并语音库 851 个 msgId / 3,074 条音频全部 24 kHz·16-bit·单声道且无损坏；重打包前后除本次校准的 203 条外，其余 2,272 条位元一致。
+
+---
 
 ## ✨ 小小领航员 v1.4.0
 
