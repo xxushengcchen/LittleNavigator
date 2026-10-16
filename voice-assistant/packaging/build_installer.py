@@ -32,7 +32,7 @@ def main():
     output.mkdir(parents=True,exist_ok=True)
     subprocess.run([str(args.compiler.resolve()),'/DAppVersion='+version,'/DAppSource='+str(source),
         '/DOutputRoot='+str(output),'/DWebViewInstaller='+str(args.webview_installer.resolve()),
-        '/DWebViewExe='+args.webview_installer.name,
+        '/DWebViewExe='+args.webview_installer.resolve().name,
         str(VA/'packaging/installer.iss')],check=True)
     exe=output/f'LittleNavigator-{version}-Setup-x64.exe'
     digest=hashlib.sha256(exe.read_bytes()).hexdigest()
