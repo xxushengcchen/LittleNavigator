@@ -64,4 +64,14 @@ Set-Location voice-assistant
 
 先改 `content/assistant-telemetry-v1.1.json`。音频生成工具在 `scripts/`，需要额外安装 `imageio-ffmpeg`，并自行准备可用的豆包语音凭据。`scripts/synthesize_telemetry.py` 从环境变量 `DOUBAO_API_KEY` 或不回显输入中读取密钥。
 
+### 采样率：24 kHz 母带 → 16 kHz 发行包
+
+语音包母带是 **24 kHz / 16-bit PCM**（`scripts/build_pack.py` 默认值）。发行版用 **16 kHz** 以减小安装包体积，做法是保留 24 kHz 母带，再用 `scripts/resample_pack.py`（ffmpeg 带限重采样）派生一份 16 kHz 的发行用包。脚本逐条校验采样率／位深／声道与数量，不符合即报错退出：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/resample_pack.py --src build/pack/Mandarin-CNTW-Xusheng_Chen --dst build/pack-16k/Mandarin-CNTW-Xusheng_Chen
+```
+
+主包、`assistant-extra`、`assistant-telemetry` 三份都要处理，16 kHz 的产物要放在 `build_dist.py` 读取素材的位置。降采样后用 `tools/audit_offline.py` 核对全部音频为 16 kHz/16-bit/单声道且无损坏。
+
 不要把密钥写进源码、命令行示例、Issue 或 PR。语音服务调用可能收费，普通玩家使用现成发行版不需要调用这些工具。

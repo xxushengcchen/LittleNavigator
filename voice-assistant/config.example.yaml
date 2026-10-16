@@ -11,7 +11,7 @@ version: 2
 #  语音包 —— 回答素材的唯一来源
 # ---------------------------------------------------------------------------
 voice_pack:
-  # 主包（24 kHz / 16-bit）。
+  # 主包（发行版为 16 kHz / 16-bit；24 kHz 母带见 DEVELOPMENT.md）。
   # 开发时指向 build/pack（v2.0.0 工作副本）；游戏里装好 v2.0.0 之后
   # 改成 "D:/iRacing/sound/spcc/Mandarin-CNTW-Xusheng_Chen" 即可。
   dir: "E:/Doc/ChatGPT/iRacing spotter/build/pack/Mandarin-CNTW-Xusheng_Chen"
