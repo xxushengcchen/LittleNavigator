@@ -4,7 +4,7 @@
 
 - iRacing 遥测通过 pyirsdk 读取；SDK 字段解释以 iRacing 官方资料和实际遥测为准。
 - 本地识别使用 SenseVoice 模型，由 sherpa-onnx 运行。模型从发行版取用，分发和训练用途须遵循模型提供方的许可。
-- 桌面窗口使用 pywebview、pythonnet 和 Microsoft WebView2；安装包包含微软官方 WebView2 离线安装组件。
+- 桌面窗口使用 pywebview、pythonnet 和 Microsoft WebView2；安装包内含微软官方 WebView2 引导器，系统缺少运行时由它联网补装（全离线版安装包则改带微软官方离线运行时）。
 - 方向盘读取使用 PySDL2 / SDL2；音频、拼音和繁简转换依赖见 requirements-tested.txt，相关库保留各自许可。
 - 中文语音使用豆包小何 2.0 音色预生成。播放器正常运行不需要语音服务凭据；调用语音生成服务需要自行取得权限并承担服务费用。
 - 横幅及软件中的团队、品牌标识用于展示项目相关信息，不作为 MIT 许可素材重新授权。

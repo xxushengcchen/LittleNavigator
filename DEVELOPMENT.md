@@ -48,9 +48,13 @@ Set-Location voice-assistant
 .\.venv\Scripts\python.exe voice-assistant/packaging/build_dist.py
 ```
 
-完整安装包还需要 Inno Setup 和微软官方 WebView2 x64 离线安装组件。可以从官方渠道取得这两个工具，再显式指定路径：
+完整安装包还需要 Inno Setup，以及 WebView2 安装组件。默认用微软官方**引导器** `MicrosoftEdgeWebview2Setup.exe`（约 2 MB）：缺运行时的机器在安装时联网补装，从而把安装包缩小约 180 MB。要出**全离线版**，改用 Evergreen Standalone Installer `MicrosoftEdgeWebView2RuntimeInstallerX64.exe`（约 180 MB）。两者都从微软官方渠道取得，再显式指定路径：
 
 ```powershell
+# 默认：引导器（推荐，安装包更小）
+.\.venv\Scripts\python.exe voice-assistant/packaging/build_installer.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" --webview-installer "C:\Downloads\MicrosoftEdgeWebview2Setup.exe"
+
+# 全离线版：离线运行时
 .\.venv\Scripts\python.exe voice-assistant/packaging/build_installer.py --compiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" --webview-installer "C:\Downloads\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 ```
 
