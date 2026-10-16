@@ -674,7 +674,8 @@
     card.innerHTML = '<div class="ira-form">' +
       field("语音包路径", '<input class="ira-input ira-num" value="' + esc(st.pack.dir) + '" readonly>',
         "v" + esc(st.pack.version) + " · " + st.pack.msgIds + " msgId · " +
-        st.pack.clips + " 条 · 24 kHz / 16-bit") +
+        st.pack.clips + " 条 · " + (st.pack.rate
+          ? Math.round(st.pack.rate / 100) / 10 + " kHz / 16-bit" : "16-bit")) +
       field("主音量", '<input class="ira-range" type="range" id="ira-vol" min="0" max="100" value="' +
         Math.round((st.config.playback.volume ?? 1) * 100) + '">' +
         '<span class="ira-rangeval"><span class="ira-num" id="ira-volval">' +

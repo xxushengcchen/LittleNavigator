@@ -92,7 +92,7 @@ class Assistant:
     def pack_info(self) -> dict:
         return {"version": self.pack.version, "dir": str(self.pack.root),
                 "msgIds": self.stats["msgIds"], "clips": self.stats["clips"],
-                "extra_dir": self.extra_dir}
+                "rate": self.pack.sample_rate(), "extra_dir": self.extra_dir}
 
     def config_view(self) -> dict:
         """给界面看的配置子集（不含任何密钥）。"""

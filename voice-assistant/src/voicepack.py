@@ -10,6 +10,7 @@ import json
 import pathlib
 import random
 import warnings
+import wave
 from dataclasses import dataclass, field
 
 
@@ -106,6 +107,19 @@ class VoicePack:
             "clips": sum(counts),
             "avg_variants": round(sum(counts) / max(len(counts), 1), 2),
         }
+
+    def sample_rate(self) -> int | None:
+        """读第一条可用音频的采样率，供界面显示；读不到返回 None。"""
+        for variants in self.variants.values():
+            for v in variants:
+                p = self.path_of(v)
+                if p.is_file():
+                    try:
+                        with wave.open(str(p), "rb") as w:
+                            return w.getframerate()
+                    except Exception:
+                        return None
+        return None
 
 
 class VariantPicker:
