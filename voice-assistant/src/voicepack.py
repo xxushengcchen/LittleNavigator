@@ -118,7 +118,7 @@ class VoicePack:
                         with wave.open(str(p), "rb") as w:
                             return w.getframerate()
                     except Exception:
-                        return None
+                        continue          # 损坏就跳过，继续找下一份可用音频
         return None
 
 
