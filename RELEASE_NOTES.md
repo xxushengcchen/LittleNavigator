@@ -81,9 +81,3 @@ iRacing 中文语音问答助手，支持按住键盘或方向盘按钮提问。
 - 提供用户自行接入大模型 API 的接口，逐步支持更自然的对话和追问。
 
 以上都是后续计划，当前版本没有可用的自由大模型对话功能。
-
-## 🙏 赞赏
-
-给不给都无所谓。如果觉得我做得还不错，愿意支持一下，感谢支持。赞赏完全自愿，不影响使用。
-
-<img src="https://raw.githubusercontent.com/xxushengcchen/LittleNavigator/v1.3.2/assets/support.jpg" width="360" alt="作者赞赏码">

@@ -104,9 +104,3 @@ iRacing/
 代码采用 [MIT License](LICENSE)。预训练模型、第三方依赖、品牌标识和语音资源不自动适用本项目的 MIT 许可，保留各自来源和使用条件，见 [素材与依赖说明](THIRD_PARTY_NOTICES.md)。
 
 制作：xushengchen from Moondrop-Dox Racing。项目由社区维护，不是 iRacing 官方软件。
-
-## 赞赏
-
-如果觉得我做得还不错，愿意支持一下的大佬，祝你irating早日破万，感谢支持。赞赏完全自愿，不影响使用；反馈问题、补文案、提 PR 也都欢迎。
-
-<a href="assets/support.jpg"><img src="assets/support.jpg" width="360" alt="作者赞赏码"></a>
