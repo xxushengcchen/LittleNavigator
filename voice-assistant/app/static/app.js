@@ -91,7 +91,49 @@
   var PTT_TEXT = { idle: "待机", recording: "收音中", thinking: "处理中",
                    speaking: "播报中", off: "未启动" };
 
+
+  // ---- 赛前检查总线 -------------------------------------------------
+  // 四个子系统是否就绪。这是这个界面最该一眼回答的问题：
+  // 「我现在能不能开跑」——而不是分散在五个页面里让人自己拼。
+  function busSet(key, state, label) {
+    var el = document.querySelector('[data-bus="' + key + '"]');
+    if (!el) { return; }
+    el.setAttribute("data-state", state);
+    var v = el.querySelector("[data-bus-val]");
+    if (v) { v.textContent = label; }
+  }
+
+  function renderBus(st) {
+    var tele = st.telemetry || {};
+    var ptt = st.ptt || {};
+    var ai = st.ai || {};
+    var cc = st.car_control || {};
+
+    if (st.sim) { busSet("link", "warn", "模拟数据"); }
+    else if (tele.connected) { busSet("link", "ok", "已连接"); }
+    else { busSet("link", "bad", "未连接"); }
+
+    if (ptt.error) { busSet("mic", "bad", "出错"); }
+    else if (ptt.running) {
+      if (ptt.state === "recording") { busSet("mic", "warn", "录音中"); }
+      else if (ptt.state === "thinking") { busSet("mic", "warn", "处理中"); }
+      else { busSet("mic", "ok", "待命"); }
+    } else { busSet("mic", "off", "未监听"); }
+
+    if (!ai.enabled) { busSet("ai", "off", "未启用"); }
+    else if (!ai.configured) { busSet("ai", "warn", "缺密钥"); }
+    else if (ai.breaker === "open") { busSet("ai", "bad", "已熔断"); }
+    else if (ai.mode === "full") { busSet("ai", "ok", "全接管"); }
+    else if (ai.mode === "analysis_key") { busSet("ai", "ok", "按键触发"); }
+    else { busSet("ai", "ok", "白名单"); }
+
+    if (!cc.enabled) { busSet("car", "off", "未启用"); }
+    else if (!cc.available) { busSet("car", "warn", "未连游戏"); }
+    else { busSet("car", "ok", "可执行"); }
+  }
+
   function renderState(st) {
+    renderBus(st);
     var app = $("#ira-app");
     var tele = st.telemetry || {};
     var online = !!tele.connected;

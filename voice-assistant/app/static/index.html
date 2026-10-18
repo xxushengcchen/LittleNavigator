@@ -2,478 +2,929 @@
 <html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>iRacing 小小领航员</title></head><body>
 <div id="ira-app" class="ira" lang="zh-Hans" data-sim="online" data-density="standard">
 <style>
-html,body {margin:0;width:100%;height:100%;background:#fff;}
-body.desktop-shell .ira {max-width:none;padding:0;margin:0;height:100vh;}
-body.desktop-shell .ira-window {height:100%;border:0;border-radius:0;box-shadow:none;display:flex;flex-direction:column;}
-body.desktop-shell .ira-body {flex:1;min-height:0;overflow:hidden;}
-body.desktop-shell .ira-nav {overflow-y:auto;}
-body.desktop-shell .ira-main {overflow-y:auto;}
-.window-controls {display:none;gap:3px;margin-left:8px;}
-body.desktop-shell .window-controls {display:flex;}
-.window-controls button {width:34px;height:30px;border:0;background:transparent;border-radius:5px;font-size:20px;cursor:pointer;}
-.window-controls button:hover {background:#e8edf4;}
-.window-controls button:last-child:hover {background:#e5484d;color:white;}
-.partner-logos {display:grid;grid-template-columns:1fr 1fr;gap:3px;width:100%;margin:10px 0;border-radius:6px;overflow:hidden;background:#1a1b1d;}
-.partner-logo {aspect-ratio:500/199;background-image:url('/static/partner-logos.png');background-size:200% 200%;background-repeat:no-repeat;}
-.partner-logo:nth-child(1){background-position:0 0;}
-.partner-logo:nth-child(2){background-position:100% 0;}
-.partner-logo:nth-child(3){background-position:0 100%;}
-.partner-logo:nth-child(4){background-position:100% 100%;}
+/* ==========================================================================
+   小小领航员 — 方向：赛前检查卡 / 赛后工程记录
+   纸白工作面 + 深石墨机身；发丝规分栏，无浮起卡片；数据等宽右对齐。
+   ========================================================================== */
+
+html, body { margin: 0; width: 100%; height: 100%; background: #0F1B20; }
+
 .ira {
-  --ira-bg: #FFFFFF;
-  --ira-panel: #FFFFFF;
-  --ira-panel-2: #F7FAFD;
-  --ira-well: #F1F6FC;
-  --ira-line: rgba(14, 27, 46, 0.08);
-  --ira-line-strong: rgba(14, 27, 46, 0.14);
-  --ira-fg: #0E1B2E;
-  --ira-fg2: #56657C;
-  --ira-dim: #8494A8;
-  --ira-accent: #1A6FE0;
-  --ira-green: #0E9F6E;
-  --ira-red: #6E7F97;
-  --ira-blue: #4A9BE8;
-  --ira-num-size: 48px;
-  --ira-radius: 12px;
-  --ira-card-pad: 14px 16px;
-  --ira-gap: 12px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  font-size: 13px;
+  /* ---- 机身 ---- */
+  --shell:        #0F1B20;
+  --shell-2:      #16262D;
+  --shell-3:      #1E3239;
+  --shell-ink:    #E6EDEA;
+  --shell-dim:    #8AA1A4;
+  --shell-line:   rgba(255,255,255,0.10);
+
+  /* ---- 纸面 ---- */
+  --paper:        #F2F2EF;
+  --surface:      #FFFFFF;
+  --well:         #E9EAE5;
+  --ink:          #12181A;
+  --ink-2:        #46565C;
+  --ink-3:        #5E6E72;
+  --line:         #DCDDD8;
+  --line-strong:  #C3C6BF;
+
+  /* ---- 一个主色，只给「可操作 / 选中」 ---- */
+  --accent:       #0E5B64;
+  --accent-ink:   #0A464D;
+  --accent-wash:  #E3EDEC;
+
+  /* ---- 状态色，只表达就绪度 ---- */
+  --ok:           #11724C;
+  --warn:         #8F5F08;
+  --bad:          #9E2A21;
+  --idle:         #7A898D;
+
+  /* ---- 层级 ---- */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs:    13px;
+  --fs-md: 15px;
+  --fs-lg: 19px;
+  --fs-xl: 24px;
+  --num:   44px;
+
+  --r: 3px;
+  --top-h: 54px;
+  --rail-w: 196px;
+
+  font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+               "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: var(--fs);
   line-height: 1.55;
-  color: var(--ira-fg);
-  max-width: 1024px;
-  margin: 0 auto;
-  padding: 10px;
+  color: var(--ink);
+  background: var(--shell);
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
 }
+
 .ira, .ira *, .ira *::before, .ira *::after { box-sizing: border-box; }
 .ira p, .ira ul, .ira ol, .ira h2, .ira h3 { margin: 0; padding: 0; }
 .ira ul, .ira ol { list-style: none; }
-.ira button { font: inherit; color: inherit; }
+.ira button { font: inherit; }
 .ira [hidden] { display: none !important; }
 
-.ira-num, .ira code { font-family: "Roboto Mono", ui-monospace, "Cascadia Mono", monospace; }
-.ira-num { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-
-/* ---------- window shell ---------- */
-.ira-window {
-  background: var(--ira-bg);
-  border: 1px solid var(--ira-line-strong);
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 24px 60px rgba(14, 27, 46, 0.12);
+/* 数字：等宽 + 表格数字。这里的数据全是测量值，等宽是功能不是装饰。 */
+.ira-num, .ira code, .ira-logtime {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas",
+               "Roboto Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
 }
+
+/* ---- 浏览器自带的表面也要穿这套衣服 ---- */
+.ira ::selection { background: var(--accent); color: #fff; }
+.ira :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+.ira * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.ira ::-webkit-scrollbar { width: 10px; height: 10px; }
+.ira ::-webkit-scrollbar-track { background: transparent; }
+.ira ::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--paper);
+  border-radius: 6px;
+}
+.ira ::-webkit-scrollbar-thumb:hover { background: #A8ACA4; }
+
+/* ========================================================== 机身骨架 */
+.ira-window {
+  background: var(--shell);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.desktop-shell .ira { padding: 0; margin: 0; max-width: none; }
+body.desktop-shell .ira-window { border: 0; border-radius: 0; box-shadow: none; }
+body.desktop-shell .ira-body { flex: 1; min-height: 0; overflow: hidden; }
+body.desktop-shell .ira-nav { overflow-y: auto; }
+body.desktop-shell .ira-main { overflow-y: auto; }
+body.desktop-shell .window-controls { display: flex; }
+
+/* ========================================================== 顶栏 */
 .ira-top {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 10px 14px;
-  background: var(--ira-panel-2);
-  border-bottom: 1px solid var(--ira-line);
+  gap: 16px;
+  height: var(--top-h);
+  flex: none;
+  padding: 0 16px 0 18px;
+  background: var(--shell);
+  border-bottom: 1px solid var(--shell-line);
 }
 .ira-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: url("/static/avatar.png") center/cover no-repeat;
-  background-color: rgba(26, 111, 224, 0.14);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ira-accent);
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
   flex: none;
+  color: var(--shell-ink);
+  border: 1px solid var(--shell-line);
+  border-radius: var(--r);
 }
-.ira-brand { display: flex; flex-direction: column; line-height: 1.25; }
-.ira-brand strong { font-size: 14px; font-weight: 500; }
-.ira-brand span { font-size: 10.5px; color: var(--ira-dim); letter-spacing: 0.04em; }
+.ira-mark i, .ira-mark svg { width: 14px; height: 14px; display: block; }
+
+.ira-brand { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.ira-brand strong {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--shell-ink);
+  white-space: nowrap;
+}
+.ira-brand span {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--shell-dim);
+  white-space: nowrap;
+}
+.ira-brand + .ira-session { margin-left: 4px; }
+
 .ira-session {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--ira-fg2);
+  font-size: var(--fs-sm);
+  color: var(--shell-dim);
+  padding-left: 16px;
+  border-left: 1px solid var(--shell-line);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-left: 6px;
+  max-width: 240px;
 }
-.ira-topright { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
+.ira-topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* ========================================================== 赛前检查总线（签名动作） */
+.ira-bus {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--shell-line);
+  border: 1px solid var(--shell-line);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.ira-bus-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 82px;
+  padding: 5px 10px 6px;
+  background: var(--shell);
+}
+.ira-bus-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--shell-dim);
+}
+.ira-bus-dot {
+  width: 6px; height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.ira-bus-val {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--shell-ink);
+  white-space: nowrap;
+}
+.ira-bus-item[data-state="ok"] .ira-bus-dot    { background: #3FBF8A; box-shadow: 0 0 0 3px rgba(63,191,138,0.16); }
+.ira-bus-item[data-state="warn"] .ira-bus-dot  { background: #E0A23C; box-shadow: 0 0 0 3px rgba(224,162,60,0.16); }
+.ira-bus-item[data-state="bad"] .ira-bus-dot   { background: #E4695C; box-shadow: 0 0 0 3px rgba(228,105,92,0.18); }
+.ira-bus-item[data-state="off"] .ira-bus-val   { color: var(--shell-dim); font-weight: 400; }
+
+/* 顶栏里的轻量 chip（保留原标记，新增外观） */
+/* chip 有两种上下文：顶栏（深底）与面板（纸面）。默认按纸面写，
+   顶栏里再覆盖——否则面板里的 chip 会是浅字压浅底，直接看不见。 */
 .ira-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--ira-line-strong);
-  background: rgba(14, 27, 46, 0.03);
-  font-size: 11.5px;
-  color: var(--ira-fg2);
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  color: var(--ink);
   white-space: nowrap;
 }
-.ira-chip .ira-num { font-size: 12px; color: var(--ira-fg); }
-.ira-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ira-dim); flex: none; }
-.ira-dot[data-state="on"], .ira-dot[data-state="speak"] { background: var(--ira-green); box-shadow: 0 0 8px rgba(14, 159, 110, 0.30); }
-.ira-dot[data-state="off"] { background: var(--ira-red); box-shadow: 0 0 8px rgba(110, 127, 151, 0.30); }
-.ira-dot[data-state="listen"] { background: var(--ira-blue); box-shadow: 0 0 8px rgba(74, 155, 232, 0.30); }
-.ira-dot[data-state="think"] { background: var(--ira-accent); box-shadow: 0 0 8px rgba(26, 111, 224, 0.30); }
-.ira-dot[data-state="idle"] { background: var(--ira-dim); }
-.ira-chip[data-state="off"] { color: var(--ira-red); border-color: rgba(110, 127, 151, 0.32); }
-.ira-chip[data-state="listen"] { color: var(--ira-blue); border-color: rgba(74, 155, 232, 0.30); }
-.ira-chip[data-state="think"] { color: var(--ira-accent); border-color: rgba(26, 111, 224, 0.32); }
-.ira-chip[data-state="speak"] { color: var(--ira-green); border-color: rgba(14, 159, 110, 0.30); }
-.ira-simctl {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11.5px;
-  color: var(--ira-dim);
-  padding-left: 6px;
-  border-left: 1px solid var(--ira-line);
+.ira-chip i, .ira-chip svg { width: 13px; height: 13px; display: block; color: var(--ink-3); }
+.ira-top .ira-chip {
+  height: 26px;
+  border-color: var(--shell-line);
+  background: transparent;
+  color: var(--shell-ink);
+}
+.ira-top .ira-chip i, .ira-top .ira-chip svg { color: var(--shell-dim); }
+.ira-dot {
+  width: 6px; height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--idle);
+}
+[data-state="on"] > .ira-dot,
+.ira-dot[data-state="on"]   { background: #3FBF8A; }
+[data-state="recording"] > .ira-dot,
+.ira-dot[data-state="recording"] { background: #E4695C; }
+[data-state="thinking"] > .ira-dot,
+.ira-dot[data-state="thinking"]  { background: #E0A23C; }
+[data-state="idle"] > .ira-dot,
+.ira-dot[data-state="idle"]      { background: var(--shell-dim); }
+
+.window-controls { display: none; gap: 2px; margin-left: 4px; }
+.window-controls button {
+  width: 30px; height: 26px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--r);
+  color: var(--shell-dim);
+  font-size: 15px;
+  line-height: 1;
   cursor: pointer;
 }
+.window-controls button:hover { background: var(--shell-2); color: var(--shell-ink); }
+.window-controls button:last-child:hover { background: #A32A22; color: #fff; }
 
-/* ---------- body layout ---------- */
-.ira-body { display: grid; grid-template-columns: 206px minmax(0, 1fr); }
+/* ========================================================== 主体 */
+.ira-body { display: flex; flex: 1; min-height: 0; background: var(--paper); }
+
+/* ---- 左轨：分组导航 ---- */
 .ira-nav {
+  width: var(--rail-w);
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 12px 10px;
-  background: #F7FAFD;
-  border-right: 1px solid var(--ira-line);
+  gap: 2px;
+  padding: 14px 10px 12px;
+  background: var(--shell);
+  border-right: 1px solid var(--shell-line);
+  overflow-y: auto;
+}
+.ira-navgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--shell-line);
+}
+.ira-navgroup:last-of-type { border-bottom: 0; margin-bottom: 0; }
+.ira-navgroup-title {
+  padding: 0 8px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: #7A9196;
 }
 .ira-navbtn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
-  text-align: left;
-  padding: 8px 11px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--r);
   background: transparent;
-  color: var(--ira-fg2);
-  font-size: 13px;
+  color: var(--shell-dim);
+  font-size: var(--fs);
+  text-align: left;
   cursor: pointer;
+  position: relative;
 }
-.ira-navbtn:hover { background: rgba(14, 27, 46, 0.04); color: var(--ira-fg); }
-.ira-navbtn.is-active {
-  background: rgba(26, 111, 224, 0.10);
-  border-color: rgba(26, 111, 224, 0.24);
-  color: #0B54B4;
+.ira-navbtn i, .ira-navbtn svg { width: 15px; height: 15px; flex: none; }
+.ira-navbtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ira-navbtn:hover { background: var(--shell-2); color: var(--shell-ink); }
+.ira-navbtn.is-active { background: var(--shell-3); color: #fff; font-weight: 500; }
+.ira-navbtn.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 2px;
+  background: #3FBF8A;
+  border-radius: 0 2px 2px 0;
 }
-.ira-navbtn i, .ira-navbtn svg { width: 16px; height: 16px; flex: none; }
+
 .ira-navfoot {
   margin-top: auto;
-  padding: 10px 11px 4px;
-  font-size: 10.5px;
-  color: var(--ira-dim);
-  border-top: 1px solid var(--ira-line);
-  line-height: 1.7;
+  padding: 12px 8px 0;
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: #7A9196;
+  border-top: 1px solid var(--shell-line);
 }
-.ira-main { padding: 14px; display: flex; flex-direction: column; gap: var(--ira-gap); min-width: 0; }
-.ira-view { display: flex; flex-direction: column; gap: var(--ira-gap); }
-.ira-view[hidden] { display: none; }
 
-.ira-vhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.ira-vhead h2 { font-size: 16px; font-weight: 500; }
-.ira-vmeta { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+/* ---- 内容区 ---- */
+.ira-main { flex: 1; min-width: 0; background: var(--paper); overflow-y: auto; }
 
-/* ---------- cards & rows ---------- */
-.ira-card {
-  background: var(--ira-panel);
-  border: 1px solid var(--ira-line);
-  border-radius: var(--ira-radius);
-  padding: var(--ira-card-pad);
+.ira-view {
+  padding: 26px 32px 44px;
+  max-width: 940px;
 }
-.ira-label {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--ira-fg2);
-  margin-bottom: 6px;
-}
-.ira-meta { font-size: 11.5px; color: var(--ira-dim); }
-.ira-metarow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ira-state { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 
-.ira-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid var(--ira-line-strong);
-  color: var(--ira-fg2);
-}
-.ira-badge.l1, .ira-badge.hit { color: var(--ira-green); border-color: rgba(14, 159, 110, 0.32); background: rgba(14, 159, 110, 0.08); }
-.ira-badge.l2 { color: var(--ira-blue); border-color: rgba(74, 155, 232, 0.32); background: rgba(74, 155, 232, 0.08); }
-.ira-badge.l3 { color: var(--ira-accent); border-color: rgba(26, 111, 224, 0.34); background: rgba(26, 111, 224, 0.08); }
-.ira-badge.miss, .ira-badge.low { color: var(--ira-red); border-color: rgba(110, 127, 151, 0.34); background: rgba(110, 127, 151, 0.10); }
-.ira-badge.skip { color: var(--ira-dim); }
-
-/* ---------- dashboard ---------- */
-.ira-dash { display: flex; flex-direction: column; gap: var(--ira-gap); min-height: 408px; }
-.ira-statusrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ira-gap); }
-.ira-statusrow .ira-card { display: flex; flex-direction: column; gap: 6px; }
-
-/* 赛后复盘：每条一行，问题/回答/来源，底部三个标记按钮 */
-.ira-reviewrow { padding: 10px 0; border-bottom: 1px solid var(--ira-line); }
-.ira-reviewrow:last-child { border-bottom: 0; }
-.ira-reviewq { font-weight: 600; margin-bottom: 4px; }
-.ira-reviewa { color: var(--ira-fg); margin-bottom: 4px; }
-.ira-reviewmeta { font-size: 12px; color: var(--ira-muted); margin-bottom: 8px; }
-.ira-btn.small { padding: 4px 10px; font-size: 12px; }
-.ira-card-tight { padding: 12px 14px; }
-.ira-answer .ira-q { font-size: 13px; color: var(--ira-fg2); }
-.ira-answer .ira-a { font-size: 30px; font-weight: 500; line-height: 1.35; margin: 4px 0 10px; }
-.ira-answer .ira-metarow { gap: 12px; }
-
-.ira-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
-  gap: var(--ira-gap);
-}
-.ira-tile {
-  background: var(--ira-panel);
-  border: 1px solid var(--ira-line);
-  border-radius: var(--ira-radius);
-  padding: 10px 14px;
-}
-.ira-tile .ira-label { margin-bottom: 2px; }
-.ira-tile .ira-val { display: flex; align-items: baseline; gap: 6px; }
-.ira-tile-num { font-size: 24px; font-weight: 700; line-height: 1.2; }
-.ira-unit { font-size: 12px; color: var(--ira-fg2); }
-.ira-tile .ira-meta { display: block; margin-top: 2px; }
-
-.ira-dashb { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: var(--ira-gap); min-height: 408px; align-items: start; }
-.ira-sidecol { display: flex; flex-direction: column; gap: var(--ira-gap); }
-.ira-chatlist li { padding: 9px 0; border-top: 1px solid var(--ira-line); }
-.ira-chatlist li:first-child { border-top: 0; padding-top: 2px; }
-.ira-chatlist .ira-a-sm { font-size: 15px; margin: 2px 0 4px; }
-.ira-minigrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
-.ira-minigrid .ira-meta { display: block; }
-.ira-minigrid .ira-num { font-size: 15px; font-weight: 500; }
-
-/* ---------- offline ---------- */
-.ira-offline-only { display: none; }
-.ira-dash > .ira-online-only, .ira-dashb .ira-online-only { display: contents; }
-.ira[data-sim="offline"] .ira-online-only { display: none; }
-.ira[data-sim="offline"] .ira-offline-only { display: block; }
-.ira-offline { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 44px 20px; }
-.ira .ira-offline i, .ira .ira-offline svg { width: 28px; height: 28px; color: var(--ira-red); }
-.ira-offline strong { font-size: 17px; font-weight: 500; }
-.ira-offline span { font-size: 12px; color: var(--ira-fg2); max-width: 380px; }
-
-/* ---------- log ---------- */
-.ira-filters { display: flex; gap: 8px; flex-wrap: wrap; }
-.ira-filterbtn {
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--ira-line-strong);
-  background: transparent;
-  color: var(--ira-fg2);
-  font-size: 12px;
-  cursor: pointer;
-}
-.ira-filterbtn:hover { color: var(--ira-fg); border-color: rgba(14, 27, 46, 0.22); }
-.ira-filterbtn.is-active {
-  background: rgba(26, 111, 224, 0.12);
-  border-color: rgba(26, 111, 224, 0.32);
-  color: #0B54B4;
-}
-.ira-logrows { display: flex; flex-direction: column; }
-.ira-logrow {
-  display: grid;
-  grid-template-columns: 62px minmax(0, 1fr) auto;
+.ira-vhead {
+  display: flex;
+  align-items: baseline;
   gap: 12px;
-  align-items: start;
-  padding: 10px 2px;
-  border-top: 1px solid var(--ira-line);
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--ink);
 }
-.ira-logrow:first-child { border-top: 0; }
-.ira-logtime { font-size: 11.5px; color: var(--ira-dim); padding-top: 2px; }
-.ira-logq { font-size: 13px; color: var(--ira-fg); }
-.ira-loga { font-size: 13.5px; color: var(--ira-fg2); }
-.ira-logside { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.ira-logside .ira-num { font-size: 12px; color: var(--ira-fg2); }
-.ira-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 38px 16px; text-align: center; }
-.ira .ira-empty i, .ira .ira-empty svg { width: 22px; height: 22px; color: var(--ira-dim); }
-.ira-empty strong { font-size: 14px; font-weight: 500; color: var(--ira-fg2); }
+.ira-vhead h2 {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+}
+.ira-vhead .ira-savehint { margin-left: auto; }
+.ira-vmeta {
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
 
-/* ---------- debug console ---------- */
-.ira-debug { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr); gap: var(--ira-gap); align-items: start; }
-.ira-qrow { display: flex; gap: 8px; }
+/* ========================================================== 分区（原 .ira-card）
+   不再是浮起卡片：区域靠一条上规线分开，无底色、无圆角、无阴影。 */
+.ira-card {
+  display: block;
+  padding: 16px 0 4px;
+  margin-bottom: 22px;
+  border-top: 1px solid var(--line);
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+.ira-card:first-of-type { border-top: 0; padding-top: 0; }
+.ira-card-tight { padding-top: 12px; margin-bottom: 14px; }
+.ira-card > h3,
+.ira-card .ira-swtitle {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+/* ========================================================== 表单 */
+.ira-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  max-width: 620px;
+}
+.ira-field {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: 4px 14px;
+  min-width: 0;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ira-field:last-child { border-bottom: 0; }
+.ira-field > label {
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  letter-spacing: 0.01em;
+}
+.ira-field > *:not(label):not(.ira-hint) { grid-column: 2; }
+.ira-field .ira-hint {
+  grid-column: 2;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+
 .ira-input, .ira-select {
   width: 100%;
-  background: var(--ira-well);
-  border: 1px solid var(--ira-line-strong);
-  border-radius: 8px;
-  padding: 8px 10px;
-  color: var(--ira-fg);
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
+  appearance: none;
 }
-.ira-input::placeholder { color: var(--ira-dim); }
+.ira-select {
+  padding-right: 26px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 13px, calc(100% - 8px) 13px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.ira-input::placeholder { color: #9AA6A9; }
+.ira-input:hover, .ira-select:hover { border-color: #A8ACA4; }
+.ira-input:focus, .ira-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+.ira-input[readonly] { background: var(--well); color: var(--ink-2); }
+.ira-input:disabled, .ira-select:disabled { background: var(--well); color: var(--ink-3); cursor: not-allowed; }
+
+.ira-range { width: 100%; accent-color: var(--accent); }
+.ira-rangeval {
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.ira-switchrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ira-switchrow:last-child { border-bottom: 0; }
+.ira-sw { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.ira-hr {
+  height: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 16px 0;
+}
+
+/* ========================================================== 按钮 */
 .ira-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 7px 13px;
-  border-radius: 8px;
-  border: 1px solid var(--ira-line-strong);
-  background: rgba(14, 27, 46, 0.04);
-  color: var(--ira-fg);
-  font-size: 12.5px;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
 }
-.ira-btn:hover { background: rgba(14, 27, 46, 0.07); }
-.ira-btn-primary { background: var(--ira-accent); border-color: transparent; color: #EAF2FE; font-weight: 500; }
-.ira-btn-primary:hover { background: #4A9BE8; }
-.ira-btn:disabled { opacity: 0.55; cursor: default; }
-.ira i[data-lucide], .ira svg.lucide { width: 16px; height: 16px; }
-.ira-chipbtn {
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px dashed var(--ira-line-strong);
-  background: transparent;
-  color: var(--ira-fg2);
-  font-size: 11.5px;
-  cursor: pointer;
+.ira-btn:hover { border-color: #A8ACA4; background: #FAFAF8; }
+.ira-btn:active { background: var(--well); }
+.ira-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ira-btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+.ira-btn.ghost:hover { background: var(--well); color: var(--ink); }
+.ira-btn.small { height: 24px; padding: 0 9px; font-size: var(--fs-xs); }
+.ira-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
-.ira-chipbtn:hover { color: var(--ira-fg); border-style: solid; }
-.ira-examples { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
-.ira-funnel { margin-top: 12px; border-top: 1px solid var(--ira-line); }
-.ira-frow {
+.ira-btn-primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+
+.ira-row {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ira-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ira-savehint { font-size: var(--fs-xs); color: var(--ink-3); }
+.ira-hint { font-size: var(--fs-xs); color: var(--ink-3); }
+
+/* ========================================================== 数据展示 */
+.ira-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 20px;
+}
+.ira-tile {
+  padding: 11px 14px 12px;
+  border-left: 1px solid var(--line);
+  min-width: 0;
+}
+.ira-tile:first-child { border-left: 0; padding-left: 0; }
+.ira-tile .ira-label,
+.ira-tile > span:first-child {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 3px;
+}
+.ira-num, .ira-tile-num {
+  font-size: var(--num);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+}
+.ira-tile-num, .ira-tile .ira-num { color: var(--ink); }
+.ira-tile .ira-num, .ira-tile .ira-tile-num { font-size: 30px; }
+.ira-unit { font-size: var(--fs-sm); color: var(--ink-3); margin-left: 3px; }
+
+.ira-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ira-meta { font-size: var(--fs-xs); color: var(--ink-3); }
+.ira-metarow {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  align-items: baseline;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--ira-line);
+  flex-wrap: wrap;
+  margin-top: 8px;
 }
-.ira-frow:last-child { border-bottom: 0; }
-.ira-frow .ira-fname { width: 96px; flex: none; font-size: 12px; color: var(--ira-fg2); display: flex; gap: 6px; align-items: center; }
-.ira-fstate { font-size: 12.5px; flex: none; }
-.ira-fstate[data-state="hit"] { color: var(--ira-green); }
-.ira-fstate[data-state="miss"] { color: var(--ira-red); }
-.ira-fstate[data-state="low"] { color: var(--ira-accent); }
-.ira-fstate[data-state="skip"] { color: var(--ira-dim); }
-.ira-fdetail { font-size: 11.5px; color: var(--ira-dim); min-width: 0; }
-.ira-kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 12.5px; }
-.ira-kv > span:first-child { color: var(--ira-fg2); }
-.ira-kv .ira-num, .ira-kv code { font-size: 12px; }
-.ira code {
-  background: var(--ira-well);
-  border: 1px solid var(--ira-line);
-  border-radius: 6px;
-  padding: 1px 6px;
-  font-size: 12px;
-}
-.ira-hr { border: 0; border-top: 1px solid var(--ira-line); margin: 10px 0; }
+.ira-val { font-size: var(--fs-md); font-weight: 600; }
 
-/* ---------- settings forms ---------- */
-.ira-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
-.ira-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.ira-field > label { font-size: 11px; letter-spacing: 0.06em; color: var(--ira-fg2); }
-.ira-field .ira-hint { font-size: 11px; color: var(--ira-dim); }
-.ira-inline { display: flex; gap: 8px; align-items: center; }
-.ira-inline .ira-input { flex: 1 1 auto; }
-.ira-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.ira-duo .ira-hint { display: block; margin-top: 4px; }
-.ira-switchrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
-.ira-switchrow .ira-swtitle { font-size: 13px; }
-.ira-switchrow .ira-hint { display: block; font-size: 11px; color: var(--ira-dim); }
-.ira-switch {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 34px;
-  height: 20px;
-  border-radius: 999px;
-  background: #E4ECF7;
-  position: relative;
-  cursor: pointer;
-  flex: none;
-  transition: background 0.15s ease;
+.ira-state { display: flex; align-items: baseline; gap: 7px; margin: 4px 0 2px; }
+.ira-state strong { font-size: var(--fs-md); font-weight: 600; }
+.ira-state .ira-dot { align-self: center; }
+.ira-state .ira-dot[data-state="on"] { background: var(--ok); }
+
+.ira-statusrow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 0;
+  margin-bottom: 20px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.ira-statusrow .ira-card {
   margin: 0;
+  padding: 12px 16px;
+  border-top: 0;
+  border-left: 1px solid var(--line);
 }
-.ira-switch::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #8494A8;
-  transition: transform 0.15s ease;
-}
-.ira-switch:checked { background: var(--ira-accent); }
-.ira-switch:checked::after { transform: translateX(14px); background: #EAF2FE; }
-.ira-range { width: 100%; accent-color: var(--ira-accent); }
-.ira-rangeval { font-size: 12px; color: var(--ira-fg2); }
+.ira-statusrow .ira-card:first-child { border-left: 0; padding-left: 0; }
 
-/* ---------- routing ---------- */
-.ira-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ira-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--well);
+  color: var(--ink-2);
+}
+.ira-badge.l1 { background: var(--accent-wash); color: var(--accent-ink); }
+.ira-badge.l2 { background: #EFE7D6; color: var(--warn); }
+.ira-badge.l3 { background: #E7E9EC; color: var(--ink-2); }
+
+.ira-swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  background: var(--well);
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+/* 条形 */
+.ira-bars { display: flex; flex-direction: column; gap: 7px; }
+.ira-bar {
+  display: grid;
+  grid-template-columns: 74px 1fr 62px;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-sm);
+}
+.ira-barlabel { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ira-barfill { height: 6px; background: var(--well); border-radius: 1px; overflow: hidden; }
+.ira-barfill > i { display: block; height: 100%; background: var(--accent); }
+.ira-barval {
+  font-family: ui-monospace, "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+/* 键值网格 */
+.ira-kvgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0 28px;
+}
+.ira-kv {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+.ira-kv > span:first-child { color: var(--ink-2); }
+.ira-kv > span:last-child {
+  font-family: ui-monospace, "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 统计卡 */
+.ira-statgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.ira-stat {
+  padding: 12px 14px;
+  border-left: 1px solid var(--line);
+}
+.ira-stat:first-child { border-left: 0; padding-left: 0; }
+.ira-stat > .ira-label { margin-bottom: 3px; }
+
+/* ========================================================== 问答 */
+.ira-answer { max-width: 720px; }
+.ira-q {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+.ira-a {
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  color: var(--ink);
+  padding-left: 13px;
+  border-left: 2px solid var(--accent);
+  max-width: 68ch;
+}
+.ira-qrow { display: flex; align-items: baseline; gap: 10px; }
+
+/* 流程图 */
+.ira-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 12px 0 4px;
+}
 .ira-node {
-  padding: 6px 11px;
-  border: 1px solid var(--ira-line-strong);
-  border-radius: 8px;
-  background: var(--ira-well);
-  font-size: 12px;
-  color: var(--ira-fg2);
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  white-space: nowrap;
 }
-.ira-node.hot { color: #0B54B4; border-color: rgba(26, 111, 224, 0.30); }
-.ira-node.ok { color: var(--ira-green); border-color: rgba(14, 159, 110, 0.28); }
-.ira-arrow { color: var(--ira-dim); font-size: 12px; }
+.ira-node.hot {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.ira-arrow { color: var(--ink-3); font-size: var(--fs-sm); }
 
-/* ---------- stats ---------- */
-.ira-statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--ira-gap); }
-.ira-stat { background: var(--ira-panel); border: 1px solid var(--ira-line); border-radius: var(--ira-radius); padding: 12px 14px; }
-.ira-stat .ira-num { font-size: 26px; font-weight: 700; }
-.ira-bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: end; height: 132px; padding-top: 8px; }
-.ira-bar { display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; height: 100%; min-width: 0; }
-.ira-barval { font-size: 11.5px; color: var(--ira-fg2); text-align: center; }
-.ira-barfill { background: linear-gradient(180deg, rgba(26, 111, 224, 0.40), rgba(26, 111, 224, 0.34)); border-radius: 6px 6px 0 0; min-height: 4px; }
-.ira-barlabel { font-size: 11px; color: var(--ira-dim); text-align: center; }
-.ira-share { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--ira-well); }
-.ira-share > span { display: block; height: 100%; }
-.ira-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
-.ira-legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ira-fg2); }
-.ira-swatch { width: 9px; height: 9px; border-radius: 3px; flex: none; }
-.ira-missrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ira-line); }
-.ira-missrow:first-child { border-top: 0; }
-.ira-missrow .ira-misscount { margin-left: auto; }
+/* ========================================================== 记录 / 复盘
+   一行一条，左右靠固定列对齐——像赛果表，不是卡片流。 */
+.ira-logrows, .ira-review { display: flex; flex-direction: column; }
+.ira-logrow {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ira-logrow:last-child { border-bottom: 0; }
+.ira-logtime {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  padding-top: 2px;
+}
+.ira-logq { font-weight: 600; font-size: var(--fs); line-height: 1.45; }
+.ira-loga { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.55; }
 
-/* ---------- responsive ---------- */
-@media (max-width: 880px) {
-  .ira-body { grid-template-columns: 1fr; }
-  .ira-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--ira-line); padding: 8px; }
-  .ira-navbtn { width: auto; padding: 7px 10px; }
+.ira-logside {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.ira-reviewrow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 4px 18px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ira-reviewrow:last-child { border-bottom: 0; }
+.ira-reviewq {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.ira-reviewa {
+  grid-column: 1;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 62ch;
+}
+.ira-reviewmeta {
+  grid-column: 1;
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.ira-reviewrow > .ira-row { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+
+.ira-missrow {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+
+/* ========================================================== 调试台 */
+.ira-debug { max-width: 720px; }
+.ira-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.ira-examples button,
+.ira-chipbtn {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.ira-examples button:hover,
+.ira-chipbtn:hover { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-wash); }
+
+.ira-funnel { display: flex; flex-direction: column; gap: 0; }
+.ira-frow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+.ira-fname { font-family: ui-monospace, "Consolas", monospace; }
+.ira-fdetail { font-size: var(--fs-xs); color: var(--ink-3); }
+.ira-fstate { font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.ira-fstate[data-state="hit"] { color: var(--ok); }
+.ira-fstate[data-state="miss"] { color: var(--ink-3); }
+
+.ira-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--ink-3); }
+.ira-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.ira-filterbtn {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: transparent;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.ira-filterbtn.is-active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
+/* ========================================================== 状态块 */
+.ira-offline, .ira-empty {
+  padding: 22px 0;
+  text-align: left;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  border-top: 1px solid var(--line);
+}
+.ira-share {
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+
+/* 合作伙伴 logo：裁成规整网格，别让它当装饰 */
+.partner-logos {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  width: 100%;
+  margin: 12px 0 0;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+.partner-logo {
+  aspect-ratio: 500/199;
+  background-image: url('/static/partner-logos.png');
+  background-size: 200% 200%;
+  background-repeat: no-repeat;
+  background-color: var(--surface);
+}
+.partner-logo:nth-child(1) { background-position: 0 0; }
+.partner-logo:nth-child(2) { background-position: 100% 0; }
+.partner-logo:nth-child(3) { background-position: 0 100%; }
+.partner-logo:nth-child(4) { background-position: 100% 100%; }
+
+/* ========================================================== 窄屏 */
+@media (max-width: 860px) {
+  .ira-body { flex-direction: column; }
+  .ira-nav {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--shell-line);
+  }
+  .ira-navgroup { flex-direction: row; flex-wrap: wrap; padding: 0; margin: 0; border: 0; gap: 4px; }
+  .ira-navgroup-title { display: none; }
+  .ira-navbtn { width: auto; padding: 6px 10px; }
+  .ira-navbtn.is-active::before { display: none; }
   .ira-navfoot { display: none; }
-  .ira-statusrow { grid-template-columns: 1fr; }
-  .ira-debug, .ira-dashb { grid-template-columns: 1fr; }
-  .ira-dash, .ira-dashb { min-height: 720px; }
-  .ira-answer .ira-a { font-size: 24px; }
+  .ira-view { padding: 18px 16px 36px; }
+  .ira-field { grid-template-columns: 1fr; gap: 4px; }
+  .ira-field > *:not(label):not(.ira-hint) { grid-column: 1; }
+  .ira-field .ira-hint { grid-column: 1; }
+  .ira-reviewrow { grid-template-columns: 1fr; }
+  .ira-reviewrow > .ira-row { grid-column: 1; grid-row: auto; }
 }
-.ira[data-density="compact"] { --ira-card-pad: 10px 12px; --ira-gap: 8px; }
-.ira[data-density="compact"] .ira-tile { padding: 8px 11px; }
-.ira[data-density="compact"] .ira-answer .ira-a { font-size: 26px; }
 </style>
 
 <div class="ira-window" role="application" aria-label="iRacing 小小领航员">
   <header class="ira-top">
     <span class="ira-mark"><i data-lucide="radio" aria-hidden="true"></i></span>
     <div class="ira-brand pywebview-drag-region">
-      <strong>iRacing 小小领航员</strong>
-      <span>语音问答助手</span>
+      <strong>小小领航员</strong>
+      <span>iRacing</span>
     </div>
     <span class="ira-session pywebview-drag-region">等待遥测…</span>
+
+    <!-- 赛前检查总线：四个子系统是否就绪，一眼回答「能不能开跑」 -->
+    <div class="ira-bus" role="group" aria-label="子系统就绪状态">
+      <div class="ira-bus-item" data-bus="link" data-state="off">
+        <span class="ira-bus-name"><span class="ira-bus-dot"></span>游戏</span>
+        <span class="ira-bus-val" data-bus-val>未连接</span>
+      </div>
+      <div class="ira-bus-item" data-bus="mic" data-state="off">
+        <span class="ira-bus-name"><span class="ira-bus-dot"></span>麦克风</span>
+        <span class="ira-bus-val" data-bus-val>未监听</span>
+      </div>
+      <div class="ira-bus-item" data-bus="ai" data-state="off">
+        <span class="ira-bus-name"><span class="ira-bus-dot"></span>AI</span>
+        <span class="ira-bus-val" data-bus-val>未配置</span>
+      </div>
+      <div class="ira-bus-item" data-bus="car" data-state="off">
+        <span class="ira-bus-name"><span class="ira-bus-dot"></span>改车</span>
+        <span class="ira-bus-val" data-bus-val>未启用</span>
+      </div>
+    </div>
+
     <div class="ira-topright">
-      <span class="ira-chip" data-state="on" data-conn-state="on"><span class="ira-dot" data-conn-state="on" data-state="on"></span><span data-conn-label>已连接</span></span>
-      <span class="ira-chip ira-chip-ptt" data-ptt-chip data-state="idle">
+      <span class="ira-chip" data-ptt-chip data-state="idle">
         <span class="ira-dot" data-state="idle" data-ptt-state="idle"></span><span data-ptt-label>待机</span>
       </span>
       <span class="ira-chip"><i data-lucide="timer" aria-hidden="true"></i><span class="ira-num">—</span>&nbsp;s</span>
@@ -483,17 +934,26 @@ body.desktop-shell .window-controls {display:flex;}
 
   <div class="ira-body">
     <nav class="ira-nav" role="tablist" aria-label="功能页面">
-      <button class="ira-navbtn" role="tab" id="ira-tab-dash" aria-controls="ira-panel-dash" aria-selected="true" data-nav="dash" type="button"><i data-lucide="gauge" aria-hidden="true"></i><span>主面板</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-log" aria-controls="ira-panel-log" aria-selected="false" data-nav="log" type="button"><i data-lucide="history" aria-hidden="true"></i><span>问答记录</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-debug" aria-controls="ira-panel-debug" aria-selected="false" data-nav="debug" type="button"><i data-lucide="bug" aria-hidden="true"></i><span>意图调试台</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-model" aria-controls="ira-panel-model" aria-selected="false" data-nav="model" type="button"><i data-lucide="cpu" aria-hidden="true"></i><span>设置 · 意图</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-asr" aria-controls="ira-panel-asr" aria-selected="false" data-nav="asr" type="button"><i data-lucide="mic" aria-hidden="true"></i><span>设置 · 语音输入</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-pack" aria-controls="ira-panel-pack" aria-selected="false" data-nav="pack" type="button"><i data-lucide="volume-2" aria-hidden="true"></i><span>设置 · 播报</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-route" aria-controls="ira-panel-route" aria-selected="false" data-nav="route" type="button"><i data-lucide="share-2" aria-hidden="true"></i><span>音频路由</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-ai" aria-controls="ira-panel-ai" aria-selected="false" data-nav="ai" type="button"><i data-lucide="sparkles" aria-hidden="true"></i><span>设置 · AI 分析</span></button>
-      <button class="ira-navbtn" role="tab" id="ira-tab-stats" aria-controls="ira-panel-stats" aria-selected="false" data-nav="stats" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>诊断 · 统计</span></button>
+      <div class="ira-navgroup">
+        <div class="ira-navgroup-title">运行</div>
+        <button class="ira-navbtn" role="tab" id="ira-tab-dash" aria-controls="ira-panel-dash" aria-selected="true" data-nav="dash" type="button"><i data-lucide="gauge" aria-hidden="true"></i><span>主面板</span></button>
+        <button class="ira-navbtn" role="tab" id="ira-tab-log" aria-controls="ira-panel-log" aria-selected="false" data-nav="log" type="button"><i data-lucide="history" aria-hidden="true"></i><span>问答记录</span></button>
+        <button class="ira-navbtn" role="tab" id="ira-tab-stats" aria-controls="ira-panel-stats" aria-selected="false" data-nav="stats" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>诊断统计</span></button>
+      </div>
+      <div class="ira-navgroup">
+        <div class="ira-navgroup-title">设置</div>
+        <button class="ira-navbtn" role="tab" id="ira-tab-model" aria-controls="ira-panel-model" aria-selected="false" data-nav="model" type="button"><i data-lucide="cpu" aria-hidden="true"></i><span>意图识别</span></button>
+        <button class="ira-navbtn" role="tab" id="ira-tab-asr" aria-controls="ira-panel-asr" aria-selected="false" data-nav="asr" type="button"><i data-lucide="mic" aria-hidden="true"></i><span>语音输入</span></button>
+        <button class="ira-navbtn" role="tab" id="ira-tab-pack" aria-controls="ira-panel-pack" aria-selected="false" data-nav="pack" type="button"><i data-lucide="volume-2" aria-hidden="true"></i><span>语音播报</span></button>
+        <button class="ira-navbtn" role="tab" id="ira-tab-route" aria-controls="ira-panel-route" aria-selected="false" data-nav="route" type="button"><i data-lucide="share-2" aria-hidden="true"></i><span>音频路由</span></button>
+        <button class="ira-navbtn" role="tab" id="ira-tab-ai" aria-controls="ira-panel-ai" aria-selected="false" data-nav="ai" type="button"><i data-lucide="sparkles" aria-hidden="true"></i><span>AI 与改车</span></button>
+      </div>
+      <div class="ira-navgroup">
+        <div class="ira-navgroup-title">工具</div>
+        <button class="ira-navbtn" role="tab" id="ira-tab-debug" aria-controls="ira-panel-debug" aria-selected="false" data-nav="debug" type="button"><i data-lucide="bug" aria-hidden="true"></i><span>意图调试台</span></button>
+      </div>
       <div class="ira-navfoot">
-        小小领航员 v1.0.0<br>xushengchen from Moondrop-Dox Racing<br>语音包 v2.0.0
+        小小领航员<br>xushengchen · Moondrop-Dox Racing
       </div>
     </nav>
 
