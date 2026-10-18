@@ -28,6 +28,13 @@ _CN_MEASURE_PATTERNS = (
     re.compile(r"下一[圈次名段个]"),
     re.compile(r"第一[次圈名个]"),
     re.compile(r"同一[圈次名个]"),
+    # 「最近一圈 83.512」这类：中文数字是量词，真正的数值是后面的阿拉伯数字。
+    # 实测三个问句（前车圈速/圈速稳定吗/有没有进步）都栽在这里——回答里
+    # 明明只有阿拉伯数字，却被「一圈」判成中文数字表述。
+    # 注意只收「最近/这/那/每」+ 数字 + 圈次：不覆盖「还剩一圈」，
+    # 那是在陈述数量（1 圈），必须继续由数字闸拦。
+    re.compile(r"最近[一二两三四五六七八九十]\s*[圈次]"),
+    re.compile(r"[这那每][一二两三四五六七八九十]\s*[圈次名段个]"),
     re.compile(r"一[档个位]"),
     re.compile(r"[一二两]个"),
     re.compile(r"十[分种]"),
@@ -102,11 +109,50 @@ def check_data(data_used: list[str], ctx: dict) -> str | None:
     for name in data_used:
         if not isinstance(name, str):
             return f"data_used 含非字符串项：{name!r}"
+        if _path_exists(ctx, name):
+            # 点路径：末段字段名仍须在白名单内，且整条路径在 ctx 里真实存在
+            leaf = name.rsplit(".", 1)[-1]
+            if leaf not in ALLOWED_FIELDS:
+                return f"data_used 引用了白名单外的字段：{name}"
+            continue
         if name not in ALLOWED_FIELDS:
             return f"data_used 引用了白名单外的字段：{name}"
         if name not in present:
             return f"data_used 引用了本次上下文里没有的字段：{name}"
     return None
+
+
+def _path_exists(ctx: dict, path: str) -> bool:
+    """按点路径在上下文里查，支持从任意嵌套层开始的省略写法。
+
+    模型会写 `opponents.leader.best_lap`，也会偷懒写成 `leader.best_lap`。
+    两种都算合理——只要这条路径在本次上下文里真的走得通。
+    先试整条路径，再试各层的后缀路径；任一层缺失即视为不存在。
+    """
+    if "." not in path:
+        return False
+    parts = path.split(".")
+
+    def descends(node, rest) -> bool:
+        if not rest:
+            return True
+        part, tail = rest[0], rest[1:]
+        if not isinstance(node, dict) or part not in node:
+            return False
+        return descends(node[part], tail)
+
+    if descends(ctx, parts):
+        return True
+
+    # 省略前缀：从任意嵌套 dict 起试着走完整条路径
+    def walk(node) -> bool:
+        if not isinstance(node, dict):
+            return False
+        if descends(node, parts):
+            return True
+        return any(walk(v) for v in node.values())
+
+    return walk(ctx)
 
 
 def _present_names(ctx: dict) -> set[str]:

@@ -30,8 +30,9 @@ ALLOWED_FIELDS: frozenset[str] = frozenset({
     "tyre_temp_delta", "position_change", "gap_ahead_change", "gap_behind_change",
     # session
     "total_laps", "flags",
-    # opponents
+    # opponents 层内的叶子字段（模型会用点路径引用，如 opponents.leader.best_lap）
     "ahead", "behind", "leader",
+    "pos", "gap_s", "last_lap", "best_lap", "completed",
 })
 
 # 层名本身也可以被引用：模型说「用了 recent_laps」是诚实的——我们确实给了它。

@@ -107,3 +107,70 @@ class RunAllTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DottedPathTests(unittest.TestCase):
+    """嵌套数据用点路径引用是合法的，但路径本身必须真实存在。"""
+
+    NESTED = {
+        "now": {"position": 4, "laps_remain": 5},
+        "derived": {"laps_of_fuel": 6.2},
+        "opponents": {"leader": {"pos": 1, "best_lap": 82.1},
+                      "ahead": {"gap_s": 1.8}},
+    }
+
+    def test_valid_dotted_path_passes(self):
+        self.assertIsNone(check_data(["opponents.leader.best_lap"], self.NESTED))
+
+    def test_valid_two_level_path_passes(self):
+        self.assertIsNone(check_data(["opponents.ahead.gap_s"], self.NESTED))
+
+    def test_missing_intermediate_rejected(self):
+        self.assertIsNotNone(check_data(["opponents.behind.gap_s"], self.NESTED))
+
+    def test_missing_leaf_rejected(self):
+        self.assertIsNotNone(check_data(["opponents.leader.tyre_temp"], self.NESTED))
+
+    def test_leaf_outside_whitelist_rejected(self):
+        # 路径存在但末段字段不在白名单——防的是「顺着结构编一个新字段名」
+        nested = {"opponents": {"leader": {"fabricated": 1}}}
+        self.assertIsNotNone(check_data(["opponents.leader.fabricated"], nested))
+
+    def test_flat_names_still_work(self):
+        self.assertIsNone(check_data(["laps_of_fuel", "position"], self.NESTED))
+
+    def test_abbreviated_path_without_layer_prefix_passes(self):
+        # 模型常省略层名：leader.best_lap 等价于 opponents.leader.best_lap
+        self.assertIsNone(check_data(["leader.best_lap"], self.NESTED))
+
+    def test_bare_leaf_name_passes(self):
+        self.assertIsNone(check_data(["best_lap"], self.NESTED))
+
+    def test_abbreviated_path_to_missing_node_still_rejected(self):
+        self.assertIsNotNone(check_data(["behind.gap_s"], self.NESTED))
+
+
+class ChineseMeasureWordTests(unittest.TestCase):
+    """中文数字做量词时不是数值，不能误杀。
+
+    实测：三条真实回答（前车圈速 / 圈速稳定吗 / 有没有进步）里明明只有
+    阿拉伯数字，却因为「最近一圈」的「一」被判成中文数字表述。
+    """
+
+    CTX = {"now": {"lap_last": 83.512, "lap_best": 83.104},
+           "derived": {"delta_to_best": 0.4}}
+
+    def test_zuijin_yiquan_is_measure_word(self):
+        self.assertIsNone(check_numbers(
+            "稳定，最近一圈83.512，最佳83.104，差0.4。", self.CTX, "圈速稳定吗"))
+
+    def test_zhe_yiquan_is_measure_word(self):
+        self.assertIsNone(check_numbers(
+            "这一圈83.512，比最佳慢0.4。", self.CTX, ""))
+
+    def test_quantity_claim_still_rejected(self):
+        # 「还剩一圈」是在陈述数量，不是量词——必须继续拦
+        self.assertIsNotNone(check_numbers("还剩一圈", self.CTX, ""))
+
+    def test_chinese_quantity_still_rejected(self):
+        self.assertIsNotNone(check_numbers("油还够跑六圈", self.CTX, ""))
