@@ -26,18 +26,23 @@ class AiResult:
 
     def __init__(self, ok: bool = False, text: str = "", source: str = "refused",
                  reason: str = "", checks: dict | None = None,
-                 latency_ms: int = 0):
+                 latency_ms: int = 0, dynamic: bool = False,
+                 template: dict | None = None):
         self.ok = ok
         self.text = text
         self.source = source          # "learn" | "model" | "refused"
         self.reason = reason
         self.checks = checks or {}
         self.latency_ms = latency_ms
+        # 复盘入库用：动态型必须带合法模板，否则只能按知识型处理
+        self.dynamic = dynamic
+        self.template = template
 
     def as_dict(self) -> dict:
         return {"ok": self.ok, "text": self.text, "source": self.source,
                 "reason": self.reason, "checks": self.checks,
-                "latency_ms": self.latency_ms}
+                "latency_ms": self.latency_ms,
+                "dynamic": self.dynamic, "template": self.template}
 
 
 def should_engage(kind: QueryKind, mode: str, rule_ok: bool,
@@ -181,7 +186,11 @@ class AiPipeline:
             return done(AiResult(reason="校验未通过：" + checks.get("reasons", ""),
                                  checks=checks))
 
-        result = AiResult(ok=True, text=text, source="model", checks=checks)
+        template = payload.get("template")
+        result = AiResult(
+            ok=True, text=text, source="model", checks=checks,
+            dynamic=bool(payload.get("dynamic")) and isinstance(template, dict),
+            template=template if isinstance(template, dict) else None)
         self._maybe_speak(text, result)
         return done(result)
 

@@ -110,9 +110,19 @@ class LlmClient:
             "不要提供调校或操作指令，不要解释处罚原因。"
             "数字必须原样引用上下文里给出的值，不要自己计算或四舍五入；"
             "并且必须使用阿拉伯数字。"
-            '只输出 JSON：{"answer": "...", "confidence": 0.0-1.0, '
+            "\n\n若答案依赖会变化的数值（油量、圈数、胎温、差距等），"
+            "必须在 template 里给出可复用的条件模板，让下次能换新数值重算："
+            '{"params": ["字段名..."], '
+            '"rules": [{"when": "字段 >= 字段 * 1.15", "say": "含 {字段} 的句子"}, '
+            '{"when": "true", "say": "兜底句"}]}。'
+            "when 只允许『字段 比较符 数字或字段』、可选再乘一个数字，"
+            "或字符串 true；必须有 true 兜底分支；"
+            "say 里的 { } 占位符只能来自 params。"
+            "若答案不依赖任何会变化的数值（纯知识），template 给 null 并把 "
+            "dynamic 设为 false。"
+            '\n\n只输出 JSON：{"answer": "...", "confidence": 0.0-1.0, '
             '"refused": false, "data_used": ["字段名", ...], '
-            '"template": null}'
+            '"dynamic": true 或 false, "template": 模板或 null}'
         )
         user = "遥测上下文：\n" + json.dumps(ctx, ensure_ascii=False) + \
                "\n\n问题：" + (question or "")

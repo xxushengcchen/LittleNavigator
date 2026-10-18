@@ -126,16 +126,13 @@ class Assistant:
         for rec in reversed(list(self.history)):
             if rec.get("review_id") != entry_id:
                 continue
-            template = None
-            dynamic = False
-            # 模型若按契约返回了 template，就按动态型入库；否则按知识型。
-            raw = rec.get("ai_payload") or {}
-            if isinstance(raw.get("template"), dict):
-                template = raw["template"]
-                dynamic = True
+            template = rec.get("ai_template")
+            # 只有「模型声明依赖可变数值」且「确实给了模板」才算动态型；
+            # 其余按知识型入库。声明了却没给模板的，会被 add_from_review 拒绝。
+            dynamic = bool(rec.get("ai_dynamic"))
             return {"question": rec.get("q"), "answer": rec.get("ai_text"),
-                    "template": template, "dynamic": dynamic,
-                    "clip_path": rec.get("ai_clip")}
+                    "template": template if isinstance(template, dict) else None,
+                    "dynamic": dynamic, "clip_path": rec.get("ai_clip")}
         return None
 
     def ai_status(self) -> dict:
@@ -277,6 +274,8 @@ class Assistant:
         rec.update({"ai_source": result.source, "ai_text": result.text,
                     "ai_checks": result.checks, "ok": result.ok,
                     "ai_latency_ms": result.latency_ms,
+                    "ai_dynamic": bool(result.dynamic),
+                    "ai_template": result.template,
                     "review_id": uuid.uuid4().hex[:12]})
         if not result.ok:
             rec["reason"] = result.reason
