@@ -63,16 +63,19 @@ def _reject_non_finite(value: int | float, name: str) -> None:
     return
 
 
-def clamp(value: float, hard_max: float, name: str) -> float:
+def clamp(value: int | float, hard_max: float, name: str) -> float:
     """把浮点配置压到硬上限以内；越界时记一条 warning 说明是哪个配置项。
 
-    参数注解 ``float`` 不必改成 ``int | float``：按 PEP 484 的数值塔，
-    ``int`` / ``bool`` 在类型检查层面就是合法的 ``float`` 实参。真正要修的是
-    **返回**侧：``clamp(True, 2.0, ...)`` 原来会把 ``True`` 原样漏出去，而
-    ``bool`` 只是 ``int`` 的子类、不是 ``float`` 的子类，于是调用方拿到一个
-    类型上不成立的值。这里只对 ``bool`` 做一次 ``float()``，不无差别地转换
-    所有输入——``float(10**400)`` 会抛 ``OverflowError``，那正是本次要修掉的
-    那类回归，不能换个地方又请回来。
+    参数注解写成 ``int | float`` 与 ``clamp_int`` 对齐：配置从 YAML 读出来可能
+    是 int（``timeout: 2``），PEP 484 的数值塔本来就允许 int 传进 ``float``
+    形参，显式写出来只是让「这个入口真的接 int」一眼可见。
+
+    ``bool`` 归一成 ``float``，这是**值语义**决定、不是补类型漏洞：按数值塔
+    ``bool`` → ``int`` → ``float`` 本就合法，所以 ``True`` 传进来不算类型错误；
+    只是下游拿 ``True`` 当超时用、日志里也印 ``True``，会让人误判配置到底写了
+    什么。只对 ``bool`` 取值转换、不无差别地对所有输入调 ``float()``：
+    ``float(10**400)`` 会抛 ``OverflowError``，正是本轮要修掉的那类回归，
+    不能换个地方又请回来。
     """
     _reject_non_finite(value, name)
     if value > hard_max:
@@ -89,10 +92,10 @@ def clamp_int(value: int | float, hard_max: int, name: str) -> int | float:
     解释器不会拦），而配置从 YAML 读出来本就可能是浮点或非有限值，
     入口必须真的接得住 ``float``。
 
-    返回类型如实写成 ``int | float``：正常配置传 int、拿回 int；有限的 float
+    返回类型如实写成 ``int | float``：正常配置传 int、拿回 int；有限的小数
     原样返回而不截断（截断会悄悄改掉调用方语义），只有 nan/±inf 会被拒绝或
-    钳成整数硬上限。``bool`` 归一成 ``int``——``True`` 传进来当 token 上限虽
-    不报错，但语义是「1 个 token」，返回 ``True`` 只会让下游日志更难读。
+    钳成整数硬上限。``bool`` 归一成 ``int``，理由同 ``clamp``：不是类型错误，
+    只是 ``True`` 当 token 上限时日志可读性太差。
     """
     _reject_non_finite(value, name)
     if value > hard_max:
