@@ -181,6 +181,11 @@ class AiPipeline:
 
         self.breaker.record(self.client.last_latency_ms or 0, False)
 
+        # LlmClient.ask 已经保证返回 dict，但这里再兜一层：
+        # 流水线是全链路的汇合点，任何一个坏返回值都不该让整条链崩掉。
+        if not isinstance(payload, dict):
+            return done(AiResult(reason=f"模型返回格式异常：{type(payload).__name__}"))
+
         if payload.get("refused"):
             return done(AiResult(reason=payload.get("reason") or "模型拒绝回答"))
 

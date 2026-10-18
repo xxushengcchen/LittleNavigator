@@ -47,7 +47,13 @@ _CLEAR_PATTERNS = (
 _CLEAR_TYRE_PATTERNS = (
     re.compile(r"(取消|不要|不用|别)(换)?(轮胎|胎|轮)"),
     re.compile(r"不换(轮胎|胎|轮)"),
+    # 倒装否定：「换胎不用了」「换胎算了」——否定在后面。
+    # 实测漏过这条：用户说「不要换」，结果真的换了胎，白丢一次进站。
+    re.compile(r"(换|上)(轮胎|胎|轮)[^，。]{0,4}(不用了|算了|取消|不要了|先不)"),
 )
+
+# 模糊量词：说不出具体升数时不能瞎猜，也不能退化成「沿用现有量」
+_VAGUE_QUANTITY = ("点油", "加点", "一些", "一点儿", "一些儿")
 
 _TEAROFF_WORDS = ("撕膜", "换挡风", "清挡风", "擦挡风", "清洁挡风", "挡风撕膜",
                   "换遮阳", "清洁一下挡风")
@@ -185,6 +191,12 @@ def match(text: str) -> dict | None:
         if pattern.search(q):
             return {"kind": "clear"}
 
+    # 2b) 多指令：一次只能执行一个。
+    #     实测「换胎加油快修」原来只执行了快修，另外两个被静默丢掉。
+    if len(_families(q)) >= 2:
+        return {"kind": "unsupported",
+                "reason": "一次说一个指令，多个我听不准"}
+
     # 3) 撕膜 / 快修
     if any(w in q for w in _TEAROFF_WORDS):
         return {"kind": "tearoff"}
@@ -199,12 +211,63 @@ def match(text: str) -> dict | None:
         return {"kind": "tyre", "corners": corners}
 
     # 5) 加油（「加十升油」「加10升」「加油」都算）
+    #
+    #    「加满」单独处理：广播命令的 var=0 语义是「沿用黑框里现有的量」，
+    #    不是「加到满」。直接把加满当 var=0 发出去，用户以为会加满，
+    #    实际只加黑框里那个数——白进一次站。
+    #    真值要从遥测算：容量 = 当前油量 / 当前油量百分比。算不出来就拒绝。
+    if any(w in q for w in ("加满", "加满一箱", "灌满")):
+        return _check_multi(q, "fuel") or {"kind": "fuel", "full": True,
+                                          "litres": None}
     if "加" in q and ("油" in q or "升" in q):
-        return {"kind": "fuel", "litres": parse_litres(q)}
-    if "油量" in q and parse_litres(q) is not None:
-        return {"kind": "fuel", "litres": parse_litres(q)}
+        multi = _check_multi(q, "fuel")
+        if multi:
+            return multi
+        if any(w in q for w in _VAGUE_QUANTITY):
+            return {"kind": "unsupported",
+                    "reason": "说不出具体升数，我不猜，你给个数字"}
+        litres = parse_litres(q)
+        if litres is not None and litres <= 0:
+            return {"kind": "unsupported", "reason": "油量不能为零或负数"}
+        if litres is not None and litres > FUEL_MAX_L:
+            # 超出范围就拒绝，不能悄悄压到上限——用户说 999，
+            # 我们加 120 也是错的，只是错得没那么明显。
+            return {"kind": "unsupported",
+                    "reason": f"{litres:.0f} 升超出合理范围，确认一下"}
+        return {"kind": "fuel", "litres": litres}
 
     return None
+
+
+FUEL_MAX_L = 120.0
+
+# 各指令族的独立特征。一句话命中两个族就拒绝，让用户一次说一个——
+# 实测「换胎加油快修」只执行了快修，另外两个被静默丢掉。
+_TEAROFF_HINTS = ("撕膜", "挡风", "遮阳")
+_FR_WORDS = ("快修", "快速维修", "快速修复")
+
+
+def _families(q: str) -> list[str]:
+    """这句话命中几个指令族。"""
+    found = []
+    if _TYRE_RE.search(q):
+        found.append("tyre")
+    if "加" in q and ("油" in q or "升" in q):
+        found.append("fuel")
+    if any(w in q for w in _TEAROFF_HINTS):
+        found.append("tearoff")
+    if any(w in q for w in _FR_WORDS):
+        found.append("fast_repair")
+    return found
+
+
+def _check_multi(q: str, current: str) -> dict | None:
+    """命中多个指令族时返回拒绝动作。"""
+    others = [f for f in _families(q) if f != current]
+    if not others:
+        return None
+    return {"kind": "unsupported",
+            "reason": "一次说一个指令，多个我听不准"}
 
 
 def clamp_litres(litres: float | None, lo: float, hi: float) -> float | None:

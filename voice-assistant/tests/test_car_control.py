@@ -299,3 +299,53 @@ class QueryVsCommandTests(unittest.TestCase):
         for text in ("快修", "换胎", "加十升油", "撕膜", "清空进站", "换左前胎"):
             with self.subTest(text=text):
                 self.assertIsNotNone(match(text))
+
+
+class StressFoundBugs(unittest.TestCase):
+    """真实场景压力测试跑出来的 5 个 bug，逐个钉死。"""
+
+    def test_trailing_negation_does_not_change_tyres(self):
+        # 「换胎不用了」原来真的执行了换胎 —— 用户说不要，我们换了，白丢一次进站
+        for text in ("换胎不用了", "换胎算了", "换胎先不", "换胎取消"):
+            with self.subTest(text=text):
+                self.assertEqual(match(text)["kind"], "clear_tires")
+
+    def test_zero_litres_is_refused_not_treated_as_existing(self):
+        # 加零升原来退化成 var=0（沿用现有量），会把黑框里的油量加进去
+        for text in ("加零升", "加0升"):
+            with self.subTest(text=text):
+                r = match(text)
+                self.assertEqual(r["kind"], "unsupported")
+                self.assertIn("为零", r["reason"])
+
+    def test_vague_quantity_is_refused(self):
+        # 「再加点油」说不出升数，不能瞎猜也不能沿用现有量
+        for text in ("再加点油", "加一些油", "加点儿油"):
+            with self.subTest(text=text):
+                r = match(text)
+                self.assertEqual(r["kind"], "unsupported")
+                self.assertIn("升数", r["reason"])
+
+    def test_absurd_litres_is_refused_not_silently_clamped(self):
+        # 999 升原来被悄悄压到 120。用户说 999，我们加 120 也是错的，
+        # 只是错得没那么明显。
+        r = match("加九百九十九升")
+        self.assertEqual(r["kind"], "unsupported")
+        self.assertIn("超出", r["reason"])
+
+    def test_sane_litres_still_work(self):
+        self.assertEqual(match("加二十升油")["litres"], 20.0)
+        self.assertEqual(match("加120升")["litres"], 120.0)
+
+    def test_multiple_commands_are_refused(self):
+        # 「换胎加油快修」原来只执行了快修，另外两个被静默丢弃
+        for text in ("换胎加油快修", "换胎加二十升油", "快修加油"):
+            with self.subTest(text=text):
+                self.assertEqual(match(text)["kind"], "unsupported")
+
+    def test_single_commands_still_work(self):
+        for text, kind in (("换胎", "tyre"), ("加油", "fuel"),
+                           ("快修", "fast_repair"), ("撕膜", "tearoff"),
+                           ("取消换胎", "clear_tires")):
+            with self.subTest(text=text):
+                self.assertEqual(match(text)["kind"], kind)

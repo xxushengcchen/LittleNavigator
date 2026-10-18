@@ -224,6 +224,25 @@ class Assistant:
                     "error": "未初始化"}
         return self.car.status()
 
+    def _litres_to_fill(self, rec: dict) -> float | None:
+        """算出「加满」还要加多少升。读不到就返回 None，不去猜。"""
+        snap = self.snapshot()
+        level = getattr(snap, "fuel_level", None)
+        pct = getattr(snap, "fuel_pct", None)
+        if not isinstance(level, (int, float)) or not isinstance(pct, (int, float)):
+            return None
+        if pct <= 0.001 or level < 0:
+            return None
+        capacity = level / pct              # 油箱总容量
+        need = capacity - level
+        rec["cc_fill"] = {"level": round(level, 2), "pct": round(pct, 3),
+                          "capacity": round(capacity, 2),
+                          "need": round(need, 2)}
+        if need <= car_control.FUEL_MIN_L:
+            return None                      # 已经满了，没什么可加
+        return command_match.clamp_litres(
+            need, car_control.FUEL_MIN_L, car_control.FUEL_MAX_L)
+
     def _try_car_command(self, text: str, rec: dict) -> dict | None:
         """尝试把一句话当改车指令执行。返回记录，或 None（不是改车指令）。
 
@@ -260,10 +279,22 @@ class Assistant:
             return rec
 
         if action["kind"] == "fuel":
-            litres = command_match.clamp_litres(
-                action.get("litres"), car_control.FUEL_MIN_L,
-                car_control.FUEL_MAX_L)
-            action["litres"] = litres
+            if action.get("full"):
+                # 「加满」要现算：容量 = 当前油量 / 当前油量百分比。
+                # 算不出来就如实拒绝，绝不退化成「沿用现有量」。
+                litres = self._litres_to_fill(rec)
+                if litres is None:
+                    p("  ✗ 加满：读不到油箱容量")
+                    rec.update({"ok": False,
+                                "reason": "读不到油箱容量，加满请在黑框里设"})
+                    self._say_with_fallback(NO_CAR_CONTROL)
+                    self._log(self.miss_log, rec)
+                    return rec
+                action["litres"] = litres
+            else:
+                action["litres"] = command_match.clamp_litres(
+                    action.get("litres"), car_control.FUEL_MIN_L,
+                    car_control.FUEL_MAX_L)
             rec["cc_action"] = dict(action)
 
         result = self.car.apply(action)

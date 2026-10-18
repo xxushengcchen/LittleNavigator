@@ -213,3 +213,31 @@ class OperationEngageTests(unittest.TestCase):
     def test_analysis_still_engages(self):
         # 确认拆分没有误伤：分析类照旧放行
         self.assertTrue(should_engage(QueryKind.ANALYSIS, "full", rule_ok=False))
+
+
+class MalformedPayloadTests(unittest.TestCase):
+    """模型返回坏数据不能让流水线崩，只能降级。
+
+    实测：payload 是 list 时 pipeline 抛 AttributeError。
+    虽然 LlmClient.ask 已保证 dict，但流水线是汇合点，不该假设上游永远对。
+    """
+
+    def _pipeline(self):
+        return AiPipeline({"ai": {"enabled": True, "mode": "full",
+                                  "base_url": "http://x", "api_key": "k",
+                                  "model": "m", "timeout_s": 2.0,
+                                  "max_tokens": 300, "max_answer_chars": 60,
+                                  "whitelist_intents": [],
+                                  "tts": {"adapter": "off"}}},
+                          out=io.StringIO())
+
+    def test_non_dict_payload_degrades(self):
+        from src.telemetry import Snapshot
+        for bad in (["a"], "text", 42, None, ("t",)):
+            with self.subTest(bad=type(bad).__name__):
+                p = self._pipeline()
+                with patch.object(p.client, "ask", return_value=bad):
+                    r = p.handle("为什么慢", Snapshot(connected=True),
+                                 QueryKind.ANALYSIS, [])
+                self.assertFalse(r.ok)
+                self.assertIn("格式异常", r.reason)

@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-18",
+  "stress_test": {
+    "questions": 90,
+    "model_calls": 13,
+    "bugs_found": 0,
+    "crashes": 0,
+    "latency_ms": {
+      "p50": 50,
+      "p90": 1029,
+      "max": 1616
+    },
+    "coverage": [
+      "赛中快问",
+      "分析类",
+      "改车可执行",
+      "改车做不到",
+      "红线",
+      "提问vs指令",
+      "ASR噪声",
+      "边界与极值"
+    ]
+  },
+  "benchmark": {
+    "model": "deepseek-chat",
+    "blocking": {
+      "red_line": 13,
+      "capability": 32,
+      "leaks": 0
+    },
+    "car_control": {
+      "executable": 13,
+      "executable_bad": 0,
+      "unsupported": 19,
+      "unsupported_bad": 0
+    },
+    "whitelist_engaged": 46,
+    "false_reject_rate": 0.0,
+    "latency_ms": {
+      "p50": 929,
+      "p90": 1230,
+      "max": 1628
+    }
+  },
+  "bugs_fixed_this_round": [
+    "加满油被当成「沿用现有量」→ 改为从遥测实算 容量=油量/百分比",
+    "换胎不用了 → 原来真的换胎（倒装否定漏判）",
+    "加零升 → 退化成 var=0 沿用现有量",
+    "再加点油 → 模糊量词被当成 var=0",
+    "加999升 → 被悄悄钳到 120，改为明确拒绝",
+    "换胎加油快修 → 原来只执行快修，其余静默丢弃",
+    "模型返回非 dict → 流水线 AttributeError 崩溃",
+    "判断类问句（正常吗/快还是慢/要不要/该不该/为啥）被规则层用数字打发 → 拉进分析路径"
+  ]
+}
