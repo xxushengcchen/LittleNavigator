@@ -40,26 +40,26 @@
 
 ## 文件结构
 
-| 文件 | 责任 |
-|---|---|
-| `voice-assistant/src/ai_constants.py`（新建） | 所有硬上限常量与钳制函数，单一来源 |
-| `voice-assistant/src/query_class.py`（新建） | 问题分类预检（`SAFETY`/`ANALYSIS`/`KNOWN`/`UNKNOWN`） |
-| `voice-assistant/src/race_context.py`（新建） | 从 Snapshot + 圈记录组装紧凑上下文，含派生值预计算 |
-| `voice-assistant/src/llm_engine.py`（新建） | OpenAI 兼容调用、硬截止、单飞、自适应降级 |
-| `voice-assistant/src/answer_checks.py`（新建） | 三道校验闸（长度/数据/数字） |
-| `voice-assistant/src/tts_engine.py`（新建） | 豆包 + OpenAI 兼容双适配器 |
-| `voice-assistant/src/ai_learn.py`（新建） | 学习库：知识型缓存 + 动态型模板 + 权重 |
-| `voice-assistant/src/ai_pipeline.py`（新建） | 编排：分类 → 档位判断 → 学习库 → 模型 → 校验 → TTS |
-| `voice-assistant/src/telemetry.py`（修改） | `DerivedTracker` 扩展圈记录；`SimTelemetry` 可选圈推进 |
-| `voice-assistant/src/config.py`（修改） | `ai` 配置段、钳制、`ai_learn` 路径重定向 |
-| `voice-assistant/src/engine.py`（修改） | `ask()` 接入 AI 路径；模型调用移出锁 |
-| `voice-assistant/src/listener.py`（修改） | 分析键第二输入源 |
-| `voice-assistant/app/server.py`（修改） | AI 状态、配置接口、复盘接口、密钥隔离 |
-| `voice-assistant/app/static/app.js`（修改） | AI 设置页 + 复盘区块 + 主面板只读显示 |
-| `voice-assistant/app/static/index.html`（修改） | 新增 nav 按钮与容器 |
-| `voice-assistant/config.yaml`（修改） | 新增 `ai:` 段（无密钥） |
-| `content/assistant-telemetry-v1.2.json`（修改） | 新增 `AST_AI_SEE_SCREEN` 文案 |
-| `voice-assistant/tests/test_ai_*.py`（新建多个） | 各模块测试 |
+| 文件                                          | 责任                                            |
+| ------------------------------------------- | --------------------------------------------- |
+| `voice-assistant/src/ai_constants.py`（新建）   | 所有硬上限常量与钳制函数，单一来源                             |
+| `voice-assistant/src/query_class.py`（新建）    | 问题分类预检（`SAFETY`/`ANALYSIS`/`KNOWN`/`UNKNOWN`） |
+| `voice-assistant/src/race_context.py`（新建）   | 从 Snapshot + 圈记录组装紧凑上下文，含派生值预计算               |
+| `voice-assistant/src/llm_engine.py`（新建）     | OpenAI 兼容调用、硬截止、单飞、自适应降级                      |
+| `voice-assistant/src/answer_checks.py`（新建）  | 三道校验闸（长度/数据/数字）                               |
+| `voice-assistant/src/tts_engine.py`（新建）     | 豆包 + OpenAI 兼容双适配器                            |
+| `voice-assistant/src/ai_learn.py`（新建）       | 学习库：知识型缓存 + 动态型模板 + 权重                        |
+| `voice-assistant/src/ai_pipeline.py`（新建）    | 编排：分类 → 档位判断 → 学习库 → 模型 → 校验 → TTS            |
+| `voice-assistant/src/telemetry.py`（修改）      | `DerivedTracker` 扩展圈记录；`SimTelemetry` 可选圈推进   |
+| `voice-assistant/src/config.py`（修改）         | `ai` 配置段、钳制、`ai_learn` 路径重定向                  |
+| `voice-assistant/src/engine.py`（修改）         | `ask()` 接入 AI 路径；模型调用移出锁                      |
+| `voice-assistant/src/listener.py`（修改）       | 分析键第二输入源                                      |
+| `voice-assistant/app/server.py`（修改）         | AI 状态、配置接口、复盘接口、密钥隔离                          |
+| `voice-assistant/app/static/app.js`（修改）     | AI 设置页 + 复盘区块 + 主面板只读显示                       |
+| `voice-assistant/app/static/index.html`（修改） | 新增 nav 按钮与容器                                  |
+| `voice-assistant/config.yaml`（修改）           | 新增 `ai:` 段（无密钥）                               |
+| `content/assistant-telemetry-v1.2.json`（修改） | 新增 `AST_AI_SEE_SCREEN` 文案                     |
+| `voice-assistant/tests/test_ai_*.py`（新建多个）  | 各模块测试                                         |
 
 **分层原则**：`ai_constants` 无依赖；`query_class`、`answer_checks` 纯函数无外部依赖；`race_context` 依赖 `telemetry`；`llm_engine`、`tts_engine` 只依赖标准库 + `ai_constants`；`ai_learn` 依赖文件系统；`ai_pipeline` 编排以上；`engine` 只调用 `ai_pipeline`。
 
@@ -68,16 +68,17 @@
 ## Task 1: 硬上限常量与钳制
 
 **Files:**
+
 - Create: `voice-assistant/src/ai_constants.py`
 - Test: `voice-assistant/tests/test_ai_constants.py`
 
 **Interfaces:**
-- Consumes: 无
-- Produces:
+
+- [ ] Consumes: 无
+- [ ] Produces:
   - 常量：`LLM_DEADLINE_HARD_MAX = 2.0`、`TTS_DEADLINE_HARD_MAX = 1.5`、`AI_TOTAL_DEADLINE_HARD_MAX = 3.5`、`MAX_INPUT_TOKENS_HARD = 1500`、`MAX_OUTPUT_TOKENS_HARD = 300`、`MAX_ANSWER_CHARS_HARD = 60`、`SINGLE_INFLIGHT = True`
   - `clamp(value: float, hard_max: float, name: str) -> float`：返回值不超过 `hard_max`，被钳制时写 `logging.warning`
   - `clamp_int(value: int, hard_max: int, name: str) -> int`：同上，整数版
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -109,7 +110,7 @@ class ClampTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_constants -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_constants -v`  
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ai_constants'`
 
 - [ ] **Step 3: Implement `voice-assistant/src/ai_constants.py`**
@@ -118,7 +119,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'src.ai_constants'`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_constants -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_constants -v`  
 Expected: PASS（5 tests）
 
 - [ ] **Step 5: Commit**
@@ -133,17 +134,18 @@ git commit -m "feat(ai): 硬上限常量与配置钳制"
 ## Task 2: 问题分类预检
 
 **Files:**
+
 - Create: `voice-assistant/src/query_class.py`
 - Test: `voice-assistant/tests/test_query_class.py`
 
 **Interfaces:**
-- Consumes: 无（纯函数，不依赖 `router` / `telemetry`）
-- Produces:
+
+- [ ] Consumes: 无（纯函数，不依赖 `router` / `telemetry`）
+- [ ] Produces:
   - `class QueryKind(str, Enum)`：`SAFETY`、`ANALYSIS`、`KNOWN`、`UNKNOWN`
   - `classify(text: str, intent: str | None) -> QueryKind`
   - `SAFETY_WORDS: tuple[str, ...]`、`ANALYSIS_WORDS: tuple[str, ...]`（模块级，供测试与后续扩充）
   - 判定顺序固定：`SAFETY` → `ANALYSIS` → `KNOWN`（`intent` 非 None）→ `UNKNOWN`
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -184,7 +186,7 @@ class KnownAndUnknownTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_query_class -v`
+Run: `cd voice-assistant && python -m unittest tests.test_query_class -v`  
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `voice-assistant/src/query_class.py`**
@@ -197,7 +199,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_query_class -v`
+Run: `cd voice-assistant && python -m unittest tests.test_query_class -v`  
 Expected: PASS（8 tests）
 
 - [ ] **Step 5: Add Review Focus #4 test（安全类变体写法）**
@@ -212,7 +214,7 @@ class SafetyVariantTests(unittest.TestCase):
                 self.assertIs(classify(text, None), QueryKind.SAFETY)
 ```
 
-Run: `cd voice-assistant && python -m unittest tests.test_query_class -v`
+Run: `cd voice-assistant && python -m unittest tests.test_query_class -v`  
 Expected: PASS（11 tests）
 
 - [ ] **Step 6: Commit**
@@ -227,18 +229,19 @@ git commit -m "feat(ai): 问题分类预检，SAFETY 优先于 ANALYSIS"
 ## Task 3: `DerivedTracker` 圈记录扩展
 
 **Files:**
+
 - Modify: `voice-assistant/src/telemetry.py`（`DerivedTracker` 类，约 182-286 行）
 - Test: `voice-assistant/tests/test_lap_records.py`
 
 **Interfaces:**
-- Consumes: 现有 `Snapshot`
-- Produces:
+
+- [ ] Consumes: 现有 `Snapshot`
+- [ ] Produces:
   - `DerivedTracker.lap_records: list[dict]`（最多 20 条，最近的在后）
   - `DerivedTracker.valid_lap: bool`（公共属性，替代私有 `_valid_lap` 的读取）
   - `DerivedTracker.record_lap(summary: dict, trace=None) -> None`
   - 圈记录字段见 spec 第七节
   - `DERIVED_VALUES` 中新增的派生量：`laps_spare`、`delta_to_best`、`avg3`、`trend_per_lap`
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -298,9 +301,10 @@ class LapRecordTests(unittest.TestCase):
         self.assertIsNotNone(t.lap_records[0]["gap_ahead_s"])
 ```
 
+
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_lap_records -v`
+Run: `cd voice-assistant && python -m unittest tests.test_lap_records -v`  
 Expected: FAIL with `AttributeError: 'DerivedTracker' object has no attribute 'lap_records'`
 
 - [ ] **Step 3: Implement the extension in `DerivedTracker`**
@@ -316,6 +320,7 @@ Expected: FAIL with `AttributeError: 'DerivedTracker' object has no attribute 'l
 `record_lap` 只保留最近 20 条（`del self.lap_records[:-20]`）。
 
 **两套有效圈判据**（关键）：
+
 - `fuel_used` 可用条件：`valid_lap`（现有 `_valid_lap` 语义，进站/加油/跨线维修区都置假）
 - 圈记录本身可用条件：仅要求「圈号连续 + 非跨线维修区 + session 未重置」
 
@@ -323,12 +328,12 @@ Expected: FAIL with `AttributeError: 'DerivedTracker' object has no attribute 'l
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_lap_records -v`
+Run: `cd voice-assistant && python -m unittest tests.test_lap_records -v`  
 Expected: PASS（5 tests）
 
 - [ ] **Step 5: Run the full suite to confirm no regression**
 
-Run: `cd voice-assistant && python -m unittest discover -s tests -v 2>&1 | tail -5`
+Run: `cd voice-assistant && python -m unittest discover -s tests -v 2>&1 | tail -5`  
 Expected: 全部通过（原 132 项 + 新增）
 
 - [ ] **Step 6: Commit**
@@ -343,14 +348,15 @@ git commit -m "feat(ai): DerivedTracker 圈记录环形缓冲，油耗与圈记�
 ## Task 4: `SimTelemetry` 可选圈推进
 
 **Files:**
+
 - Modify: `voice-assistant/src/telemetry.py`（`SimTelemetry.read`）
 - Modify: `voice-assistant/src/engine.py` 或 `app/desktop.py`（解析 `--sim-advance`）
 - Test: `voice-assistant/tests/test_sim_advance.py`
 
 **Interfaces:**
-- Consumes: `SimTelemetry`
-- Produces: `SimTelemetry(advance: bool = False, lap_seconds: float = 8.0)`；`advance=True` 时 `lap` 随时间递增
 
+- [ ] Consumes: `SimTelemetry`
+- [ ] Produces: `SimTelemetry(advance: bool = False, lap_seconds: float = 8.0)`；`advance=True` 时 `lap` 随时间递增
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -374,7 +380,7 @@ class SimAdvanceTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_sim_advance -v`
+Run: `cd voice-assistant && python -m unittest tests.test_sim_advance -v`  
 Expected: FAIL（`SimTelemetry.__init__` 不接受 `advance`）
 
 - [ ] **Step 3: Implement**
@@ -383,12 +389,12 @@ Expected: FAIL（`SimTelemetry.__init__` 不接受 `advance`）
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_sim_advance -v`
+Run: `cd voice-assistant && python -m unittest tests.test_sim_advance -v`  
 Expected: PASS（2 tests）
 
 - [ ] **Step 5: Confirm existing suite unaffected**
 
-Run: `cd voice-assistant && python -m unittest discover -s tests -v 2>&1 | tail -3`
+Run: `cd voice-assistant && python -m unittest discover -s tests -v 2>&1 | tail -3`  
 Expected: 全绿（默认行为未变）
 
 - [ ] **Step 6: Commit**
@@ -403,17 +409,18 @@ git commit -m "feat(ai): sim 模式可选圈推进，默认关闭不影响既有
 ## Task 5: 上下文组装
 
 **Files:**
+
 - Create: `voice-assistant/src/race_context.py`
 - Test: `voice-assistant/tests/test_race_context.py`
 
 **Interfaces:**
-- Consumes: `Snapshot`、`DerivedTracker.lap_records`、`QueryKind`
-- Produces:
+
+- [ ] Consumes: `Snapshot`、`DerivedTracker.lap_records`、`QueryKind`
+- [ ] Produces:
   - `build(snap: Snapshot, laps: list[dict], kind: QueryKind, question: str) -> dict`
   - `ALLOWED_FIELDS: frozenset[str]`（模板与数据闸共用的字段白名单）
   - `estimate_tokens(ctx: dict) -> int`（按字符数 / 2 估算）
   - `trim(ctx: dict, max_tokens: int) -> dict`（裁剪顺序：远圈 → opponents 非邻车 → derived 对手字段 → 只留 now+session）
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -469,7 +476,7 @@ class TrimTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_race_context -v`
+Run: `cd voice-assistant && python -m unittest tests.test_race_context -v`  
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `voice-assistant/src/race_context.py`**
@@ -480,7 +487,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_race_context -v`
+Run: `cd voice-assistant && python -m unittest tests.test_race_context -v`  
 Expected: PASS（6 tests）
 
 - [ ] **Step 5: Add Review Focus #2 test（遥测缺失）**
@@ -496,7 +503,7 @@ class MissingDataTests(unittest.TestCase):
         self.assertNotIn("fuel_level", ctx["now"])
 ```
 
-Run: `cd voice-assistant && python -m unittest tests.test_race_context -v`
+Run: `cd voice-assistant && python -m unittest tests.test_race_context -v`  
 Expected: PASS（8 tests）
 
 - [ ] **Step 6: Commit**
@@ -511,17 +518,18 @@ git commit -m "feat(ai): 上下文组装，派生值预计算、缺数据处理"
 ## Task 6: 三道校验闸
 
 **Files:**
+
 - Create: `voice-assistant/src/answer_checks.py`
 - Test: `voice-assistant/tests/test_answer_checks.py`
 
 **Interfaces:**
-- Consumes: `ai_constants`、`race_context.ALLOWED_FIELDS`
-- Produces:
+
+- [ ] Consumes: `ai_constants`、`race_context.ALLOWED_FIELDS`
+- [ ] Produces:
   - `check_length(answer: str, max_chars: int) -> str | None`（`None` 为通过，否则返回失败原因）
   - `check_data(data_used: list[str], ctx: dict) -> str | None`
   - `check_numbers(answer: str, ctx: dict, question: str) -> str | None`
   - `run_all(payload: dict, ctx: dict, question: str, max_chars: int) -> tuple[bool, dict[str, str]]`
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -587,8 +595,9 @@ class RunAllTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_answer_checks -v`
+Run: `cd voice-assistant && python -m unittest tests.test_answer_checks -v`  
 Expected: FAIL with `ModuleNotFoundError`
+
 
 - [ ] **Step 3: Implement `voice-assistant/src/answer_checks.py`**
 
@@ -600,7 +609,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_answer_checks -v`
+Run: `cd voice-assistant && python -m unittest tests.test_answer_checks -v`  
 Expected: PASS（10 tests）
 
 - [ ] **Step 5: Commit**
@@ -615,17 +624,18 @@ git commit -m "feat(ai): 三道校验闸，支持分秒换算与百分比缩放"
 ## Task 7: 模型调用层
 
 **Files:**
+
 - Create: `voice-assistant/src/llm_engine.py`
 - Test: `voice-assistant/tests/test_llm_engine.py`
 
 **Interfaces:**
-- Consumes: `ai_constants`
-- Produces:
+
+- [ ] Consumes: `ai_constants`
+- [ ] Produces:
   - `class LlmError(RuntimeError)`
   - `class LlmClient`：`__init__(base_url, api_key, model, timeout_s, max_tokens)`、`ask(ctx: dict, question: str) -> dict`（返回解析后的 JSON）、`test_connection() -> dict`、`close()`
   - `class AdaptiveBreaker`：`record(latency_ms: float, timed_out: bool)`、`should_skip() -> bool`、`reset_half_open()`、`state -> str`（`closed`/`open`）
   - 模块级单飞锁；`ask` 在已有请求在途时**取消旧请求**
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -674,7 +684,7 @@ class TimeoutTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_llm_engine -v`
+Run: `cd voice-assistant && python -m unittest tests.test_llm_engine -v`  
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `voice-assistant/src/llm_engine.py`**
@@ -687,7 +697,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_llm_engine -v`
+Run: `cd voice-assistant && python -m unittest tests.test_llm_engine -v`  
 Expected: PASS（5 tests）
 
 - [ ] **Step 5: Add Review Focus #3 test（慢/坏模型）**
@@ -701,7 +711,7 @@ class BadModelTests(unittest.TestCase):
                 c.ask({"now": {}}, "test")
 ```
 
-Run: `cd voice-assistant && python -m unittest tests.test_llm_engine -v`
+Run: `cd voice-assistant && python -m unittest tests.test_llm_engine -v`  
 Expected: PASS（6 tests）
 
 - [ ] **Step 6: Commit**
@@ -716,17 +726,18 @@ git commit -m "feat(ai): 模型调用层，硬截止/单飞/自适应熔断"
 ## Task 8: TTS 双适配器
 
 **Files:**
+
 - Create: `voice-assistant/src/tts_engine.py`
 - Test: `voice-assistant/tests/test_tts_engine.py`
 
 **Interfaces:**
-- Consumes: `ai_constants`
-- Produces:
+
+- [ ] Consumes: `ai_constants`
+- [ ] Produces:
   - `class TtsError(RuntimeError)`
   - `class TtsEngine`：`__init__(adapter: str, config: dict)`，`adapter` ∈ `{"doubao","openai","off"}`
   - `synth(text: str) -> bytes`：返回 WAV 字节，超过 `TTS_DEADLINE_HARD_MAX` 抛 `TtsError`
   - `test() -> dict`
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -756,7 +767,7 @@ class AdapterSelectTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_tts_engine -v`
+Run: `cd voice-assistant && python -m unittest tests.test_tts_engine -v`  
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `voice-assistant/src/tts_engine.py`**
@@ -765,7 +776,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_tts_engine -v`
+Run: `cd voice-assistant && python -m unittest tests.test_tts_engine -v`  
 Expected: PASS（4 tests）
 
 - [ ] **Step 5: Commit**
@@ -780,16 +791,17 @@ git commit -m "feat(ai): TTS 双适配器（豆包 / OpenAI 兼容），可选�
 ## Task 9: 学习库
 
 **Files:**
+
 - Create: `voice-assistant/src/ai_learn.py`
 - Test: `voice-assistant/tests/test_ai_learn.py`
 
 **Interfaces:**
-- Consumes: `race_context.ALLOWED_FIELDS`、`answer_checks`
-- Produces:
+
+- [ ] Consumes: `race_context.ALLOWED_FIELDS`、`answer_checks`
+- [ ] Produces:
   - `class LearnStore`：`__init__(root: pathlib.Path)`、`add_knowledge(question, answer, clip_path)`、`add_template(question, template)`、`match(question) -> tuple[str, dict] | None`（返回 `("knowledge", entry)` 或 `("template", entry)`）、`mark(entry_id: str, ok: bool)`、`stats() -> dict`、`clear()`
   - `validate_template(template: dict) -> str | None`（`None` 为通过）
   - `fill_template(template: dict, ctx: dict) -> str | None`
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -859,7 +871,7 @@ class StoreTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_learn -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_learn -v`  
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `voice-assistant/src/ai_learn.py`**
@@ -872,7 +884,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_learn -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_learn -v`  
 Expected: PASS（10 tests）
 
 - [ ] **Step 5: Add Review Focus #5 test（越界模板与结论）**
@@ -889,7 +901,8 @@ class UnsafeTemplateTests(unittest.TestCase):
         self.assertIsNone(fill_template(GOOD, ctx))
 ```
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_learn -v`
+
+Run: `cd voice-assistant && python -m unittest tests.test_ai_learn -v`  
 Expected: PASS（12 tests）
 
 - [ ] **Step 6: Commit**
@@ -904,17 +917,18 @@ git commit -m "feat(ai): 学习库，条件模板安全求值 + 权重纠错"
 ## Task 10: AI 编排层
 
 **Files:**
+
 - Create: `voice-assistant/src/ai_pipeline.py`
 - Test: `voice-assistant/tests/test_ai_pipeline.py`
 
 **Interfaces:**
-- Consumes: `query_class`、`race_context`、`llm_engine`、`answer_checks`、`tts_engine`、`ai_learn`
-- Produces:
+
+- [ ] Consumes: `query_class`、`race_context`、`llm_engine`、`answer_checks`、`tts_engine`、`ai_learn`
+- [ ] Produces:
   - `class AiResult`：`ok: bool`、`text: str`、`source: str`（`learn`/`model`/`refused`）、`reason: str`、`checks: dict`、`latency_ms: int`
   - `class AiPipeline`：`__init__(cfg: dict, store: LearnStore, out)`
   - `should_engage(kind: QueryKind, mode: str, rule_ok: bool) -> bool`
   - `handle(question: str, snap, kind, laps, rule_ok) -> AiResult`
-
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -948,7 +962,7 @@ class EngageMatrixTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_pipeline -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_pipeline -v`  
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: Implement `voice-assistant/src/ai_pipeline.py`**
@@ -964,7 +978,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_pipeline -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_pipeline -v`  
 Expected: PASS（5 tests）
 
 - [ ] **Step 5: Commit**
@@ -979,14 +993,15 @@ git commit -m "feat(ai): 编排层，档位矩阵与学习库优先"
 ## Task 11: 配置接入与钳制
 
 **Files:**
+
 - Modify: `voice-assistant/src/config.py`（`DEFAULTS`、`load`、`validate`）
 - Modify: `voice-assistant/config.yaml`
 - Test: `voice-assistant/tests/test_ai_config.py`
 
 **Interfaces:**
-- Consumes: `ai_constants`
-- Produces: `cfg["ai"]` 段，字段见 spec 第十四节；`cfg["_ai_learn_dir"]` 指向 `data_dir()/ai_learn`
 
+- [ ] Consumes: `ai_constants`
+- [ ] Produces: `cfg["ai"]` 段，字段见 spec 第十四节；`cfg["_ai_learn_dir"]` 指向 `data_dir()/ai_learn`
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -1030,7 +1045,7 @@ class AiConfigTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_config -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_config -v`  
 Expected: FAIL（`KeyError: 'ai'`）
 
 - [ ] **Step 3: Implement**
@@ -1041,12 +1056,12 @@ Expected: FAIL（`KeyError: 'ai'`）
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_config -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_config -v`  
 Expected: PASS（4 tests）
 
 - [ ] **Step 5: Confirm existing config tests still pass**
 
-Run: `cd voice-assistant && python -m unittest tests.test_installation -v`
+Run: `cd voice-assistant && python -m unittest tests.test_installation -v`  
 Expected: PASS（9 tests，含 ai 段不破坏既有行为）
 
 - [ ] **Step 6: Commit**
@@ -1061,13 +1076,14 @@ git commit -m "feat(ai): 配置段与硬上限钳制，密钥走 local/环境变
 ## Task 12: 引擎接入（模型调用移出锁）
 
 **Files:**
+
 - Modify: `voice-assistant/src/engine.py`（`Assistant.__init__`、`ask`）
 - Test: `voice-assistant/tests/test_engine_ai.py`
 
 **Interfaces:**
-- Consumes: `ai_pipeline`、`query_class`
-- Produces: `Assistant.ask()` 在 AI 分支返回的 `rec` 增加 `ai_source` / `ai_text` / `ai_checks`；`Assistant.ai_status()` 供界面轮询
 
+- [ ] Consumes: `ai_pipeline`、`query_class`
+- [ ] Produces: `Assistant.ask()` 在 AI 分支返回的 `rec` 增加 `ai_source` / `ai_text` / `ai_checks`；`Assistant.ai_status()` 供界面轮询
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -1124,7 +1140,7 @@ class AiBranchTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_engine_ai -v`
+Run: `cd voice-assistant && python -m unittest tests.test_engine_ai -v`  
 Expected: FAIL（`TypeError` 或缺 `ai_enabled`）
 
 - [ ] **Step 3: Implement**
@@ -1133,18 +1149,17 @@ Expected: FAIL（`TypeError` 或缺 `ai_enabled`）
 
 `ask()` 改动（关键）：
 
-- 在 `_resolve` 之后、播报之前插入分类与转交判断
-- **模型调用不能在 `@exclusive` 内**：把 AI 分支拆成 `_ask_ai(question, snap, kind)` 无锁方法，由 `ask()` 调用；进入模型等待前先 `self.busy = False`，结束后恢复
-- 模型返回后：有 TTS 则合成播放；无 TTS 则播 `AST_AI_SEE_SCREEN`；文本写入 `rec["ai_text"]`
-
+- [ ] 在 `_resolve` 之后、播报之前插入分类与转交判断
+- [ ] **模型调用不能在 `@exclusive` 内**：把 AI 分支拆成 `_ask_ai(question, snap, kind)` 无锁方法，由 `ask()` 调用；进入模型等待前先 `self.busy = False`，结束后恢复
+- [ ] 模型返回后：有 TTS 则合成播放；无 TTS 则播 `AST_AI_SEE_SCREEN`；文本写入 `rec["ai_text"]`
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_engine_ai -v`
+Run: `cd voice-assistant && python -m unittest tests.test_engine_ai -v`  
 Expected: PASS（2 tests）
 
 - [ ] **Step 5: Confirm no regression in engine tests**
 
-Run: `cd voice-assistant && python -m unittest tests.test_regressions -v 2>&1 | tail -3`
+Run: `cd voice-assistant && python -m unittest tests.test_regressions -v 2>&1 | tail -3`  
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -1159,12 +1174,13 @@ git commit -m "feat(ai): 引擎接入，模型调用移出 exclusive 锁"
 ## Task 13: 分析键第二输入源
 
 **Files:**
+
 - Modify: `voice-assistant/src/listener.py`
 - Test: `voice-assistant/tests/test_analysis_key.py`
 
 **Interfaces:**
-- Produces: `PttListener(..., analysis_vk=None, on_analysis_result=None)`；按住分析键录音后走 `on_analysis_result`
 
+- [ ] Produces: `PttListener(..., analysis_vk=None, on_analysis_result=None)`；按住分析键录音后走 `on_analysis_result`
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -1187,9 +1203,10 @@ class AnalysisKeyTests(unittest.TestCase):
         self.assertEqual(l.analysis_vk, 0xA5)
 ```
 
+
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_analysis_key -v`
+Run: `cd voice-assistant && python -m unittest tests.test_analysis_key -v`  
 Expected: FAIL（`unexpected keyword argument`）
 
 - [ ] **Step 3: Implement**
@@ -1198,7 +1215,7 @@ Expected: FAIL（`unexpected keyword argument`）
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_analysis_key -v`
+Run: `cd voice-assistant && python -m unittest tests.test_analysis_key -v`  
 Expected: PASS（2 tests）
 
 - [ ] **Step 5: Commit**
@@ -1213,18 +1230,19 @@ git commit -m "feat(ai): 分析键作为第二输入源"
 ## Task 14: 服务端接口与密钥隔离
 
 **Files:**
+
 - Modify: `voice-assistant/app/server.py`
 - Test: `voice-assistant/tests/test_ai_server.py`
 
 **Interfaces:**
-- Produces:
+
+- [ ] Produces:
   - `Service.state()` 的 `pack`/`ai` 字段：`{"enabled","mode","status","last_text","api_key_set","analysis_key_bound"}`
   - `POST /api/ai/config`：写入 `config.local.yaml`，密钥只写不读
   - `POST /api/ai/test`：连通性测试
   - `GET /api/ai/review`：返回本场 AI 问答列表
   - `POST /api/ai/review/mark`：标记正确/错误
   - `export_logs()` 排除密钥
-
 - [ ] **Step 1: Write the failing test**
 
 测试必须打到真实代码路径，不能只验证自己构造的字典。
@@ -1272,7 +1290,7 @@ class KeyIsolationTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_server -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_server -v`  
 Expected: FAIL with `AttributeError: type object 'Assistant' has no attribute 'config_view_for_test'`
 
 - [ ] **Step 3: Implement**
@@ -1289,7 +1307,7 @@ Expected: FAIL with `AttributeError: type object 'Assistant' has no attribute 'c
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_server -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_server -v`  
 Expected: PASS（3 tests）
 
 - [ ] **Step 5: Commit**
@@ -1304,12 +1322,14 @@ git commit -m "feat(ai): 服务端接口与密钥隔离"
 ## Task 15: 赛后复盘入库流程
 
 **Files:**
+
 - Modify: `voice-assistant/app/server.py`（复盘路由）
 - Modify: `voice-assistant/src/ai_learn.py`（补 `add_from_review`）
 - Modify: `voice-assistant/src/llm_engine.py`（提示词要求输出 `template`）
 - Test: `voice-assistant/tests/test_ai_review.py`
 
 **Interfaces:**
+
 - Consumes: `LearnStore`、`validate_template`、`AnswerChecks`
 - Produces:
   - `LearnStore.add_from_review(record: dict) -> str`（返回 `"knowledge"` / `"template"` / `"rejected"`）
@@ -1367,7 +1387,7 @@ class AddFromReviewTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_review -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_review -v`  
 Expected: FAIL with `AttributeError: 'LearnStore' object has no attribute 'add_from_review'`
 
 - [ ] **Step 3: Implement `add_from_review`**
@@ -1390,7 +1410,7 @@ def add_from_review(self, record: dict) -> str:
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_review -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_review -v`  
 Expected: PASS（4 tests）
 
 - [ ] **Step 6: Commit**
@@ -1406,14 +1426,15 @@ git commit -m "feat(ai): 复盘入库分类——动态型必须带合法模板"
 ## Task 16: 前端 AI 设置页与复盘区
 
 **Files:**
+
 - Modify: `voice-assistant/app/static/index.html`（nav 按钮 + 容器）
 - Modify: `voice-assistant/app/static/app.js`（`renderAiPanel`、`renderAiReview`、主面板只读显示）
 - Test: 手动验证（前端无自动化测试框架）
 
 **Interfaces:**
-- Consumes: Task 14 的接口
-- Produces: 设置页「AI 分析」；主面板状态标签
 
+- [ ] Consumes: Task 14 的接口
+- [ ] Produces: 设置页「AI 分析」；主面板状态标签
 - [ ] **Step 1: 加 nav 按钮与容器**
 
 在 `index.html` 的 nav 里加「AI 分析」按钮，`data-view="ai"`；加 `<div data-view-panel="ai">` 容器（与现有四页同构）。
@@ -1432,7 +1453,7 @@ git commit -m "feat(ai): 复盘入库分类——动态型必须带合法模板"
 
 - [ ] **Step 5: 手动验证**
 
-Run: `cd voice-assistant && python -m app.desktop --sim`
+Run: `cd voice-assistant && python -m app.desktop --sim`  
 Expected: 窗口显示新 nav 项；点击进入设置页各控件可交互；密钥框显示为掩码且不回显原值；主面板出现 AI 状态区
 
 - [ ] **Step 6: Commit**
@@ -1447,13 +1468,14 @@ git commit -m "feat(ai): AI 设置页与赛后复盘界面"
 ## Task 17: 新增语音素材
 
 **Files:**
+
 - Modify: `content/assistant-telemetry-v1.2.json`
 - Modify: `voice-assistant/config.yaml`（无改动，仅确认路径）
 - Test: `voice-assistant/tests/test_ai_assets.py`
 
 **Interfaces:**
-- Produces: msgId `AST_AI_SEE_SCREEN`，文本「答案在屏幕上。」
 
+- [ ] Produces: msgId `AST_AI_SEE_SCREEN`，文本「答案在屏幕上。」
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -1474,7 +1496,7 @@ class AiAssetTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails or skips**
 
-Run: `cd voice-assistant && python -m unittest tests.test_ai_assets -v`
+Run: `cd voice-assistant && python -m unittest tests.test_ai_assets -v`  
 Expected: 无素材时 SKIP；有素材时 FAIL
 
 - [ ] **Step 3: 追加文案并合成**
@@ -1493,7 +1515,7 @@ Expected: 无素材时 SKIP；有素材时 FAIL
 
 - [ ] **Step 4: 验证素材数量更新**
 
-Run: `cd voice-assistant && python tools/check_pack.py`
+Run: `cd voice-assistant && python tools/check_pack.py`  
 Expected: msgId 数与音频数各 +1；无缺失
 
 - [ ] **Step 5: Commit**
@@ -1508,20 +1530,21 @@ git commit -m "feat(ai): 新增 AST_AI_SEE_SCREEN 语音素材"
 ## Task 18: 全量回归与量化门槛
 
 **Files:**
+
 - Test: `voice-assistant/tests/`（全部）
 - Create: `voice-assistant/tools/ai_bench.py`
 
 **Interfaces:**
-- Produces: 误杀率与安全零漏放的可复算脚本
 
+- [ ] Produces: 误杀率与安全零漏放的可复算脚本
 - [ ] **Step 1: 跑全量测试**
 
-Run: `cd voice-assistant && python -m unittest discover -s tests -v 2>&1 | tail -5`
+Run: `cd voice-assistant && python -m unittest discover -s tests -v 2>&1 | tail -5`  
 Expected: 全部通过
 
 - [ ] **Step 2: 跑离线审计**
 
-Run: `cd voice-assistant && python tools/audit_offline.py`
+Run: `cd voice-assistant && python tools/audit_offline.py`  
 Expected: 0 errors，无缺失素材
 
 - [ ] **Step 3: 写 `tools/ai_bench.py`**
@@ -1530,7 +1553,7 @@ Expected: 0 errors，无缺失素材
 
 - [ ] **Step 4: 跑基准并确认门槛**
 
-Run: `cd voice-assistant && python tools/ai_bench.py --config config.local.yaml`
+Run: `cd voice-assistant && python tools/ai_bench.py --config config.local.yaml`  
 Expected: `false_reject_rate <= 0.20` 且 `safety_leaks == 0`
 
 - [ ] **Step 5: Commit**
