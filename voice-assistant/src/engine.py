@@ -23,10 +23,13 @@ from . import intents, router, telemetry
 from .phrase_match import PhraseMatcher
 from .player import Player
 from .voicepack import VariantPicker, VoicePack
+from .ai_pipeline import AiPipeline
+from .query_class import QueryKind, classify
 
 # 拒绝话术（在 assistant-extra 素材包里，同一音色合成）
 REFUSE_HEARD = "AST_REFUSE_HEARD"    # 没听清 / 对不上短语库
 REFUSE_CANT = "AST_REFUSE_CANT"      # 听懂了，但遥测答不了
+AI_SEE_SCREEN = "AST_AI_SEE_SCREEN"  # AI 答了但没配 TTS：请用户看屏幕
 
 
 def exclusive(fn):
@@ -87,6 +90,184 @@ class Assistant:
         self.history = collections.deque(maxlen=500)
         self.sampler = telemetry.TelemetrySampler(self.tel, self.derive,
             cfg["telemetry"]["poll_hz"], cfg["telemetry"].get("thread_priority"))
+        # AI 只在显式启用时构造；不启用时下面所有入口都判空，行为与接入前完全一致。
+        self.ai = self._build_ai(cfg)
+
+    # ------------------------------------------------------------------ AI
+    def _build_ai(self, cfg: dict) -> AiPipeline | None:
+        """AI 未启用就返回 None，避免构造无用对象与误触发网络。"""
+        ai_cfg = (cfg or {}).get("ai") or {}
+        if not ai_cfg.get("enabled"):
+            return None
+        store = None
+        learn_dir = cfg.get("_ai_learn_dir")
+        if learn_dir:
+            try:
+                from .ai_learn import LearnStore
+                store = LearnStore(learn_dir)
+            except Exception:      # noqa: BLE001
+                store = None       # 学习库坏了不该拖垮主流程
+        try:
+            return AiPipeline(cfg, store=store, out=self.out)
+        except Exception as exc:   # noqa: BLE001
+            print(f"  ⚠ AI 初始化失败：{exc}", file=self.out)
+            return None
+
+    @property
+    def ai_enabled(self) -> bool:
+        return self.ai is not None
+
+    def ai_status(self) -> dict:
+        if self.ai is None:
+            return {"enabled": False, "available": False, "configured": False,
+                    "mode": None, "breaker": "closed", "tts": "off"}
+        return {"enabled": True, **self.ai.status()}
+
+    def _ai_should_engage(self, kind: QueryKind, text: str,
+                          intent: str | None = None,
+                          rule_ok: bool = False) -> bool:
+        """档位矩阵的引擎侧入口；未启用时一律 False。"""
+        if self.ai is None:
+            return False
+        from .ai_pipeline import should_engage
+        return should_engage(kind, self.ai.mode, rule_ok, intent,
+                             self.ai.whitelist)
+
+    @exclusive
+    def ask(self, text: str, *, source: str = "keyboard",
+            extra: dict[str, Any] | None = None) -> dict:
+        """规则层问答。**不含模型调用**——那是 ask_ai()，它不持锁。
+
+        为什么必须拆开：`@exclusive` 会持 `_operation_lock` 且把 `busy` 置真，
+        而 `busy` 会让 PTT 监听丢弃按键。若模型调用留在这里，等模型的
+        1~2 秒里麦克风全程是聋的，「新问题取消旧问题」根本触发不了。
+        """
+        p = lambda s: print(s, file=self.out)  # noqa: E731
+        extra = dict(extra or {})
+        tr = self._resolve(text, strict=self._strict_for(source))
+        snap = self.snapshot()
+        rec: dict = {"q": text, "source": source, **extra}
+        kind = classify(text, tr["intent"])
+
+        if tr["intent"] is None:
+            p(f"  意图：拒绝（{tr['_hit'].reason}）")
+            rec.update({"ok": False, "intent": None, "layer": "refuse",
+                        "kind": kind.value,
+                        "ranked": [list(x) for x in tr["_hit"].ranked[:3]]})
+            # 交给引擎上层决定是否走 AI（见 ask_ai）
+            rec["ai_eligible"] = self._ai_should_engage(kind, text, None, False)
+            self._say(REFUSE_HEARD)
+            self._log(self.miss_log, rec)
+            return rec
+
+        rec.update({"intent": tr["intent"], "layer": tr["layer"],
+                    "kind": kind.value})
+        dec = router.route(tr["intent"], snap, text)
+        p(f"  意图 {tr['intent']}  ← {tr['why']}  ({tr['intent_ms']:.1f} ms)")
+        if not dec.ok:
+            p(f"  ✗ 答不了：{dec.reason}")
+            rec.update({"ok": False, "reason": dec.reason})
+            rec["ai_eligible"] = self._ai_should_engage(
+                kind, text, tr["intent"], False)
+            self._say(dec.refusal_msg or REFUSE_CANT)
+            self._log(self.miss_log, rec)
+            return rec
+        p(f"  依据：{dec.reason}")
+        return self._play_plan(text, snap, dec, rec, source, extra)
+
+
+    def _strict_for(self, source: str) -> bool:
+        """语音路径默认严格：只认短语库。打字场景可以走 L1 兜底。"""
+        return (source == "voice"
+                and self.cfg["intent"].get("voice_strict", True))
+
+    def _play_plan(self, text: str, snap, dec, rec: dict, source: str,
+                   extra: dict) -> dict:
+        """把路由给出的 msgId 序列播出来。规则层的老路径，逻辑保持原样。"""
+        p = lambda s: print(s, file=self.out)  # noqa: E731
+        chosen: list[tuple[str, object]] = []
+        for mid in dec.plan:
+            if not self.pack.has(mid):
+                p(f"  ✗ 拼装失败：语音包里没有 {mid}")
+                rec.update({"ok": False, "reason": f"拼装缺件 {mid}"})
+                self._log(self.miss_log, rec)
+                return rec
+            try:
+                chosen.append((mid, self._pick_existing(mid)))
+            except FileNotFoundError as exc:
+                p(f"  ✗ 拼装失败：{exc}")
+                rec.update({"ok": False, "reason": f"拼装缺件 {mid}"})
+                self._log(self.miss_log, rec)
+                return rec
+        try:
+            self.picker.save()
+        except OSError as exc:
+            p(f"  ⚠ 冷却记录保存失败：{exc}")
+
+        assembled = "".join(v.text for _, v in chosen)  # type: ignore[attr-defined]
+        rec.update({"plan": dec.plan, "text": assembled,
+                    "segments": len(chosen), "ok": True})
+        try:
+            played = 0.0
+            first_ms: float | None = None
+
+            def on_start():
+                nonlocal first_ms
+                first_ms = 0.0
+
+            played = self.player.play_many(
+                [self.pack.path_of(v) for _, v in chosen], self.gap_ms, on_start)
+            rec["first_audio_ms"] = first_ms
+            rec["play_s"] = round(played, 3)
+        except Exception as exc:  # noqa: BLE001
+            p(f"  ✗ 播放失败：{exc}")
+            rec.update({"ok": False, "reason": f"播放失败：{exc}"})
+        self._log(self.qa_log, rec)
+        return rec
+
+    def ask_ai(self, text: str, kind: QueryKind, intent: str | None,
+               rule_ok: bool, *, source: str = "voice",
+               extra: dict[str, Any] | None = None) -> dict:
+        """走 AI 路径。**不持 `_operation_lock`**，因此等待模型期间麦克风不聋。
+
+        `busy` 在等待前置假：用户按 PTT 会被监听接住，新问题由
+        LlmClient 的单飞闸门排队，不会两个请求同时在路上。
+        """
+        p = lambda s: print(s, file=self.out)  # noqa: E731
+        rec: dict = {"q": text, "source": source, **(extra or {}),
+                     "intent": intent, "kind": kind.value}
+        if self.ai is None:
+            rec.update({"ok": False, "reason": "AI 未启用"})
+            return rec
+
+        self.busy = False          # 让 PTT 能进来（关键：不占用麦克风）
+        try:
+            snap = self.snapshot()
+            laps = list(getattr(self.derive, "lap_records", []) or [])
+            result = self.ai.handle(text, snap, kind, laps,
+                                    rule_ok=rule_ok, intent=intent)
+        except Exception as exc:   # noqa: BLE001
+            p(f"  ✗ AI 处理异常：{exc}")
+            rec.update({"ok": False, "reason": f"AI 处理异常：{exc}"})
+            self._log(self.miss_log, rec)
+            return rec
+
+        rec.update({"ai_source": result.source, "ai_text": result.text,
+                    "ai_checks": result.checks, "ok": result.ok,
+                    "ai_latency_ms": result.latency_ms})
+        if not result.ok:
+            rec["reason"] = result.reason
+            p(f"  ✗ AI 未给出可用回答：{result.reason}")
+            # 素材可能还没合成（Task 17）。有就播，没有就只留文字。
+            if self.pack.has(AI_SEE_SCREEN):
+                self._say(AI_SEE_SCREEN)
+            self._log(self.miss_log, rec)
+            return rec
+        p(f"  ✎ AI（{result.source}）{result.latency_ms}ms：{result.text}")
+        if self.pack.has(AI_SEE_SCREEN):
+            self._say(AI_SEE_SCREEN)
+        self._log(self.qa_log, rec)
+        return rec
 
     # ------------------------------------------------------------------
     def pack_info(self) -> dict:
@@ -246,96 +427,6 @@ class Assistant:
         self.player.stop()
         self.sampler.close()
 
-    # ------------------------------------------------------------------
-    @exclusive
-    def ask(self, text: str, *, source: str = "keyboard",
-            extra: dict[str, Any] | None = None) -> dict:
-        p = lambda s: print(s, file=self.out)  # noqa: E731
-        extra = dict(extra or {})
-        t_all = time.perf_counter()
-
-        # 1) 意图：短语库优先
-        # 语音路径默认严格：只认短语库。
-        # 实测 14 条越界句里 L1 兜底会漏收 1 条（「帮我分析一下我的圈速」→ 圈速），
-        # 打字场景无所谓，开车场景「绝不猜」优先。
-        strict = (source == "voice"
-                  and self.cfg["intent"].get("voice_strict", True))
-        tr = self._resolve(text, strict=strict)
-        hit = tr["_hit"]
-        intent, layer, why = tr["intent"], tr["layer"], tr["why"]
-        intent_ms = tr["intent_ms"]
-
-        snap = self.snapshot()
-        rec: dict = {"q": text, "source": source, **extra}
-
-        if intent is None:
-            p(f"  意图：拒绝（{hit.reason}）")
-            rec.update({"ok": False, "intent": None, "layer": "refuse",
-                        "ranked": [list(x) for x in hit.ranked[:3]]})
-            self._say(REFUSE_HEARD)
-            self._log(self.miss_log, rec)
-            return rec
-
-        rec.update({"intent": intent, "layer": layer})
-        dec = router.route(intent, snap, text)
-        p(f"  意图 {intent}  ← {why}  ({intent_ms:.1f} ms)")
-        if not dec.ok:
-            p(f"  ✗ 答不了：{dec.reason}")
-            rec["ok"] = False
-            rec["reason"] = dec.reason
-            self._say(dec.refusal_msg or REFUSE_CANT)
-            self._log(self.miss_log, rec)
-            return rec
-        p(f"  依据：{dec.reason}")
-
-        chosen: list[tuple[str, object]] = []
-        for mid in dec.plan:
-            if not self.pack.has(mid):
-                p(f"  ✗ 拼装失败：语音包里没有 {mid}")
-                rec.update({"ok": False, "reason": f"拼装缺件 {mid}"})
-                self._log(self.miss_log, rec)
-                return rec
-            try:
-                chosen.append((mid, self._pick_existing(mid)))
-            except FileNotFoundError as exc:
-                p(f"  ✗ 拼装失败：{exc}")
-                rec.update({"ok": False, "reason": f"拼装缺件 {mid}"})
-                self._log(self.miss_log, rec)
-                return rec
-        try:
-            self.picker.save()
-        except OSError as exc:
-            p(f"  ⚠ 冷却记录保存失败：{exc}")
-        assembled = "".join(v.text for _, v in chosen)  # type: ignore[attr-defined]
-
-        if len(chosen) == 1:
-            mid, v = chosen[0]
-            idx = self.pack.variants[mid].index(v) + 1      # type: ignore[arg-type]
-            p(f"  → {mid}  变体 {idx}/{len(self.pack.variants[mid])}")
-        else:
-            p(f"  → 拼装 {len(chosen)} 段：" + " + ".join(m for m, _ in chosen))
-        p(f"    「{assembled}」")
-
-        rec.update({"plan": dec.plan, "text": assembled, "segments": len(chosen), "ok": True})
-        try:
-            played = 0.0
-            first_ms: float | None = None
-            def on_start():
-                nonlocal first_ms
-                first_ms = (time.perf_counter() - t_all) * 1000
-            played = self.player.play_many([self.pack.path_of(v) for _, v in chosen], self.gap_ms, on_start)
-            first_ms = first_ms or 0.0
-            p(f"  ▶ 播放提交 {first_ms:.0f} ms（不含设备缓冲延迟）· "
-              f"播放 {played:.2f}s · 共 {len(chosen)} 段")
-            rec["first_audio_ms"] = round(first_ms + extra.get("asr_ms", 0)) if self.player.enabled else None
-            rec["play_s"] = round(played, 3)
-        except Exception as exc:  # noqa: BLE001
-            p(f"  ✗ 播放失败：{exc}")
-            rec["ok"] = False
-            rec["reason"] = f"播放失败：{exc}"
-
-        self._log(self.qa_log, rec)
-        return rec
 
     # ------------------------------------------------------------------
     def _pick_existing(self, mid: str):
