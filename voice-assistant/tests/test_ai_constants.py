@@ -15,12 +15,28 @@ class ClampTests(unittest.TestCase):
         self.assertEqual(c.LLM_DEADLINE_HARD_MAX, 2.0)
         self.assertEqual(c.TTS_DEADLINE_HARD_MAX, 1.5)
         self.assertEqual(c.AI_TOTAL_DEADLINE_HARD_MAX, 3.5)
+        self.assertEqual(c.MAX_INPUT_TOKENS_HARD, 1500)
+        self.assertEqual(c.MAX_OUTPUT_TOKENS_HARD, 300)
         self.assertEqual(c.MAX_ANSWER_CHARS_HARD, 60)
         self.assertTrue(c.SINGLE_INFLIGHT)
 
     def test_clamp_logs_a_warning(self):
         with self.assertLogs("src.ai_constants", level="WARNING"):
             c.clamp(10.0, 2.0, "llm_timeout")
+
+    def test_value_equal_to_hard_max_does_not_warn(self):
+        # 边界值是合法配置，不该刷告警（钳制只对严格 `>` 生效），否则上界本身
+        # 就成了噪声源。assertNoLogs 需要 Python 3.10+，仓库跑 3.12，没问题。
+        with self.assertNoLogs("src.ai_constants", level="WARNING"):
+            self.assertEqual(c.clamp(2.0, 2.0, "llm_timeout"), 2.0)
+
+    def test_value_under_max_does_not_warn(self):
+        with self.assertNoLogs("src.ai_constants", level="WARNING"):
+            self.assertEqual(c.clamp(1.0, 2.0, "llm_timeout"), 1.0)
+
+    def test_clamp_int_value_equal_to_hard_max_does_not_warn(self):
+        with self.assertNoLogs("src.ai_constants", level="WARNING"):
+            self.assertEqual(c.clamp_int(60, 60, "max_answer_chars"), 60)
 
 
 class NonFiniteTests(unittest.TestCase):
@@ -73,5 +89,39 @@ class NonFiniteTests(unittest.TestCase):
         self.assertEqual(c.clamp_int(0, 60, "max_answer_chars"), 0)
         self.assertEqual(c.clamp_int(60, 60, "max_answer_chars"), 60)
         self.assertEqual(c.clamp_int(61, 60, "max_answer_chars"), 60)
+
+
+class NumericEdgeCaseTests(unittest.TestCase):
+    """超大 int 与 bool 这两类「合法但不是普通数值」的输入。
+
+    回归背景：`_reject_non_finite` 最初对所有值调用 `math.isfinite`，而
+    `math.isfinite(10**400)` 会先把 int 转 float，抛
+    `OverflowError: int too large to convert to float` —— 一个超大但完全合法
+    的 token 上限从「被钳到 60」变成崩溃。int 是任意精度、天然有限，必须
+    短路绕过 float 转换。
+    """
+
+    def test_clamp_int_huge_int_is_clamped_not_overflow(self):
+        with self.assertLogs("src.ai_constants", level="WARNING"):
+            self.assertEqual(c.clamp_int(10**400, 60, "max_answer_chars"), 60)
+
+    def test_clamp_int_huge_int_below_hard_max_passes_through(self):
+        # 不被钳制时也必须能原样返回：不能再撞上 float 转换。
+        self.assertEqual(c.clamp_int(10**400, 10**500, "max_input_tokens"), 10**400)
+
+    def test_clamp_huge_int_is_clamped_not_overflow(self):
+        with self.assertLogs("src.ai_constants", level="WARNING"):
+            self.assertEqual(c.clamp(10**400, 2.0, "llm_timeout"), 2.0)
+
+    def test_clamp_bool_returns_float(self):
+        # bool 是 int 的子类、不是 float 的子类，原样返回会违反 `-> float`。
+        result = c.clamp(True, 2.0, "llm_timeout")
+        self.assertEqual(result, 1.0)
+        self.assertIs(type(result), float)
+
+    def test_clamp_int_bool_returns_int(self):
+        result = c.clamp_int(True, 60, "max_answer_chars")
+        self.assertEqual(result, 1)
+        self.assertIs(type(result), int)
 
 if __name__=='__main__':unittest.main()

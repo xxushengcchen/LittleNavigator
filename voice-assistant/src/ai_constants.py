@@ -31,7 +31,7 @@ MAX_ANSWER_CHARS_HARD = 60
 SINGLE_INFLIGHT = True
 
 
-def _reject_non_finite(value: float, name: str) -> None:
+def _reject_non_finite(value: int | float, name: str) -> None:
     """拦掉配置里不该出现的非有限值；`+inf` 放行，交给调用方的上限比较去钳。
 
     三种值语义不同，所以不统一处理：
@@ -44,33 +44,58 @@ def _reject_non_finite(value: float, name: str) -> None:
       只可能是配置写错，钳成某个具体负数同样是掩盖问题。
     - ``+inf``：语义上就是「大到没有意义」，钳到 ``hard_max`` 正是钳制的本意，
       不丢信息，也不必报错；这里直接放行，让它走正常的超上限分支并留 warning。
+
+    ``int`` 单独短路返回，**不能**交给 ``math.isfinite``：Python 的 int 是任意
+    精度整数，天然有限（不存在 nan/inf），而 ``math.isfinite(10**400)`` 会先把
+    它转成 float，抛 ``OverflowError: int too large to convert to float``——一个
+    「超大但完全合法的 token 上限」就此从「被钳到 60」退化成崩溃。
+    ``bool`` 是 ``int`` 的子类，走同一条短路，同样安全。
     """
+    if isinstance(value, int):
+        return
     if math.isfinite(value):
         return
     if math.isnan(value):
         raise ValueError(f"配置 {name}={value!r} 是 NaN，不是合法数值")
-    if value < 0:  # 只剩 -inf 能走到这里（+inf 已由上面的分支分类）
+    if value < 0:  # 只有 -inf 会落进来：nan 已在上面的分支抛错，+inf 不小于 0
         raise ValueError(f"配置 {name}={value!r} 是负无穷，不是合法数值")
-    # +inf：交给调用方的 `value > hard_max` 分支钳到 hard_max 并告警。
+    # 到这里只剩 +inf：交给调用方的 `value > hard_max` 分支钳到 hard_max 并告警。
+    return
 
 
 def clamp(value: float, hard_max: float, name: str) -> float:
-    """把浮点配置压到硬上限以内；越界时记一条 warning 说明是哪个配置项。"""
-    _reject_non_finite(value, name)
-    if value > hard_max:
-        logger.warning("配置 %s=%s 超过硬上限 %s，已钳制", name, value, hard_max)
-        return hard_max
-    return value
+    """把浮点配置压到硬上限以内；越界时记一条 warning 说明是哪个配置项。
 
-
-def clamp_int(value: int, hard_max: int, name: str) -> int:
-    """整数版钳制，用于 token 与字符数这类「整数量」配置。
-
-    类型注解挡不住 ``clamp_int(float('nan'), ...)``（``isinstance(nan, int)``
-    为 False，解释器不会拦），所以同样先过非有限值检查。
+    参数注解 ``float`` 不必改成 ``int | float``：按 PEP 484 的数值塔，
+    ``int`` / ``bool`` 在类型检查层面就是合法的 ``float`` 实参。真正要修的是
+    **返回**侧：``clamp(True, 2.0, ...)`` 原来会把 ``True`` 原样漏出去，而
+    ``bool`` 只是 ``int`` 的子类、不是 ``float`` 的子类，于是调用方拿到一个
+    类型上不成立的值。这里只对 ``bool`` 做一次 ``float()``，不无差别地转换
+    所有输入——``float(10**400)`` 会抛 ``OverflowError``，那正是本次要修掉的
+    那类回归，不能换个地方又请回来。
     """
     _reject_non_finite(value, name)
     if value > hard_max:
         logger.warning("配置 %s=%s 超过硬上限 %s，已钳制", name, value, hard_max)
         return hard_max
-    return value
+    return float(value) if isinstance(value, bool) else value
+
+
+def clamp_int(value: int | float, hard_max: int, name: str) -> int | float:
+    """整数版钳制，用于 token 与字符数这类「整数量」配置。
+
+    参数注解是 ``int | float`` 而非 ``int``：类型注解在运行时挡不住
+    ``clamp_int(float('nan'), ...)``（``isinstance(nan, int)`` 为 False，
+    解释器不会拦），而配置从 YAML 读出来本就可能是浮点或非有限值，
+    入口必须真的接得住 ``float``。
+
+    返回类型如实写成 ``int | float``：正常配置传 int、拿回 int；有限的 float
+    原样返回而不截断（截断会悄悄改掉调用方语义），只有 nan/±inf 会被拒绝或
+    钳成整数硬上限。``bool`` 归一成 ``int``——``True`` 传进来当 token 上限虽
+    不报错，但语义是「1 个 token」，返回 ``True`` 只会让下游日志更难读。
+    """
+    _reject_non_finite(value, name)
+    if value > hard_max:
+        logger.warning("配置 %s=%s 超过硬上限 %s，已钳制", name, value, hard_max)
+        return hard_max
+    return int(value) if isinstance(value, bool) else value
