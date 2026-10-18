@@ -7,37 +7,38 @@
    纸白工作面 + 深石墨机身；发丝规分栏，无浮起卡片；数据等宽右对齐。
    ========================================================================== */
 
-html, body { margin: 0; width: 100%; height: 100%; background: #0F1B20; }
+html, body { margin: 0; width: 100%; height: 100%; background: #0B2C4D; }
 
 .ira {
   /* ---- 机身 ---- */
-  --shell:        #0F1B20;
-  --shell-2:      #16262D;
-  --shell-3:      #1E3239;
-  --shell-ink:    #E6EDEA;
-  --shell-dim:    #8AA1A4;
+  --shell:        #0B2C4D;
+  --shell-2:      #123A61;
+  --shell-3:      #1A4A78;
+  --shell-ink:    #E9F1F8;
+  --shell-dim:    #9CB6CC;
   --shell-line:   rgba(255,255,255,0.10);
 
   /* ---- 纸面 ---- */
-  --paper:        #F2F2EF;
+  --paper:        #FBFDFE;
   --surface:      #FFFFFF;
-  --well:         #E9EAE5;
-  --ink:          #12181A;
-  --ink-2:        #46565C;
-  --ink-3:        #5E6E72;
-  --line:         #DCDDD8;
-  --line-strong:  #C3C6BF;
+  --well:         #EFF5F9;
+  --ink:          #0C2233;
+  --ink-2:        #3E5A72;
+  --ink-3:        #566F84;
+  --line:         #DFE9F0;
+  --line-strong:  #B9CCD9;
 
   /* ---- 一个主色，只给「可操作 / 选中」 ---- */
-  --accent:       #0E5B64;
-  --accent-ink:   #0A464D;
-  --accent-wash:  #E3EDEC;
+  --accent:       #0B6B52;
+  --accent-ink:   #08553F;
+  --accent-wash:  #E3F2EC;
 
   /* ---- 状态色，只表达就绪度 ---- */
-  --ok:           #11724C;
-  --warn:         #8F5F08;
-  --bad:          #9E2A21;
-  --idle:         #7A898D;
+  --ok:           #0B6B52;
+  --warn:         #8A5A06;
+  --bad:          #9E2B24;
+  --idle:         #566F84;
+  --data:         #1F6E9E;   /* 数据/图表用蓝，绿色留给交互 */
 
   /* ---- 层级 ---- */
   --fs-xs: 11px;
@@ -92,7 +93,7 @@ html, body { margin: 0; width: 100%; height: 100%; background: #0F1B20; }
   border: 3px solid var(--paper);
   border-radius: 6px;
 }
-.ira ::-webkit-scrollbar-thumb:hover { background: #A8ACA4; }
+.ira ::-webkit-scrollbar-thumb:hover { background: #93AFC4; }
 
 /* ========================================================== 机身骨架 */
 .ira-window {
@@ -207,9 +208,9 @@ body.desktop-shell .window-controls { display: flex; }
   color: var(--shell-ink);
   white-space: nowrap;
 }
-.ira-bus-item[data-state="ok"] .ira-bus-dot    { background: #3FBF8A; box-shadow: 0 0 0 3px rgba(63,191,138,0.16); }
-.ira-bus-item[data-state="warn"] .ira-bus-dot  { background: #E0A23C; box-shadow: 0 0 0 3px rgba(224,162,60,0.16); }
-.ira-bus-item[data-state="bad"] .ira-bus-dot   { background: #E4695C; box-shadow: 0 0 0 3px rgba(228,105,92,0.18); }
+.ira-bus-item[data-state="ok"] .ira-bus-dot    { background: #3BD6A0; box-shadow: 0 0 0 3px rgba(63,191,138,0.16); }
+.ira-bus-item[data-state="warn"] .ira-bus-dot  { background: #E8B04A; box-shadow: 0 0 0 3px rgba(224,162,60,0.16); }
+.ira-bus-item[data-state="bad"] .ira-bus-dot   { background: #F0796B; box-shadow: 0 0 0 3px rgba(228,105,92,0.18); }
 .ira-bus-item[data-state="off"] .ira-bus-val   { color: var(--shell-dim); font-weight: 400; }
 
 /* 顶栏里的轻量 chip（保留原标记，新增外观） */
@@ -243,11 +244,11 @@ body.desktop-shell .window-controls { display: flex; }
   background: var(--idle);
 }
 [data-state="on"] > .ira-dot,
-.ira-dot[data-state="on"]   { background: #3FBF8A; }
+.ira-dot[data-state="on"]   { background: #3BD6A0; }
 [data-state="recording"] > .ira-dot,
-.ira-dot[data-state="recording"] { background: #E4695C; }
+.ira-dot[data-state="recording"] { background: #F0796B; }
 [data-state="thinking"] > .ira-dot,
-.ira-dot[data-state="thinking"]  { background: #E0A23C; }
+.ira-dot[data-state="thinking"]  { background: #E8B04A; }
 [data-state="idle"] > .ira-dot,
 .ira-dot[data-state="idle"]      { background: var(--shell-dim); }
 
@@ -263,7 +264,7 @@ body.desktop-shell .window-controls { display: flex; }
   cursor: pointer;
 }
 .window-controls button:hover { background: var(--shell-2); color: var(--shell-ink); }
-.window-controls button:last-child:hover { background: #A32A22; color: #fff; }
+.window-controls button:last-child:hover { background: #9E2B24; color: #fff; }
 
 /* ========================================================== 主体 */
 .ira-body { display: flex; flex: 1; min-height: 0; background: var(--paper); }
@@ -295,7 +296,7 @@ body.desktop-shell .window-controls { display: flex; }
   font-weight: 600;
   letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: #7A9196;
+  color: #7E9AB2;
 }
 .ira-navbtn {
   display: flex;
@@ -321,7 +322,7 @@ body.desktop-shell .window-controls { display: flex; }
   position: absolute;
   left: 0; top: 6px; bottom: 6px;
   width: 2px;
-  background: #3FBF8A;
+  background: #3BD6A0;
   border-radius: 0 2px 2px 0;
 }
 
@@ -331,7 +332,7 @@ body.desktop-shell .window-controls { display: flex; }
   font-size: 10px;
   line-height: 1.6;
   letter-spacing: 0.02em;
-  color: #7A9196;
+  color: #7E9AB2;
   border-top: 1px solid var(--shell-line);
 }
 
@@ -438,8 +439,8 @@ body.desktop-shell .window-controls { display: flex; }
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
 }
-.ira-input::placeholder { color: #9AA6A9; }
-.ira-input:hover, .ira-select:hover { border-color: #A8ACA4; }
+.ira-input::placeholder { color: #8CA4B6; }
+.ira-input:hover, .ira-select:hover { border-color: #93AFC4; }
 .ira-input:focus, .ira-select:focus {
   outline: none;
   border-color: var(--accent);
@@ -491,7 +492,7 @@ body.desktop-shell .window-controls { display: flex; }
   cursor: pointer;
   white-space: nowrap;
 }
-.ira-btn:hover { border-color: #A8ACA4; background: #FAFAF8; }
+.ira-btn:hover { border-color: #93AFC4; background: #F7FBFD; }
 .ira-btn:active { background: var(--well); }
 .ira-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .ira-btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
@@ -602,14 +603,14 @@ body.desktop-shell .window-controls { display: flex; }
   color: var(--ink-2);
 }
 .ira-badge.l1 { background: var(--accent-wash); color: var(--accent-ink); }
-.ira-badge.l2 { background: #EFE7D6; color: var(--warn); }
-.ira-badge.l3 { background: #E7E9EC; color: var(--ink-2); }
+.ira-badge.l2 { background: #F4EBD8; color: var(--warn); }
+.ira-badge.l3 { background: #E6EEF4; color: var(--ink-2); }
 
 .ira-swatch {
   display: inline-block;
   width: 10px; height: 10px;
   border-radius: 2px;
-  background: var(--well);
+  background: var(--data);
   margin-right: 6px;
   vertical-align: -1px;
 }
@@ -625,7 +626,7 @@ body.desktop-shell .window-controls { display: flex; }
 }
 .ira-barlabel { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ira-barfill { height: 6px; background: var(--well); border-radius: 1px; overflow: hidden; }
-.ira-barfill > i { display: block; height: 100%; background: var(--accent); }
+.ira-barfill > i { display: block; height: 100%; background: var(--data); }
 .ira-barval {
   font-family: ui-monospace, "Consolas", monospace;
   font-variant-numeric: tabular-nums;
