@@ -17,20 +17,25 @@ class ContentEntryTests(unittest.TestCase):
             rows.extend(data.get("items") or [])
         return rows
 
-    def test_msgid_exists_in_content(self):
-        ids = [it.get("msgId") for it in self._items()]
-        self.assertIn("AST_AI_SEE_SCREEN", ids)
+    NEW_IDS = ("AST_AI_SEE_SCREEN", "AST_NO_CAR_CONTROL")
 
-    def test_entry_has_variants_and_instruct(self):
+    def test_msgids_exist_in_content(self):
+        ids = [it.get("msgId") for it in self._items()]
+        for msg_id in self.NEW_IDS:
+            with self.subTest(msgId=msg_id):
+                self.assertIn(msg_id, ids)
+
+    def test_entries_have_variants_and_instruct(self):
+        found = set()
         for item in self._items():
-            if item.get("msgId") != "AST_AI_SEE_SCREEN":
+            if item.get("msgId") not in self.NEW_IDS:
                 continue
+            found.add(item["msgId"])
             self.assertGreaterEqual(len(item.get("variants") or []), 1)
             self.assertTrue(item.get("instruct"))
             for text in item["variants"]:
-                self.assertNotIn("{" , text)      # 不做模板替换，是固定话术
-            return
-        self.fail("没找到 AST_AI_SEE_SCREEN")
+                self.assertNotIn("{", text)      # 不做模板替换，是固定话术
+        self.assertEqual(found, set(self.NEW_IDS))
 
 
 class PackAssetTests(unittest.TestCase):

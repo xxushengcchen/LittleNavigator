@@ -1,9 +1,19 @@
 {
   "model": "deepseek-chat (DeepSeek)",
   "date": "2026-10-18",
-  "safety": {
-    "checks": 90,
-    "leaks": 0
+  "blocking": {
+    "red_line": {
+      "questions": 13,
+      "checks": 39,
+      "leaks": 0,
+      "misclassified": 0
+    },
+    "capability": {
+      "questions": 17,
+      "checks": 51,
+      "leaks": 0,
+      "misclassified": 0
+    }
   },
   "whitelist": {
     "total": 50,
@@ -12,13 +22,14 @@
     "false_reject_rate": 0.0
   },
   "latency_ms": {
-    "p50": 922,
-    "p90": 1435,
-    "max": 1655,
+    "p50": 908,
+    "p90": 1301,
+    "max": 1611,
     "over_2000": 0
   },
   "thresholds": {
-    "safety_zero_leak": "pass",
+    "blocking_zero_leak": "pass",
     "false_reject_le_20pct": "pass"
-  }
+  },
+  "note": "红线与能力边界分开统计：两者都不调模型，但用户听到的话术不同。"
 }

@@ -188,3 +188,68 @@ class AskAiTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RefusalMessageTests(unittest.TestCase):
+    """三类拒绝话术必须不同 —— 「设置成软胎」听到「没听清」是最糟的体验。"""
+
+    def test_operation_gets_capability_message(self):
+        from src.engine import NO_CAR_CONTROL
+        a = Assistant.__new__(Assistant)
+        self.assertEqual(Assistant._refusal_for(QueryKind.OPERATION),
+                         NO_CAR_CONTROL)
+
+    def test_safety_gets_policy_message(self):
+        from src.engine import REFUSE_CANT
+        self.assertEqual(Assistant._refusal_for(QueryKind.SAFETY), REFUSE_CANT)
+
+    def test_unknown_gets_heard_message(self):
+        from src.engine import REFUSE_HEARD
+        for kind in (QueryKind.UNKNOWN, QueryKind.ANALYSIS, QueryKind.KNOWN):
+            with self.subTest(kind=kind.value):
+                self.assertEqual(Assistant._refusal_for(kind), REFUSE_HEARD)
+
+    def test_operation_message_differs_from_safety(self):
+        self.assertNotEqual(Assistant._refusal_for(QueryKind.OPERATION),
+                            Assistant._refusal_for(QueryKind.SAFETY))
+
+    def _ask_with_pack(self, text: str, available: set[str]):
+        """构造一个只「有」available 里这些素材的引擎，跑一次提问。"""
+        pack = fake_pack(has=False)
+        pack.has.side_effect = lambda m: m in available
+        with patch("src.engine.VoicePack.load_many", return_value=pack):
+            a = Assistant(make_cfg(pathlib.Path(tempfile.gettempdir())),
+                          no_play=True, out=io.StringIO())
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = MagicMock(intent=None, score=0.2,
+                                                 phrase="", margin=0.0,
+                                                 reason="未命中", ranked=[])
+        played = []
+        with patch.object(a, "_say", side_effect=lambda m: played.append(m)):
+            rec = a.ask(text, source="keyboard")
+        return rec, played
+
+    def test_car_control_request_selects_capability_message(self):
+        rec, played = self._ask_with_pack("设置成软胎", {"AST_NO_CAR_CONTROL"})
+        self.assertEqual(rec["kind"], "operation")
+        self.assertEqual(played, ["AST_NO_CAR_CONTROL"])
+
+    def test_penalty_question_selects_policy_message(self):
+        rec, played = self._ask_with_pack("为什么我被罚了", {"AST_REFUSE_CANT"})
+        self.assertEqual(rec["kind"], "safety")
+        self.assertEqual(played, ["AST_REFUSE_CANT"])
+
+    def test_missing_capability_audio_falls_back_not_silent(self):
+        # 素材还没重建时，宁可播一句措辞不完美的话，也不能让用户面对沉默
+        rec, played = self._ask_with_pack("设置成软胎", {"AST_REFUSE_CANT"})
+        self.assertEqual(rec["kind"], "operation")
+        self.assertEqual(played, ["AST_REFUSE_CANT"])
+
+    def test_missing_capability_and_policy_audio_falls_back_to_heard(self):
+        rec, played = self._ask_with_pack("设置成软胎", {"AST_REFUSE_HEARD"})
+        self.assertEqual(played, ["AST_REFUSE_HEARD"])
+
+    def test_all_refusal_audio_missing_is_not_silent_crash(self):
+        rec, played = self._ask_with_pack("设置成软胎", set())
+        self.assertEqual(played, [])
+        self.assertFalse(rec["ok"])       # 仍然返回记录，不抛异常

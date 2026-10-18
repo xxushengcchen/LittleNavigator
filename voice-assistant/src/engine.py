@@ -30,6 +30,7 @@ from .query_class import QueryKind, classify
 REFUSE_HEARD = "AST_REFUSE_HEARD"    # 没听清 / 对不上短语库
 REFUSE_CANT = "AST_REFUSE_CANT"      # 听懂了，但遥测答不了
 AI_SEE_SCREEN = "AST_AI_SEE_SCREEN"  # AI 答了但没配 TTS：请用户看屏幕
+NO_CAR_CONTROL = "AST_NO_CAR_CONTROL"  # 要求软件操作车辆：软件是只读的，如实说
 
 
 def exclusive(fn):
@@ -174,7 +175,7 @@ class Assistant:
                         "ranked": [list(x) for x in tr["_hit"].ranked[:3]]})
             # 交给引擎上层决定是否走 AI（见 ask_ai）
             rec["ai_eligible"] = self._ai_should_engage(kind, text, None, False)
-            self._say(REFUSE_HEARD)
+            self._say_refusal(kind)
             self._log(self.miss_log, rec)
             return rec
 
@@ -193,6 +194,32 @@ class Assistant:
         p(f"  依据：{dec.reason}")
         return self._play_plan(text, snap, dec, rec, source, extra)
 
+
+    @staticmethod
+    def _refusal_for(kind) -> str:
+        """按分类选拒绝话术。三类的原因不同，说给用户听的话也必须不同。
+
+        OPERATION 尤其不能复用「没听清」——软件听得很清楚，是做不到。
+        """
+        if kind is QueryKind.OPERATION:
+            return NO_CAR_CONTROL
+        if kind is QueryKind.SAFETY:
+            return REFUSE_CANT
+        return REFUSE_HEARD
+
+    def _say_refusal(self, kind) -> None:
+        """播拒绝话术，素材缺失时逐级降级。
+
+        降级链存在的原因：`AST_NO_CAR_CONTROL` 是新加的素材，用户重建语音包
+        之前它不在包里。直接播会走 `_say()` 的静默跳过——那比播一句
+        措辞不完美的话更糟：用户按完 PTT 什么都没听到，会以为软件坏了。
+        """
+        for msg_id in (self._refusal_for(kind), REFUSE_CANT, REFUSE_HEARD):
+            if self.pack.has(msg_id):
+                self._say(msg_id)
+                return
+        # 三个都没有：至少别让用户面对完全的沉默
+        print("  ⚠ 拒绝话术素材全部缺失，本次无声", file=self.out)
 
     def _strict_for(self, source: str) -> bool:
         """语音路径默认严格：只认短语库。打字场景可以走 L1 兜底。"""

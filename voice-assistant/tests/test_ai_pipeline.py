@@ -190,3 +190,26 @@ class StatusTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OperationEngageTests(unittest.TestCase):
+    """操作请求任何档位都不放给模型。
+
+    软件不执行只是没帮上忙；模型给出「前翼调软两格」这种建议，
+    在 200km/h 的弯里照做是要出事的。
+    """
+
+    def test_operation_never_engages_in_any_mode(self):
+        for mode in ("full", "analysis_key", "whitelist"):
+            with self.subTest(mode=mode):
+                self.assertFalse(
+                    should_engage(QueryKind.OPERATION, mode, rule_ok=False))
+
+    def test_operation_is_blocked_alongside_safety(self):
+        for kind in (QueryKind.SAFETY, QueryKind.OPERATION):
+            with self.subTest(kind=kind.value):
+                self.assertFalse(should_engage(kind, "full", rule_ok=False))
+
+    def test_analysis_still_engages(self):
+        # 确认拆分没有误伤：分析类照旧放行
+        self.assertTrue(should_engage(QueryKind.ANALYSIS, "full", rule_ok=False))

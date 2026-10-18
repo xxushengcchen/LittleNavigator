@@ -50,20 +50,28 @@ def should_engage(kind: QueryKind, mode: str, rule_ok: bool,
                   whitelist: list[str] | None = None) -> bool:
     """档位矩阵：这句话该不该交给模型。
 
-    安全类任何档位都不放行——这是整个功能的前提，不是可配置项。
+    SAFETY 与 OPERATION 任何档位都不放行，但原因不同：
+      · SAFETY   红线，能做但不做（不解释处罚、不聊比赛外的事）
+      · OPERATION 能力边界，软件根本做不到（纯只读，无写接口）
+    两者的**用户可见结果一样**（不调模型、给固定话术），
+    但话术不同——见 engine.ask() 按 kind 选 msgId。
 
-    | 分类     | full | analysis_key | whitelist |
-    |----------|------|--------------|-----------|
-    | SAFETY   |  否  |      否      |    否     |
-    | ANALYSIS |  是  |      是      |    是     |
-    | KNOWN(ok)|  否  |      否      |    否     |
-    | KNOWN(x) |  是  |      否      | 仅白名单  |
-    | UNKNOWN  |  是  |      否      |    否     |
+    | 分类      | full | analysis_key | whitelist |
+    |-----------|------|--------------|-----------|
+    | SAFETY    |  否  |      否      |    否     |
+    | OPERATION |  否  |      否      |    否     |
+    | ANALYSIS  |  是  |      是      |    是     |
+    | KNOWN(ok) |  否  |      否      |    否     |
+    | KNOWN(x)  |  是  |      否      | 仅白名单  |
+    | UNKNOWN   |  是  |      否      |    否     |
 
     analysis_key 档位下「按住分析键」是用户显式动作，此时 ANALYSIS 仍放行；
     KNOWN/UNKNOWN 不放行——没听懂就照实说没听懂，比花 3 秒猜更好。
+
+    OPERATION 尤其不能放给模型：软件不执行只是没帮上忙，
+    模型给出「前翼调软两格」这种建议，在 200km/h 的弯里照做是要出事的。
     """
-    if kind is QueryKind.SAFETY:
+    if kind is QueryKind.SAFETY or kind is QueryKind.OPERATION:
         return False
 
     if kind is QueryKind.ANALYSIS:
