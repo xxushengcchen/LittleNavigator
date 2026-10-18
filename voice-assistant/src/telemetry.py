@@ -193,6 +193,11 @@ class DerivedTracker:
         self._valid_lap = False
         self._tyre_history={}
         self._gap_history={'ahead':[],'behind':[]}
+        # 圈级历史：给 AI 上下文用。与 fuel_per_lap_samples 是两套判据——
+        # 进站加油圈油耗不可信，但圈速与胎温仍然有效，不能因为油耗不可用就整圈丢掉。
+        self.lap_records: list[dict] = []
+        self._lap_open: dict | None = None
+        self._lap_crossed_pit = False
 
     def reset(self) -> None:
         self._last_lap = self._lap_start_fuel = self._last_fuel = None
@@ -200,6 +205,23 @@ class DerivedTracker:
         self.fuel_per_lap_samples.clear()
         self._tyre_history={}
         self._gap_history={'ahead':[],'behind':[]}
+        self.lap_records.clear()
+        self._lap_open = None
+        self._lap_crossed_pit = False
+
+    @property
+    def valid_lap(self) -> bool:
+        """当前圈是否可用于油耗样本。圈记录另有判据，见 `_close_lap`。"""
+        return self._valid_lap
+
+    def record_lap(self, summary: dict, trace=None) -> None:
+        """写入一条圈记录，保留最近 keep_laps 条。
+
+        `trace` 为弯道级轨迹预留（第二期填 `(distance_pct, lap_time)` 序列），
+        本期恒为 None，因此这里不复制也不校验它。
+        """
+        self.lap_records.append(summary)
+        del self.lap_records[:-self.keep_laps]
 
     def update(self, s: Snapshot) -> Snapshot:
         if (not s.connected or s.in_garage or s.session_id != self._session_id
@@ -228,15 +250,20 @@ class DerivedTracker:
             if self._last_lap is None:
                 self._last_lap = s.lap
                 self._lap_start_fuel = s.fuel_level
+                self._open_lap(s)
             elif s.lap != self._last_lap:
                 if self._valid_lap and s.lap == self._last_lap + 1 and self._lap_start_fuel is not None:
                     used = self._lap_start_fuel - s.fuel_level
                     if 0.05 < used < 20:      # 过滤进站加油等异常
                         self.fuel_per_lap_samples.append(used)
                         del self.fuel_per_lap_samples[:-self.keep_laps]
+                # 圈记录：`_derive_gaps` 已在上面跑过，此时 s 上的 gap 是本帧的，
+                # 而不是上一帧残留——顺序错了圈末差距会晚一圈。
+                self._close_lap(s)
                 self._last_lap = s.lap
                 self._lap_start_fuel = s.fuel_level
                 self._valid_lap = not s.on_pit_road
+                self._open_lap(s)
 
         if self.fuel_per_lap_samples:
             # 用中位数抗单圈异常
@@ -246,6 +273,71 @@ class DerivedTracker:
             if s.fuel_level is not None and s.fuel_per_lap:
                 s.laps_of_fuel = s.fuel_level / s.fuel_per_lap
         return s
+
+    def _open_lap(self, s: Snapshot) -> None:
+        """开一个新圈：记住圈初状态，圈末收尾时用来算差值。"""
+        self._lap_open = {
+            "lap": s.lap,
+            "fuel_start": s.fuel_level,
+            "session_time": s.session_time,
+            "tyre": {w: dict(v) for w, v in (s.tyre_raw or {}).items()},
+            "incidents": s.incident_count,
+        }
+        self._lap_crossed_pit = bool(s.on_pit_road)
+
+    def _close_lap(self, s: Snapshot) -> None:
+        """收尾上一圈并写入圈记录。
+
+        两套判据，别合并：
+          · `fuel_used` 只在 `self._valid_lap` 为真时给值（进站/加油/跨线维修区不可信）
+          · 圈记录本身只要求「圈号连续 + 跨线时不在维修区 + session 未重置」，
+            因为这些数据（圈速、胎温、名次、差距）在加油圈里依然是真实的。
+        """
+        opened = self._lap_open
+        if opened is None:
+            return
+        # 圈号必须连续，否则是跳圈/重连，整圈数据不可信
+        if s.lap is None or opened["lap"] is None or s.lap != opened["lap"] + 1:
+            self._lap_open = None
+            return
+        # 跨线时人在维修区：这一圈圈速含维修区行驶时间，不是有效圈速
+        if s.on_pit_road:
+            self._lap_open = None
+            return
+
+        fuel_used = None
+        if self._valid_lap and opened["fuel_start"] is not None and s.fuel_level is not None:
+            used = opened["fuel_start"] - s.fuel_level
+            if 0.05 < used < 20:
+                fuel_used = round(used, 2)
+
+        tyre_now = s.tyre_raw or {}
+        tyre = {}
+        for wheel in ("LF", "RF", "LR", "RR"):
+            cur = tyre_now.get(wheel) or {}
+            tyre[wheel] = {
+                "temp": round(cur["temp"], 1) if cur.get("temp") is not None else None,
+                "wear": round(cur["wear"], 3) if cur.get("wear") is not None else None,
+            }
+
+        self.record_lap({
+            "lap": opened["lap"],
+            "lap_time": round(s.lap_last, 3) if s.lap_last and s.lap_last > 0 else None,
+            "fuel_start": opened["fuel_start"],
+            "fuel_used": fuel_used,
+            "tyre": tyre,
+            "position": s.position,
+            "class_position": s.class_position,
+            "gap_ahead_s": round(s.gap_ahead_s, 2) if s.gap_ahead_s is not None else None,
+            "gap_behind_s": round(s.gap_behind_s, 2) if s.gap_behind_s is not None else None,
+            "flags": list(s.flags),
+            "in_pit": bool(self._lap_crossed_pit),
+            "air_temp": s.air_temp,
+            "track_temp": s.track_temp,
+            "wetness": s.track_wetness,
+            "incidents": opened["incidents"],
+        })
+        self._lap_open = None
 
     def _derive_gaps(self,s):
         """按 SDK 的位置/估计时间读取邻车估计秒差，明确标为估计值。"""
