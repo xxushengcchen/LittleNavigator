@@ -154,12 +154,43 @@ class Service:
         def on_result(text: str, meta: dict) -> None:
             rec = self.asst.ask(text, source="voice", extra=meta)
             self.last_ask = rec
+            self._maybe_ai(rec, text, source="voice")
 
+        def on_analysis(text: str, meta: dict) -> None:
+            """分析键：跳过规则层，直接走 AI（安全类仍会被挡）。"""
+            from src.query_class import classify
+            kind = classify(text, None)
+            rec = self.asst.ask_ai(text, kind, None, False,
+                                   source="analysis", extra=meta)
+            self.last_ask = rec
+
+        ai_key = (self.cfg.get("ai", {}) or {}).get("analysis_key") or {}
+        analysis_vk = ai_key.get("vk") if isinstance(ai_key, dict) else None
         self.listener = PttListener(self.asr, self.cfg, on_result,
-                                    is_busy=lambda: self.asst.busy, out=self.log)
+                                    is_busy=lambda: self.asst.busy, out=self.log,
+                                    analysis_vk=analysis_vk,
+                                    on_analysis_result=on_analysis)
         self.listener.start()
         self.listener_err = None
         return {"running": True}
+
+    def _maybe_ai(self, rec: dict, text: str, *, source: str) -> None:
+        """规则层答不上、且档位允许时，转 AI 路径。
+
+        规则层答得上时 `ai_eligible` 为 False，压根不会进这里——
+        「规则优先」这条不靠调用方自觉，靠 ask() 返回的标志。
+        """
+        if not rec.get("ai_eligible"):
+            return
+        try:
+            from src.query_class import QueryKind
+            kind = QueryKind(rec.get("kind") or QueryKind.UNKNOWN.value)
+            ai_rec = self.asst.ask_ai(text, kind, rec.get("intent"), False,
+                                      source=source, extra=rec)
+            # 规则层的拒绝记录已经在 miss_log 里，这里只补 AI 结果供界面看
+            self.last_ask = ai_rec
+        except Exception as exc:       # noqa: BLE001
+            self.log(f"AI 转交失败：{exc}")
 
     def stop_listener(self) -> dict:
         with self.listener_lock:

@@ -158,13 +158,24 @@ class PttListener:
     """常驻轮询线程；每次「按下→松开」产出一条识别结果。"""
 
     def __init__(self, asr, cfg: dict, on_result: Callable[[str, dict], None],
-                 is_busy: Callable[[], bool] | None = None, out=sys.stdout):
+                 is_busy: Callable[[], bool] | None = None, out=sys.stdout,
+                 analysis_vk: int | None = None,
+                 on_analysis_result: Callable[[str, dict], None] | None = None):
+        """`analysis_vk` 是 AI 分析键：按它录音的提问会标成 source=analysis，
+        由上层决定走模型而不是规则层。None 表示未绑定（默认）。"""
         ptt = cfg.get("ptt", {})
         self.asr = asr
         self.on_result = on_result
         self.is_busy = is_busy or (lambda: False)
         self.out = out
         self.vk = resolve_vk(ptt.get("vk", 0xA3))
+        # 分析键必须与 PTT 不同：同一个键绑两用会让每次提问都变成分析请求
+        self.analysis_vk = (resolve_vk(analysis_vk)
+                            if analysis_vk is not None else None)
+        if self.analysis_vk is not None and self.analysis_vk == self.vk:
+            self.analysis_vk = None
+        self.on_analysis_result = on_analysis_result or on_result
+        self.pending_source = "ptt"
         self.binding=ptt.get('binding')
         self.wheel=None
         if self.binding:
@@ -186,6 +197,11 @@ class PttListener:
     # ------------------------------------------------------------------
     def _down(self):
         return self.wheel.pressed(self.binding) if self.wheel is not None else _key_down(self.vk)
+
+    def _analysis_down(self) -> bool:
+        """分析键是否按下。方向盘绑定只作用于 PTT，分析键始终是键盘键。"""
+        return (self.analysis_vk is not None
+                and _key_down(self.analysis_vk))
 
     def start(self) -> None:
         if self.running:
@@ -265,33 +281,49 @@ class PttListener:
         meta = {"record_s": round(len(audio) / self.sr, 2),
                 "asr_ms": round((time.perf_counter() - started) * 1000),
                 "asr_model": getattr(self.asr, "key", "?")}
-        self.last = {"text": res.text, **meta}
-        print(f"🎙 听到：「{res.text}」", file=self.out)
-        self.on_result(res.text, meta)
+        source = self.pending_source
+        self.last = {"text": res.text, **meta, "source": source}
+        label = "分析" if source == "analysis" else ""
+        print(f"🎙 听到{label}：「{res.text}」", file=self.out)
+        callback = (self.on_analysis_result if source == "analysis"
+                    else self.on_result)
+        callback(res.text, {**meta, "source": source})
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
-        print(f"PTT 监听中：按住键说话，松开出结果（vk=0x{self.vk:02X}）", file=self.out)
+        log = f"PTT 监听中：按住键说话，松开出结果（vk=0x{self.vk:02X}）"
+        if self.analysis_vk is not None:
+            log += f"；分析键 0x{self.analysis_vk:02X}"
+        print(log, file=self.out)
         # 设置采集或重启监听时仍按住的按钮，不应生成一次提问。
         while not self._stop.is_set() and self._down():
             self._stop.wait(self.poll_s)
         while not self._stop.is_set():
-            if not self._down():
+            # 两个输入源共用一套录音管线，用 pressed() 区分是谁；
+            # 同时按下时 PTT 优先——它是比赛中的主入口，AI 是补充。
+            pressed = self._down
+            if pressed():
+                source = "ptt"
+            elif self._analysis_down():
+                pressed = self._analysis_down
+                source = "analysis"
+            else:
                 time.sleep(self.poll_s)
                 continue
             # 按下
             if self.is_busy():
                 self.stats["ignored_busy"] += 1
                 # 等键松开，避免连发
-                while self._down() and not self._stop.is_set():
+                while pressed() and not self._stop.is_set():
                     time.sleep(self.poll_s)
                 continue
             if not self._capture_lock.acquire(blocking=False):
                 self._stop.wait(self.poll_s)
                 continue
+            self.pending_source = source
             self.state = "recording"
             try:
-                audio = self._record_while(lambda: not self._down())
+                audio = self._record_while(lambda: not pressed())
                 self._process(audio)
             except Exception as exc:  # noqa: BLE001
                 self.error = str(exc)
@@ -301,5 +333,5 @@ class PttListener:
                 self.state = "idle"
                 self._capture_lock.release()
             # 超时或失败后必须等到松键；一次按住只产生一条录音。
-            while not self._stop.is_set() and self._down():
+            while not self._stop.is_set() and pressed():
                 self._stop.wait(self.poll_s)
