@@ -126,3 +126,30 @@ class AmbiguityTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class WeakSafetyWordTests(unittest.TestCase):
+    """弱操作词（调整/调一下/打开/关一下）单独不足以判安全。
+
+    中文里它们也做「调取/查看」讲，或出现在分析句里。测试把这条取舍钉死，
+    免得下次加词时把最该交给模型的问题误杀。
+    """
+
+    def test_analysis_beats_weak_operation_word(self):
+        self.assertIs(classify("我调整了刹车之后为什么推头", None), QueryKind.ANALYSIS)
+
+    def test_weak_word_alone_is_safety(self):
+        for text in ("把雨刷打开", "TC 关一下", "帮我调一下上一圈的圈速"):
+            with self.subTest(text=text):
+                self.assertIs(classify(text, None), QueryKind.SAFETY)
+
+    def test_strong_operation_words_still_win_over_analysis(self):
+        # 真正的操作指令含强词（调高/调到/帮我调），任何情况下都是安全类
+        self.assertIs(classify("为什么帮我把它调高", None), QueryKind.SAFETY)
+
+    def test_bare_help_me_is_not_a_safety_word(self):
+        # 「帮我」太泛：这条查询不能被误杀
+        self.assertIsNot(classify("能不能帮我看看还有多少油", None), QueryKind.SAFETY)
+
+    def test_empty_intent_string_is_unknown(self):
+        self.assertIs(classify("油还够吗", ""), QueryKind.UNKNOWN)
