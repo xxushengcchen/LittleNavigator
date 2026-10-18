@@ -602,6 +602,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.service.state())
             elif u.path == "/api/log":
                 self._json(self.service.log_data(int(q.get("limit", ["80"])[0])))
+            elif u.path == "/api/ai/review":
+                self._json(self.service.ai_review())
             elif u.path == "/api/stats":
                 self._json(self.service.stats())
             elif u.path == "/api/devices":
@@ -656,8 +658,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.service.ai_test())
             elif u.path == "/api/ai/tts/test":
                 self._json(self.service.ai_tts_test())
-            elif u.path == "/api/ai/review":
-                self._json(self.service.ai_review())
             elif u.path == "/api/ai/review/mark":
                 self._json(self.service.ai_review_mark(
                     str(body.get("id") or ""), body.get("verdict") or ""))

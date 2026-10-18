@@ -60,7 +60,7 @@
     panels.forEach(function (p) { p.hidden = p.getAttribute("data-view-panel") !== id; });
     if (id === "log") loadLog();
     if (id === "stats") loadStats();
-    if (id === "model" || id === "asr" || id === "pack" || id === "route") loadSettings();
+    if (id === "model" || id === "asr" || id === "pack" || id === "route" || id === "ai") loadSettings();
   }
   tabs.forEach(function (b) {
     b.addEventListener("click", function () { showView(b.getAttribute("data-nav")); });
