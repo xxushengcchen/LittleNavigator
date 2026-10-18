@@ -378,10 +378,24 @@ class DerivedTracker:
 
 
 class SimTelemetry:
-    """内置假数据。模拟一场 GT3 比赛的中段。"""
+    """内置假数据。模拟一场 GT3 比赛的中段。
 
-    def __init__(self, **overrides: Any):
+    `advance=True` 时每 `lap_seconds` 秒推进一圈，让 `--sim` 也能产出圈记录；
+    默认关闭，保持既有测试的快照断言不变。
+    """
+
+    def __init__(self, advance: bool = False, lap_seconds: float = 8.0,
+                 **overrides: Any):
+        self.advance = advance
+        self.lap_seconds = max(0.05, float(lap_seconds))
         self.overrides = overrides
+        self._t0 = time.monotonic()
+        self._base_lap = overrides.get("lap", 12)
+
+    def _laps_elapsed(self) -> int:
+        if not self.advance:
+            return 0
+        return int((time.monotonic() - self._t0) / self.lap_seconds)
 
     def read(self) -> Snapshot:
         base = dict(
@@ -427,6 +441,18 @@ class SimTelemetry:
         # 让派生量有值，便于验证油量分支
         s.fuel_per_lap = 1.42
         s.laps_of_fuel = round(s.fuel_level / s.fuel_per_lap, 1) if s.fuel_level is not None else None
+        # --sim-advance：按经过时间推进圈数，让 --sim 也能产出圈记录。
+        # 不推进时（默认）所有字段与原来完全一致，既有测试断言不受影响。
+        elapsed = self._laps_elapsed()
+        if elapsed:
+            s.lap = (s.lap or 0) + elapsed
+            s.lap_completed = (s.lap_completed or 0) + elapsed
+            # 每圈消耗 1.42 L，最低留 1 L，避免除零
+            if s.fuel_level is not None:
+                s.fuel_level = round(max(1.0, s.fuel_level - 1.42 * elapsed), 2)
+                s.laps_of_fuel = round(s.fuel_level / s.fuel_per_lap, 1)
+            if s.laps_remain is not None:
+                s.laps_remain = max(0, s.laps_remain - elapsed)
         return s
 
 
@@ -566,11 +592,15 @@ class IrsdkTelemetry:
             self._ir.shutdown()
 
 
-def build(cfg: dict, force_sim: bool = False):
-    """模拟数据必须显式选择；SDK 故障保持未连接，避免比赛中播报假数据。"""
+def build(cfg: dict, force_sim: bool = False, sim_advance: bool = False):
+    """模拟数据必须显式选择；SDK 故障保持未连接，避免比赛中播报假数据。
+
+    `sim_advance` 只在 sim 模式下有意义：让假数据随时间推进圈数，
+    便于验证圈记录与依赖「最近几圈」的逻辑。
+    """
     provider = "sim" if force_sim else cfg.get("telemetry", {}).get("provider", "irsdk")
     if provider == "sim":
-        return SimTelemetry(), None
+        return SimTelemetry(advance=sim_advance), None
     t = IrsdkTelemetry()
     if t.error:
         return t, t.error

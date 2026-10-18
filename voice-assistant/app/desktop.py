@@ -56,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--config", default=None)
     ap.add_argument("--sim", action="store_true", help="强制模拟遥测")
+    ap.add_argument("--sim-advance", action="store_true",
+                    help="模拟遥测随时间推进圈数（配合 --sim，用于验证圈记录）")
     ap.add_argument("--no-listen", action="store_true", help="启动时不自动开 PTT 监听")
     ap.add_argument("--no-window", action="store_true",
                     help="不起窗口，只跑服务（调试用，等同 app.server）")
@@ -70,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     from src.config import fix_console_encoding
     fix_console_encoding()
 
-    svc = Service(cfg_path=args.config, sim=args.sim)
+    svc = Service(cfg_path=args.config, sim=args.sim, sim_advance=args.sim_advance)
     svc.desktop_mode = True
     print("=" * 60)
     print(f"  {WEBVIEW_TITLE}")

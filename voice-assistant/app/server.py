@@ -95,7 +95,8 @@ class RingLog(io.TextIOBase):
 class Service:
     """应用状态都挂在这里；HTTP handler 只是薄薄一层。"""
 
-    def __init__(self, cfg_path: str | None = None, sim: bool = False):
+    def __init__(self, cfg_path: str | None = None, sim: bool = False,
+                 sim_advance: bool = False):
         self.lock = threading.RLock()
         self.listener_lock = threading.RLock()
         self.api_token = secrets.token_urlsafe(32)
@@ -103,7 +104,8 @@ class Service:
         self.cfg_path = cfg_path
         self.cfg = cfg_mod.load(cfg_path)
         self.sim = sim or self.cfg["telemetry"]["provider"] == "sim"
-        self.asst = Assistant(self.cfg, force_sim=sim, out=self.log)
+        self.asst = Assistant(self.cfg, force_sim=sim, sim_advance=sim_advance,
+                                  out=self.log)
         self.asr = None
         self.listener: PttListener | None = None
         self.listener_err: str | None = None

@@ -44,8 +44,8 @@ def exclusive(fn):
 
 class Assistant:
     def __init__(self, cfg: dict, *, no_play: bool = False, gap_ms: int = 60,
-                 force_sim: bool = False, pack_dir: str | None = None,
-                 out=sys.stdout):
+                 force_sim: bool = False, sim_advance: bool = False,
+                 pack_dir: str | None = None, out=sys.stdout):
         self.cfg = cfg
         cfg_mod.fix_console_encoding()
         self.gap_ms = gap_ms
@@ -64,7 +64,7 @@ class Assistant:
         self.picker = VariantPicker(self.pack, vp["cooldown"],
                                     cfg_mod.resolve(cfg, vp["state_file"]))
         self.matcher = PhraseMatcher()
-        self.tel, self.tel_warn = telemetry.build(cfg, force_sim=force_sim)
+        self.tel, self.tel_warn = telemetry.build(cfg, force_sim=force_sim, sim_advance=sim_advance)
         self.derive = telemetry.DerivedTracker(cfg["telemetry"]["ring_buffer"]["keep_laps"])
         from .duck import GameDucker
         from .listener import resolve_device
