@@ -1,0 +1,109 @@
+import unittest
+from src.answer_checks import (check_length, check_data, check_numbers,
+                               run_all)
+
+CTX = {
+    "now": {"lap_last": 83.512, "laps_remain": 5, "fuel_level": 18.4,
+            "position": 4, "relative_humidity": 0.62},
+    "derived": {"laps_of_fuel": 6.2, "delta_to_best": 0.4, "laps_spare": 1.2},
+}
+
+
+class LengthTests(unittest.TestCase):
+    def test_short_answer_passes(self):
+        self.assertIsNone(check_length("油够跑六圈", 60))
+
+    def test_over_limit_fails(self):
+        self.assertIsNotNone(check_length("字" * 61, 60))
+
+    def test_exactly_at_limit_passes(self):
+        self.assertIsNone(check_length("字" * 60, 60))
+
+    def test_empty_answer_passes(self):
+        self.assertIsNone(check_length("", 60))
+
+
+class DataTests(unittest.TestCase):
+    def test_known_fields_pass(self):
+        self.assertIsNone(check_data(["laps_of_fuel"], CTX))
+
+    def test_invented_field_fails(self):
+        self.assertIsNotNone(check_data(["fuel_pressure"], CTX))
+
+    def test_empty_list_passes(self):
+        self.assertIsNone(check_data([], CTX))
+
+    def test_non_list_fails(self):
+        self.assertIsNotNone(check_data("laps_of_fuel", CTX))
+
+
+class NumberTests(unittest.TestCase):
+    def test_exact_number_passes(self):
+        self.assertIsNone(check_numbers("油还够跑 6.2 圈", CTX, "油还够吗"))
+
+    def test_invented_number_fails(self):
+        self.assertIsNotNone(check_numbers("油还够跑 9.9 圈", CTX, "油还够吗"))
+
+    def test_chinese_numerals_are_rejected(self):
+        self.assertIsNotNone(check_numbers("油还够跑六圈", CTX, "油还够吗"))
+
+    def test_laptime_minutes_seconds_is_allowed(self):
+        # 84.512 = 1 分 24.5 秒，与 lap_last 83.512 差 1 秒内
+        self.assertIsNone(check_numbers("上一圈 1 分 24 秒", CTX, "上圈多少"))
+
+    def test_percentage_scaling_is_allowed(self):
+        self.assertIsNone(check_numbers("湿度 62%", CTX, "湿度多少"))
+
+    def test_percentage_without_source_fails(self):
+        self.assertIsNotNone(check_numbers("湿度 91%", CTX, "湿度多少"))
+
+    def test_ordinal_matches_position(self):
+        self.assertIsNone(check_numbers("现在第 4 名", CTX, "第几名"))
+
+    def test_ordinal_mismatch_fails(self):
+        self.assertIsNotNone(check_numbers("现在第 2 名", CTX, "第几名"))
+
+    def test_number_from_question_is_exempt(self):
+        self.assertIsNone(check_numbers("确实慢了 0.3 秒", CTX, "为什么慢了0.3秒"))
+
+    def test_answer_without_numbers_passes(self):
+        self.assertIsNone(check_numbers("雨要来了，注意轮胎", CTX, "天气"))
+
+    def test_integer_rounding_is_rejected(self):
+        # 6.2 → 「6 圈」差 0.2，超过 0.05 容差，必须拒绝
+        self.assertIsNotNone(check_numbers("油还够跑 6 圈", CTX, "油还够吗"))
+
+    def test_laps_spare_passes(self):
+        self.assertIsNone(check_numbers("还多 1.2 圈", CTX, "油"))
+
+    def test_delta_passes(self):
+        self.assertIsNone(check_numbers("比最佳慢 0.4 秒", CTX, "圈速"))
+
+
+class RunAllTests(unittest.TestCase):
+    def test_all_pass_returns_true(self):
+        ok, checks = run_all({"answer": "油还够跑 6.2 圈", "data_used": ["laps_of_fuel"]},
+                             CTX, "油还够吗", 60)
+        self.assertTrue(ok)
+        self.assertEqual(checks, {"length": "pass", "data": "pass", "number": "pass"})
+
+    def test_one_fail_returns_false(self):
+        ok, checks = run_all({"answer": "油还够跑 9.9 圈", "data_used": ["laps_of_fuel"]},
+                             CTX, "油还够吗", 60)
+        self.assertFalse(ok)
+        self.assertEqual(checks["number"], "fail")
+        self.assertEqual(checks["length"], "pass")
+
+    def test_reasons_are_reported(self):
+        ok, checks = run_all({"answer": "字" * 100, "data_used": ["bogus"]},
+                             CTX, "油", 60)
+        self.assertFalse(ok)
+        self.assertIn("reasons", checks)
+
+    def test_missing_keys_do_not_raise(self):
+        ok, checks = run_all({}, CTX, "油", 60)
+        self.assertTrue(ok)      # 空回答没有数字、没有字段，三道闸都过
+
+
+if __name__ == '__main__':
+    unittest.main()
