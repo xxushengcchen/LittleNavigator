@@ -217,6 +217,14 @@ body.desktop-shell .window-controls {display:flex;}
 .ira-dash { display: flex; flex-direction: column; gap: var(--ira-gap); min-height: 408px; }
 .ira-statusrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ira-gap); }
 .ira-statusrow .ira-card { display: flex; flex-direction: column; gap: 6px; }
+
+/* 赛后复盘：每条一行，问题/回答/来源，底部三个标记按钮 */
+.ira-reviewrow { padding: 10px 0; border-bottom: 1px solid var(--ira-line); }
+.ira-reviewrow:last-child { border-bottom: 0; }
+.ira-reviewq { font-weight: 600; margin-bottom: 4px; }
+.ira-reviewa { color: var(--ira-fg); margin-bottom: 4px; }
+.ira-reviewmeta { font-size: 12px; color: var(--ira-muted); margin-bottom: 8px; }
+.ira-btn.small { padding: 4px 10px; font-size: 12px; }
 .ira-card-tight { padding: 12px 14px; }
 .ira-answer .ira-q { font-size: 13px; color: var(--ira-fg2); }
 .ira-answer .ira-a { font-size: 30px; font-weight: 500; line-height: 1.35; margin: 4px 0 10px; }
@@ -482,6 +490,7 @@ body.desktop-shell .window-controls {display:flex;}
       <button class="ira-navbtn" role="tab" id="ira-tab-asr" aria-controls="ira-panel-asr" aria-selected="false" data-nav="asr" type="button"><i data-lucide="mic" aria-hidden="true"></i><span>设置 · 语音输入</span></button>
       <button class="ira-navbtn" role="tab" id="ira-tab-pack" aria-controls="ira-panel-pack" aria-selected="false" data-nav="pack" type="button"><i data-lucide="volume-2" aria-hidden="true"></i><span>设置 · 播报</span></button>
       <button class="ira-navbtn" role="tab" id="ira-tab-route" aria-controls="ira-panel-route" aria-selected="false" data-nav="route" type="button"><i data-lucide="share-2" aria-hidden="true"></i><span>音频路由</span></button>
+      <button class="ira-navbtn" role="tab" id="ira-tab-ai" aria-controls="ira-panel-ai" aria-selected="false" data-nav="ai" type="button"><i data-lucide="sparkles" aria-hidden="true"></i><span>设置 · AI 分析</span></button>
       <button class="ira-navbtn" role="tab" id="ira-tab-stats" aria-controls="ira-panel-stats" aria-selected="false" data-nav="stats" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>诊断 · 统计</span></button>
       <div class="ira-navfoot">
         小小领航员 v1.0.0<br>xushengchen from Moondrop-Dox Racing<br>语音包 v2.0.0
@@ -666,6 +675,18 @@ body.desktop-shell .window-controls {display:flex;}
           <span class="ira-savehint" data-savehint></span>
         </div>
         <div class="ira-card"></div>
+      </section>
+      <section class="ira-view" id="ira-panel-ai" data-view-panel="ai" role="tabpanel" aria-labelledby="ira-tab-ai" hidden>
+        <div class="ira-vhead">
+          <h2>AI 分析</h2>
+          <span class="ira-savehint" data-savehint></span>
+        </div>
+        <div class="ira-card"></div>
+        <div class="ira-vhead" style="margin-top:18px">
+          <h2>赛后复盘</h2>
+          <span class="ira-label">把确认正确的回答存进学习库，下次不再调模型</span>
+        </div>
+        <div class="ira-card ira-review"></div>
       </section>
 
       <!-- ============ 8. 诊断 · 统计 ============ -->

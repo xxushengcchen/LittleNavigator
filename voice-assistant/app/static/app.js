@@ -169,6 +169,8 @@
         var tr = rec.trace || null;
         var q = rec.q || (tr && tr.text) || "—";
         var a = rec.text || (tr && tr.plan && tr.plan.map(function (p) { return p.text || ""; }).join("")) || "";
+        // AI 回答优先显示：它是新句子，规则层没有对应录音
+        if (rec.ai_text) { a = rec.ai_text; }
         if (!a && !tr && rec.ok === false) { a = "（" + (rec.reason || "没听明白，请再说一次") + "）"; }
         if (!a && tr && !tr.intent) { a = "（没听明白，已经拒绝——绝不猜）"; }
         else if (!a && tr && !tr.decision.ok) { a = "（听懂了，但答不了：" + tr.decision.reason + "）"; }
@@ -179,6 +181,7 @@
           var layer = (tr && tr.layer) || rec.layer || (rec.intent ? "phrase" : "refuse");
           var badgeCls = layer === "phrase" ? "l1" : (layer === "l1_keyword" ? "l2" : "l3");
           var planIds = (rec.plan || (tr && tr.decision.plan) || []).join(" + ") || "—";
+          if (rec.ai_source) { layer = rec.ai_source === "learn" ? "学习库" : "AI"; badgeCls = "l3"; }
           row.innerHTML = badge(badgeCls, layer) +
             '<span class="ira-num ira-meta">' + (rec.first_audio_ms !== undefined
               ? (rec.first_audio_ms / 1000).toFixed(2) + " s" : "—") + "</span>" +
@@ -535,6 +538,7 @@
     renderAsrPanel(st, dev);
     renderPackPanel(st);
     renderRoutePanel(st, dev);
+    renderAiPanel(st);
   }
 
   async function save(patch, hintEl, note) {
@@ -664,6 +668,253 @@
       finally { btn.disabled = false; btn.textContent = "模拟按下（真录音）"; }
       if (r.error) { alert(r.error); }
     };
+  }
+
+
+  // ---------------------------------------------------------------- AI 分析
+  var AI_PRESETS = [
+    {key: "deepseek", label: "DeepSeek", url: "https://api.deepseek.com", model: "deepseek-chat"},
+    {key: "ark", label: "火山方舟", url: "https://ark.cn-beijing.volces.com/api/v3", model: ""},
+    {key: "moonshot", label: "月之暗面", url: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k"},
+    {key: "ollama", label: "本地 Ollama", url: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b"},
+    {key: "custom", label: "自定义", url: "", model: ""}
+  ];
+
+  function aiPresetOptions(current) {
+    return AI_PRESETS.map(function (p) {
+      return '<option value="' + p.key + '"' +
+        (p.key === (current || "custom") ? " selected" : "") + ">" + p.label + "</option>";
+    }).join("");
+  }
+
+  function renderAiPanel(st) {
+    var panel = $('[data-view-panel="ai"]');
+    if (!panel) return;
+    var a = (st.config && st.config.ai) || {};
+    var tts = a.tts || {};
+    var s = st.ai || {};
+    var hint = $("[data-savehint]", panel);
+    var card = $(".ira-card", panel);
+    if (!card) return;
+
+    var statusText = !a.enabled ? "未启用"
+      : (s.configured ? (s.available ? "就绪" : "已暂停（连续超时）") : "未配置 API");
+
+    card.innerHTML = '<div class="ira-form">' +
+      field("启用 AI 分析",
+        '<select class="ira-select" id="ira-ai-on">' +
+        '<option value="1"' + (a.enabled ? " selected" : "") + ">开</option>" +
+        '<option value="0"' + (a.enabled ? "" : " selected") + ">关</option></select>",
+        "当前状态：" + statusText + "。关掉后行为与之前完全一致。") +
+      field("档位",
+        '<select class="ira-select" id="ira-ai-mode">' +
+        '<option value="whitelist"' + (a.mode === "whitelist" ? " selected" : "") + ">C · 白名单（推荐）</option>" +
+        '<option value="analysis_key"' + (a.mode === "analysis_key" ? " selected" : "") + ">B · 按住分析键才用</option>" +
+        '<option value="full"' + (a.mode === "full" ? " selected" : "") + ">A · 规则答不上就接管</option>" +
+        "</select>",
+        "C 最省：只对分析型问题与白名单意图调模型。A 每个问题都可能慢 2 秒。") +
+      "</div><hr class='ira-hr'>" +
+      "<span class='ira-label'>模型接入</span>" +
+      "<div class='ira-form'>" +
+      field("预设", '<select class="ira-select" id="ira-ai-preset">' +
+        aiPresetOptions(a.provider) + "</select>",
+        "只是帮你填地址，填完可以改") +
+      field("接口地址", '<input class="ira-input" id="ira-ai-url" value="' +
+        esc(a.base_url || "") + '" placeholder="https://api.deepseek.com">',
+        "按 OpenAI Chat Completions 协议调用") +
+      field("模型名", '<input class="ira-input" id="ira-ai-model" value="' +
+        esc(a.model || "") + '" placeholder="deepseek-chat">', "") +
+      field("API Key", '<input class="ira-input" id="ira-ai-key" type="password" placeholder="' +
+        (a.api_key_set ? "已配置，留空则不修改" : "粘贴你的 key") + '">',
+        "明文存在 config.local.yaml，不进安装包、不进日志。也可用环境变量 LITTLE_NAVIGATOR_AI_KEY") +
+      "</div>" +
+      "<div class='ira-row' style='margin-top:10px'>" +
+      "<button class='ira-btn' id='ira-ai-save'>保存</button>" +
+      "<button class='ira-btn ghost' id='ira-ai-test'>测试连接</button>" +
+      "<span class='ira-savehint' id='ira-ai-testout'></span></div>" +
+      "<hr class='ira-hr'>" +
+      "<span class='ira-label'>分析键（B 档用）</span>" +
+      "<div class='ira-form'>" +
+      field("当前绑定",
+        '<input class="ira-input" id="ira-ai-keyname" readonly value="' +
+        (a.analysis_key_bound ? "已绑定" : "未绑定") + '">',
+        "按住它提问会直接走 AI；与 PTT 是两套按键") +
+      "</div>" +
+      "<div class='ira-row'><button class='ira-btn ghost' id='ira-ai-keycap'>采集按键</button>" +
+      "<span class='ira-savehint' id='ira-ai-keyout'></span></div>" +
+      "<hr class='ira-hr'>" +
+      "<span class='ira-label'>语音合成（可选）</span>" +
+      "<div class='ira-form'>" +
+      field("适配器",
+        '<select class="ira-select" id="ira-tts-adapter">' +
+        '<option value="off"' + (tts.adapter === "off" ? " selected" : "") + ">关闭（只出文字）</option>" +
+        '<option value="doubao"' + (tts.adapter === "doubao" ? " selected" : "") + ">豆包</option>" +
+        '<option value="openai"' + (tts.adapter === "openai" ? " selected" : "") + ">OpenAI 兼容</option>" +
+        "</select>",
+        "不配也能用：AI 回答显示在屏幕上") +
+      field("地址", '<input class="ira-input" id="ira-tts-url" value="' +
+        esc(tts.base_url || "") + '" placeholder="OpenAI 兼容才需要">', "") +
+      field("音色 / speaker", '<input class="ira-input" id="ira-tts-speaker" value="' +
+        esc(tts.speaker || tts.voice || "") + '" placeholder="豆包填音色 ID，OpenAI 填 voice">', "") +
+      field("API Key", '<input class="ira-input" id="ira-tts-key" type="password" placeholder="' +
+        (tts.api_key_set ? "已配置，留空则不修改" : "粘贴 TTS 的 key") + '">', "") +
+      "</div>" +
+      "<div class='ira-row' style='margin-top:10px'>" +
+      "<button class='ira-btn' id='ira-tts-save'>保存</button>" +
+      "<button class='ira-btn ghost' id='ira-tts-test'>试听</button>" +
+      "<span class='ira-savehint' id='ira-tts-out'></span></div>" +
+      "<hr class='ira-hr'>" +
+      "<div class='ira-row'><button class='ira-btn ghost' id='ira-learn-clear'>清空学习库</button>" +
+      "<span class='ira-savehint' id='ira-learn-out'></span></div>";
+
+    bindAiPanel(panel, hint);
+    renderAiReview();
+  }
+
+  function aiPatchFromPanel(panel) {
+    var p = {
+      enabled: $("#ira-ai-on", panel).value === "1",
+      mode: $("#ira-ai-mode", panel).value,
+      provider: $("#ira-ai-preset", panel).value,
+      base_url: $("#ira-ai-url", panel).value.trim(),
+      model: $("#ira-ai-model", panel).value.trim()
+    };
+    var key = $("#ira-ai-key", panel).value.trim();
+    if (key) p.api_key = key;
+    return { ai: p };
+  }
+
+  function ttsPatchFromPanel(panel) {
+    var t = {
+      adapter: $("#ira-tts-adapter", panel).value,
+      base_url: $("#ira-tts-url", panel).value.trim(),
+      speaker: $("#ira-tts-speaker", panel).value.trim()
+    };
+    var key = $("#ira-tts-key", panel).value.trim();
+    if (key) t.api_key = key;
+    return { ai: { tts: t } };
+  }
+
+  function bindAiPanel(panel, hint) {
+    var preset = $("#ira-ai-preset", panel);
+    if (preset) {
+      preset.addEventListener("change", function () {
+        var p = AI_PRESETS.filter(function (x) { return x.key === preset.value; })[0];
+        if (!p) return;
+        if (p.url) $("#ira-ai-url", panel).value = p.url;
+        if (p.model) $("#ira-ai-model", panel).value = p.model;
+      });
+    }
+    var saveBtn = $("#ira-ai-save", panel);
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async function () {
+        try { await save(aiPatchFromPanel(panel), hint, "AI 设置"); await loadSettings(); }
+        catch (e) { reportError(e); }
+      });
+    }
+    var testBtn = $("#ira-ai-test", panel);
+    if (testBtn) {
+      testBtn.addEventListener("click", async function () {
+        var out = $("#ira-ai-testout", panel);
+        out.textContent = "测试中…";
+        try {
+          var r = await api("/api/ai/test", {});
+          out.textContent = r.ok
+            ? ("连通，往返 " + r.latency_ms + " ms" + (r.latency_ms > 1500 ? "（偏慢，比赛中可能来不及）" : ""))
+            : ("失败：" + (r.error || "未知错误"));
+        } catch (e) { out.textContent = "失败：" + e.message; }
+      });
+    }
+    var capBtn = $("#ira-ai-keycap", panel);
+    if (capBtn) {
+      capBtn.addEventListener("click", async function () {
+        var out = $("#ira-ai-keyout", panel);
+        out.textContent = "按下你想用作分析键的按钮…";
+        try {
+          var got = await api("/api/ptt/capture", { kind: "keyboard", timeout_s: 6 });
+          if (!got || got.error) { out.textContent = got && got.error || "没等到按键"; return; }
+          await save({ ai: { analysis_key: { vk: got.vk, label: got.label || "" } } },
+                     hint, "分析键");
+          out.textContent = "已绑定：" + (got.label || ("0x" + got.vk.toString(16)));
+          await loadSettings();
+        } catch (e) { out.textContent = "采集失败：" + e.message; }
+      });
+    }
+    var ttsSave = $("#ira-tts-save", panel);
+    if (ttsSave) {
+      ttsSave.addEventListener("click", async function () {
+        try { await save(ttsPatchFromPanel(panel), hint, "语音合成"); await loadSettings(); }
+        catch (e) { reportError(e); }
+      });
+    }
+    var ttsTest = $("#ira-tts-test", panel);
+    if (ttsTest) {
+      ttsTest.addEventListener("click", async function () {
+        var out = $("#ira-tts-out", panel);
+        out.textContent = "合成中…";
+        try {
+          var r = await api("/api/ai/tts/test", {});
+          out.textContent = r.ok
+            ? ("成功 " + r.bytes + " 字节，" + r.latency_ms + " ms")
+            : ("失败：" + (r.error || "未知错误"));
+        } catch (e) { out.textContent = "失败：" + e.message; }
+      });
+    }
+    var clearBtn = $("#ira-learn-clear", panel);
+    if (clearBtn) {
+      clearBtn.addEventListener("click", async function () {
+        if (!confirm("确定清空学习库？已沉淀的问答会被删除。")) return;
+        var out = $("#ira-learn-out", panel);
+        try {
+          await api("/api/ai/learn/clear", {});
+          out.textContent = "已清空";
+          renderAiReview();
+        } catch (e) { out.textContent = "失败：" + e.message; }
+      });
+    }
+  }
+
+  async function renderAiReview() {
+    var card = $(".ira-review");
+    if (!card) return;
+    var data;
+    try { data = await api("/api/ai/review"); }
+    catch (e) { card.innerHTML = "<span class='ira-label'>读不到复盘数据</span>"; return; }
+    var rows = data.rows || [];
+    if (!rows.length) {
+      card.innerHTML = "<span class='ira-label'>本场还没有走过 AI 的问答。" +
+        "开启 AI 后提出问题，这里会列出每次的答案，供你赛后确认。</span>";
+      return;
+    }
+    card.innerHTML = rows.slice().reverse().map(function (r) {
+      return "<div class='ira-reviewrow' data-id='" + esc(r.id || "") + "'>" +
+        "<div class='ira-reviewq'>" + esc(r.q || "") + "</div>" +
+        "<div class='ira-reviewa'>" + esc(r.answer || "") + "</div>" +
+        "<div class='ira-reviewmeta'>" + esc(r.source || "") +
+        " · " + (r.latency_ms || 0) + " ms</div>" +
+        "<div class='ira-row'>" +
+        "<button class='ira-btn small' data-mark='ok'>正确，入库</button>" +
+        "<button class='ira-btn small ghost' data-mark='bad'>错误</button>" +
+        "<button class='ira-btn small ghost' data-mark='meh'>没帮助</button>" +
+        "</div></div>";
+    }).join("");
+    Array.prototype.forEach.call(card.querySelectorAll("[data-mark]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var row = btn.closest(".ira-reviewrow");
+        var id = row.getAttribute("data-id");
+        var verdict = btn.getAttribute("data-mark");
+        try {
+          var r = await api("/api/ai/review/mark", { id: id, verdict: verdict });
+          if (verdict === "ok") {
+            row.querySelector(".ira-reviewmeta").textContent =
+              r.stored_as === "template" ? "已存为条件模板"
+                : (r.stored_as === "knowledge" ? "已存为知识" : "未通过校验，未入库");
+          } else {
+            row.querySelector(".ira-reviewmeta").textContent = "已记录";
+          }
+        } catch (e) { reportError(e); }
+      });
+    });
   }
 
   function renderPackPanel(st) {
