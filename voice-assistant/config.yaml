@@ -116,3 +116,61 @@ logging:
   dir: "./logs"
   # 每次问答都记录：问法 / 命中意图 / 命中路径 / msgId / 变体 / 延迟
   qa_log: "./logs/qa.jsonl"
+
+# ---------------------------------------------------------------------------
+#  AI 比赛工程师（可选，默认关闭）
+# ---------------------------------------------------------------------------
+#  规则层仍然是主力：它能答的问题永远走录音，毫秒级、零成本、离线可用。
+#  这里配的是「规则答不上时」的补充能力，需要用户自己接一个大模型。
+#
+#  接入方式：填 base_url / model，按 OpenAI Chat Completions 协议调用。
+#  常见服务：
+#      DeepSeek    https://api.deepseek.com          deepseek-chat
+#      火山方舟     https://ark.cn-beijing.volces.com/api/v3   填你的接入点 ID
+#      月之暗面     https://api.moonshot.cn/v1        moonshot-v1-8k
+#      本地 Ollama  http://127.0.0.1:11434/v1         qwen2.5:7b
+#
+#  api_key 不要写在这里——这个文件会随安装包分发。
+#  密钥写到同目录的 config.local.yaml，或设环境变量
+#  LITTLE_NAVIGATOR_AI_KEY（优先级最高）。
+#
+#  下面的数值是**硬上限**，可以调小，调大无效（代码会钳制并留日志）：
+#      timeout_s <= 2.0   max_tokens <= 300   max_answer_chars <= 60
+ai:
+  enabled: false
+  # 档位：whitelist 只对白名单意图与所有分析型问题接管（默认、最省）
+  #       analysis_key 按住专用键提问时才走 AI
+  #       full 规则答不上就交给模型（最智能、最慢、最贵）
+  mode: "whitelist"
+  provider: "custom"          # 仅用于界面预填
+  base_url: ""
+  model: ""
+  timeout_s: 2.0
+  max_tokens: 300
+  max_answer_chars: 60
+  rate_limit_per_min: 6
+  # 分析键：默认不绑。首次启用 AI 时界面会引导采集一次，
+  # 避免与游戏内按键冲突。vk 是 Windows 虚拟键码。
+  analysis_key: null
+  whitelist_intents:
+    - query_laptime
+    - query_pit
+    - query_fuel
+    - query_gap
+    - query_opponent
+    - query_weather
+    - query_damage
+  # 语音合成（可选，默认关）。不配就只有文字，不影响使用。
+  #   adapter: off | doubao | openai
+  #   豆包额外需要 speaker（音色 ID），resource_id 默认 seed-tts-2.0
+  #   OpenAI 兼容需要 base_url + voice
+  tts:
+    adapter: "off"
+    base_url: ""
+    model: ""
+    voice: ""
+    speaker: ""
+    resource_id: "seed-tts-2.0"
+    format: "wav"
+    sample_rate: 16000
+    timeout_s: 1.5

@@ -124,7 +124,72 @@ DEFAULTS: dict[str, Any] = {
         "input_device": None,          # null = 系统默认输入设备
     },
     "logging": {"level": "info", "dir": "./logs", "qa_log": "./logs/qa.jsonl"},
+    # AI 比赛工程师。默认关闭——不配也能照常使用，行为与接入前完全一致。
+    # api_key 刻意不在这里：config.yaml 随安装包分发，密钥走
+    # config.local.yaml 或环境变量 LITTLE_NAVIGATOR_AI_KEY。
+    "ai": {
+        "enabled": False,
+        "mode": "whitelist",           # whitelist | analysis_key | full
+        "provider": "custom",          # 仅用于界面预填，不参与运行时逻辑
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+        "timeout_s": 2.0,
+        "max_tokens": 300,
+        "max_answer_chars": 60,
+        "rate_limit_per_min": 6,
+        "analysis_key": None,          # {vk: int, binding: dict} 或 None
+        "whitelist_intents": [
+            "query_laptime", "query_pit", "query_fuel", "query_gap",
+            "query_opponent", "query_weather", "query_damage",
+        ],
+        "tts": {
+            "adapter": "off",          # off | doubao | openai
+            "base_url": "",
+            "api_key": "",
+            "model": "",
+            "voice": "",
+            "speaker": "",             # 豆包音色 ID
+            "resource_id": "seed-tts-2.0",
+            "format": "wav",
+            "sample_rate": 16000,
+            "timeout_s": 1.5,
+        },
+    },
 }
+
+# AI 配置的硬上限钳制表：(键路径, 是否整数, 硬上限常量名)
+# 放在 load() 合并之后、validate() 之前——用户可以把延迟调更小，调大无效。
+# 审查提醒过：ai_constants 若没有生产调用方，硬上限形同虚设。
+_AI_CLAMPS: tuple[tuple[tuple[str, ...], bool, str], ...] = (
+    (("timeout_s",), False, "LLM_DEADLINE_HARD_MAX"),
+    (("max_tokens",), True, "MAX_OUTPUT_TOKENS_HARD"),
+    (("max_answer_chars",), True, "MAX_ANSWER_CHARS_HARD"),
+    (("tts", "timeout_s"), False, "TTS_DEADLINE_HARD_MAX"),
+)
+
+
+def _clamp_ai(cfg: dict) -> None:
+    """把 AI 配置的数值项压到硬上限以内，并留痕。"""
+    from . import ai_constants as const
+
+    ai = cfg.get("ai")
+    if not isinstance(ai, dict):
+        return
+    for path, is_int, const_name in _AI_CLAMPS:
+        node: Any = ai
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            continue
+        leaf = path[-1]
+        value = node.get(leaf)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        hard = getattr(const, const_name)
+        node[leaf] = (const.clamp_int if is_int else const.clamp)(
+            value, hard, "ai." + ".".join(path))
+
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -163,11 +228,29 @@ def load(path: str | pathlib.Path | None = None) -> dict:
         cfg['logging']['dir'] = str(data / 'logs')
         cfg['logging']['qa_log'] = str(data / 'logs' / 'qa.jsonl')
         cfg['intent']['miss_log']['path'] = str(data / 'logs' / 'intent_miss.jsonl')
+    _clamp_ai(cfg)
+    _apply_ai_env(cfg)
+    cfg['_ai_learn_dir'] = str(_ai_learn_dir())
     validate(cfg)
     cfg["_path"] = str(p)
     cfg["_root"] = str(p.parent)
     cfg['_local_path'] = str(local)
     return cfg
+
+
+def _apply_ai_env(cfg: dict) -> None:
+    """环境变量里的密钥优先级最高，方便临时换 key 而不动配置文件。"""
+    key = os.environ.get("LITTLE_NAVIGATOR_AI_KEY")
+    if key:
+        cfg.setdefault("ai", {})["api_key"] = key
+
+
+def _ai_learn_dir() -> pathlib.Path:
+    """学习库目录：安装版放用户数据目录，便携版放运行目录。
+
+    绝不写进安装目录——那里是只读的，而且升级会覆盖。
+    """
+    return data_dir() / "ai_learn"
 
 
 def resolve(cfg: dict, rel: str) -> pathlib.Path:
@@ -234,3 +317,49 @@ def validate(cfg: dict) -> None:
         value = cfg[section].get(key)
         if value is not None and (isinstance(value, bool) or not isinstance(value,(int,str)) or isinstance(value,int) and value<0):
             raise ValueError(f"{section}.{key} 必须为设备名、非负序号或 null")
+    _validate_ai(cfg)
+
+
+_AI_MODES = ("whitelist", "analysis_key", "full")
+_TTS_ADAPTERS = ("off", "doubao", "openai")
+
+
+def _validate_ai(cfg: dict) -> None:
+    """AI 段校验。风格与既有 validate 一致：不合法就抛，不静默纠正。"""
+    ai = cfg.get("ai")
+    if not isinstance(ai, dict):
+        raise ValueError("ai 必须是配置对象")
+    if not isinstance(ai.get("enabled"), bool):
+        raise ValueError("ai.enabled 必须为布尔值")
+    if ai.get("mode") not in _AI_MODES:
+        raise ValueError(f"ai.mode 必须是 {_AI_MODES} 之一")
+    for key in ("base_url", "api_key", "model"):
+        if not isinstance(ai.get(key), str):
+            raise ValueError(f"ai.{key} 必须为字符串")
+    for key in ("timeout_s", "max_tokens", "max_answer_chars",
+                "rate_limit_per_min"):
+        value = ai.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(value) or value < 0:
+            raise ValueError(f"ai.{key} 必须为非负数")
+    if not isinstance(ai.get("whitelist_intents"), list) or \
+            not all(isinstance(x, str) for x in ai["whitelist_intents"]):
+        raise ValueError("ai.whitelist_intents 必须为字符串列表")
+
+    analysis_key = ai.get("analysis_key")
+    if analysis_key is not None:
+        if not isinstance(analysis_key, dict):
+            raise ValueError("ai.analysis_key 必须为对象或 null")
+        vk = analysis_key.get("vk")
+        if isinstance(vk, bool) or not isinstance(vk, int) or not 1 <= vk <= 254:
+            raise ValueError("ai.analysis_key.vk 必须在 1–254 范围内")
+
+    tts = ai.get("tts")
+    if not isinstance(tts, dict):
+        raise ValueError("ai.tts 必须为配置对象")
+    if tts.get("adapter") not in _TTS_ADAPTERS:
+        raise ValueError(f"ai.tts.adapter 必须是 {_TTS_ADAPTERS} 之一")
+    for key in ("base_url", "api_key", "model", "voice", "speaker",
+                "resource_id", "format"):
+        if not isinstance(tts.get(key), str):
+            raise ValueError(f"ai.tts.{key} 必须为字符串")
