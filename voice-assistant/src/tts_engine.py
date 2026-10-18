@@ -67,6 +67,36 @@ def _parse_doubao(raw: bytes) -> bytes:
     return bytes(audio)
 
 
+def fix_streaming_wav(audio: bytes) -> bytes:
+    """修正流式 WAV 的占位长度字段。
+
+    实测豆包返回的 WAV 头里 RIFF 与 data 的长度都是 0xFFFFFFFF（流式占位）。
+    Python 的 `wave` 会照单全收，于是 3 万字节的音频被解析成 37 小时——
+    `player.py` 按声明长度读会撑爆内存，或播出噪音。
+
+    这里把两个长度字段改成真实值。不是 WAV 就原样返回，不猜。
+    """
+    if len(audio) < 44 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        return audio
+    out = bytearray(audio)
+    # RIFF 块长度 = 总长 - 8
+    if int.from_bytes(out[4:8], "little") == 0xFFFFFFFF:
+        out[4:8] = (len(out) - 8).to_bytes(4, "little")
+    # 找 data chunk，修正其长度
+    pos = 12
+    while pos + 8 <= len(out):
+        cid = bytes(out[pos:pos + 4])
+        size = int.from_bytes(out[pos + 4:pos + 8], "little")
+        if cid == b"data":
+            if size == 0xFFFFFFFF or size > len(out) - pos - 8:
+                out[pos + 4:pos + 8] = (len(out) - pos - 8).to_bytes(4, "little")
+            break
+        if size == 0xFFFFFFFF or size <= 0:
+            break              # 结构异常，不再往下找
+        pos += 8 + size + (size & 1)
+    return bytes(out)
+
+
 class TtsEngine:
     """一个可复用的合成器。构造时就校验适配器与凭据，避免调用时才发现没配。"""
 
@@ -157,7 +187,7 @@ class TtsEngine:
                  else self._synth_openai(text))
         if len(audio) < _MIN_AUDIO_BYTES:
             raise TtsError(f"音频过短（{len(audio)} 字节），判定为失败")
-        return audio
+        return fix_streaming_wav(audio)
 
     def test(self) -> dict:
         """界面「测试合成」：合成一句短话，报告耗时与结果。"""

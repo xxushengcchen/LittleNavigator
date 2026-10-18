@@ -86,15 +86,46 @@ def check_length(answer: str, max_chars: int) -> str | None:
 
 
 def check_data(data_used: list[str], ctx: dict) -> str | None:
-    """`data_used` 里的字段必须真实存在于本次上下文。"""
+    """`data_used` 里的字段必须真实存在于本次上下文。
+
+    两道检查缺一不可：
+      1. 名字在 ALLOWED_FIELDS 内（挡住「编造字段名」）
+      2. 名字在**本次 ctx** 里确实存在（挡住「引用了这轮没给的数据」）
+
+    第 2 条是实测发现的：模型会诚实地说「我用了 recent_laps」，
+    但如果这轮上下文只给了 now+derived（简单问题不带历史），
+    那它就是在引用不存在的数据——必须拒绝。
+    """
     if not isinstance(data_used, (list, tuple)):
         return "data_used 不是列表"
+    present = _present_names(ctx)
     for name in data_used:
         if not isinstance(name, str):
             return f"data_used 含非字符串项：{name!r}"
         if name not in ALLOWED_FIELDS:
             return f"data_used 引用了白名单外的字段：{name}"
+        if name not in present:
+            return f"data_used 引用了本次上下文里没有的字段：{name}"
     return None
+
+
+def _present_names(ctx: dict) -> set[str]:
+    """列出本次上下文里实际可引用的名字：层名 + 所有叶子字段名。"""
+    names: set[str] = set()
+
+    def walk(node, key=None):
+        if key is not None:
+            names.add(str(key))
+        if isinstance(node, dict):
+            for k, v in node.items():
+                names.add(str(k))
+                walk(v, k)
+        elif isinstance(node, (list, tuple)):
+            for v in node:
+                walk(v, key)
+
+    walk(ctx)
+    return names
 
 
 def check_numbers(answer: str, ctx: dict, question: str) -> str | None:

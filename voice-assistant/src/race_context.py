@@ -34,6 +34,15 @@ ALLOWED_FIELDS: frozenset[str] = frozenset({
     "ahead", "behind", "leader",
 })
 
+# 层名本身也可以被引用：模型说「用了 recent_laps」是诚实的——我们确实给了它。
+# 但数据闸会再核对「这一层在本次上下文里是否真的存在」（见 answer_checks），
+# 所以把层名放进白名单不等于放行不存在的数据。
+LAYER_NAMES: frozenset[str] = frozenset({
+    "now", "derived", "session", "recent_laps", "opponents",
+})
+
+ALLOWED_FIELDS = ALLOWED_FIELDS | LAYER_NAMES
+
 # 问题里出现这些词时才附加对手层——它约 120 token，不该为「还有多少油」付这笔钱。
 _OPPONENT_HINTS = ("前车", "后车", "前面", "后面", "对手", "第一名", "领跑", "差距", "名次")
 
