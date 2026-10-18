@@ -117,6 +117,27 @@ class Assistant:
     def ai_enabled(self) -> bool:
         return self.ai is not None
 
+    def learn_store(self):
+        """学习库实例；未启用或初始化失败时返回 None。"""
+        return getattr(self.ai, "store", None) if self.ai is not None else None
+
+    def learn_candidate(self, entry_id: str) -> dict | None:
+        """按 id 组装一条「待入库」记录。供复盘标记 ok 时使用。"""
+        for rec in reversed(list(self.history)):
+            if rec.get("review_id") != entry_id:
+                continue
+            template = None
+            dynamic = False
+            # 模型若按契约返回了 template，就按动态型入库；否则按知识型。
+            raw = rec.get("ai_payload") or {}
+            if isinstance(raw.get("template"), dict):
+                template = raw["template"]
+                dynamic = True
+            return {"question": rec.get("q"), "answer": rec.get("ai_text"),
+                    "template": template, "dynamic": dynamic,
+                    "clip_path": rec.get("ai_clip")}
+        return None
+
     def ai_status(self) -> dict:
         if self.ai is None:
             return {"enabled": False, "available": False, "configured": False,
@@ -252,9 +273,11 @@ class Assistant:
             self._log(self.miss_log, rec)
             return rec
 
+        import uuid
         rec.update({"ai_source": result.source, "ai_text": result.text,
                     "ai_checks": result.checks, "ok": result.ok,
-                    "ai_latency_ms": result.latency_ms})
+                    "ai_latency_ms": result.latency_ms,
+                    "review_id": uuid.uuid4().hex[:12]})
         if not result.ok:
             rec["reason"] = result.reason
             p(f"  ✗ AI 未给出可用回答：{result.reason}")
@@ -297,6 +320,37 @@ class Assistant:
             "telemetry": {"provider": c["telemetry"]["provider"]},
             "voice_pack": {"cooldown": c["voice_pack"]["cooldown"],
                            "gap_ms": self.gap_ms},
+            "ai": self.ai_config_view(),
+        }
+
+    def ai_config_view(self) -> dict:
+        """AI 配置的对外视图：**只有布尔，没有密钥明文**。
+
+        这是密钥隔离的唯一出口——state() 与 export_logs() 都走这里，
+        不要在别处直接读 cfg["ai"]，否则以后加字段很容易漏掉脱敏。
+        """
+        ai = (self.cfg or {}).get("ai") or {}
+        tts = ai.get("tts") or {}
+        return {
+            "enabled": bool(ai.get("enabled")),
+            "mode": ai.get("mode"),
+            "provider": ai.get("provider"),
+            "base_url": ai.get("base_url") or "",
+            "model": ai.get("model") or "",
+            "api_key_set": bool(ai.get("api_key")),
+            "timeout_s": ai.get("timeout_s"),
+            "max_tokens": ai.get("max_tokens"),
+            "max_answer_chars": ai.get("max_answer_chars"),
+            "whitelist_intents": list(ai.get("whitelist_intents") or []),
+            "analysis_key_bound": bool(ai.get("analysis_key")),
+            "tts": {
+                "adapter": tts.get("adapter") or "off",
+                "base_url": tts.get("base_url") or "",
+                "model": tts.get("model") or "",
+                "voice": tts.get("voice") or "",
+                "speaker": tts.get("speaker") or "",
+                "api_key_set": bool(tts.get("api_key")),
+            },
         }
 
     def apply_live(self, patch: dict) -> None:

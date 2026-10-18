@@ -274,6 +274,11 @@ class Service:
                 "load_sec": round(getattr(self.asr, "load_sec", 0.0), 2) if self.asr else None,
             },
             "pack": info,
+            "ai": {**self.asst.ai_status(),
+                   "last_text": (self.last_ask or {}).get("ai_text"),
+                   "last_source": (self.last_ask or {}).get("ai_source"),
+                   "analysis_key_bound": bool(
+                       (self.cfg.get("ai", {}) or {}).get("analysis_key"))},
             "last": self.last_ask or (self.asst.history[-1] if self.asst.history else None),
             "config": self.asst.config_view(),
         }
@@ -318,6 +323,55 @@ class Service:
         return {"qa": list(reversed(qa)), "miss": list(reversed(miss)),
                 "console": self.log.tail(60)}
 
+    # ------------------------------------------------------------------ AI
+    def ai_test(self) -> dict:
+        """测试大模型连通性：连通性 + 往返延迟。"""
+        if self.asst.ai is None or self.asst.ai.client is None:
+            return {"ok": False, "error": "AI 未配置或未启用"}
+        return self.asst.ai.client.test_connection()
+
+    def ai_tts_test(self) -> dict:
+        """测试语音合成：合成一句短话，报耗时。"""
+        if self.asst.ai is None or self.asst.ai.tts is None:
+            return {"ok": False, "error": "语音合成未配置"}
+        return self.asst.ai.tts.test()
+
+    def ai_review(self) -> dict:
+        """赛后复盘：列出本场走过模型的问答。"""
+        rows = []
+        for rec in getattr(self.asst, "history", []) or []:
+            if not rec.get("ai_text"):
+                continue
+            rows.append({"id": rec.get("review_id"), "q": rec.get("q"),
+                         "answer": rec.get("ai_text"),
+                         "source": rec.get("ai_source"),
+                         "checks": rec.get("ai_checks") or {},
+                         "latency_ms": rec.get("ai_latency_ms")})
+        return {"rows": rows[-100:]}
+
+    def ai_review_mark(self, entry_id: str, verdict: str) -> dict:
+        """复盘标记。`ok` 入学习库，`bad` 降权，`meh` 只记录。"""
+        if verdict not in ("ok", "bad", "meh"):
+            raise ValueError("verdict 必须是 ok / bad / meh")
+        if not entry_id:
+            raise ValueError("缺少条目 id")
+        store = self.asst.learn_store()
+        if store is None:
+            return {"ok": False, "error": "学习库不可用"}
+        if verdict == "ok":
+            record = (self.asst.learn_candidate(entry_id) or {})
+            kind = store.add_from_review(record)
+            return {"ok": True, "stored_as": kind}
+        store.mark(entry_id, ok=(verdict != "bad"))
+        return {"ok": True}
+
+    def ai_clear_learn(self) -> dict:
+        store = self.asst.learn_store()
+        if store is None:
+            return {"ok": False, "error": "学习库不可用"}
+        store.clear()
+        return {"ok": True}
+
     def export_logs(self) -> dict:
         """把运行日志打包成 zip，方便随 bug 反馈一起提交。"""
         import datetime, platform, sys as _sys, zipfile
@@ -330,6 +384,8 @@ class Service:
         note.write_text("\n".join([
             f"导出时间：{datetime.datetime.now().isoformat(timespec='seconds')}",
             f"语音包：{self.asst.pack_info()}",
+            # config_view 里的 ai 段走 ai_config_view()，只含 api_key_set 布尔，
+            # 不含密钥明文——日志导出会随 bug 反馈外发，必须挡在这里。
             f"配置：{self.asst.config_view()}",
             f"Python：{_sys.version.split()[0]}  {platform.platform()}",
         ]), encoding="utf-8")
@@ -393,6 +449,10 @@ class Service:
     def configure(self, patch: dict) -> dict:
         """写 config.local.yaml（覆盖层）并尽力热生效。"""
         allowed = {"intent": {"voice_strict", "l1_keyword"}, "asr": {"model", "num_threads"},
+                   "ai": {"enabled", "mode", "provider", "base_url", "model",
+                          "api_key", "timeout_s", "max_tokens",
+                          "max_answer_chars", "rate_limit_per_min",
+                          "analysis_key", "whitelist_intents", "tts"},
                    "ptt": {"vk", "binding", "min_hold_ms", "max_hold_s", "poll_ms", "input_device"},
                    "playback": {"enabled", "volume", "device", "ducking"},
                    "voice_pack": {"cooldown"}}
@@ -402,7 +462,11 @@ class Service:
             if section not in allowed or not isinstance(values, dict) or set(values) - allowed[section]:
                 raise ValueError(f"不支持的配置项：{section}")
         for section, key, keys in [("intent", "l1_keyword", {"enabled"}),
-                                   ("playback", "ducking", {"enabled", "amount_db", "processes"})]:
+                                   ("playback", "ducking", {"enabled", "amount_db", "processes"}),
+                                   ("ai", "tts", {"adapter", "base_url", "api_key",
+                                                  "model", "voice", "speaker",
+                                                  "resource_id", "format",
+                                                  "sample_rate", "timeout_s"})]:
             if key in patch.get(section, {}):
                 value = patch[section][key]
                 if not isinstance(value, dict) or set(value) - keys:
@@ -588,6 +652,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "hint": "窗口即将关闭"})
             elif u.path == "/api/config":
                 self._json(self.service.configure(body.get("patch") or {}))
+            elif u.path == "/api/ai/test":
+                self._json(self.service.ai_test())
+            elif u.path == "/api/ai/tts/test":
+                self._json(self.service.ai_tts_test())
+            elif u.path == "/api/ai/review":
+                self._json(self.service.ai_review())
+            elif u.path == "/api/ai/review/mark":
+                self._json(self.service.ai_review_mark(
+                    str(body.get("id") or ""), body.get("verdict") or ""))
+            elif u.path == "/api/ai/learn/clear":
+                self._json(self.service.ai_clear_learn())
             else:
                 self.send_error(404)
         except (ValueError, TypeError, UnicodeError, KeyError) as exc:
