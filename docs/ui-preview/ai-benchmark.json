@@ -8,15 +8,15 @@
       "leaks": 0
     },
     "capability": {
-      "questions": 26,
-      "checks": 78,
+      "questions": 32,
+      "checks": 96,
       "leaks": 0
     }
   },
   "car_control": {
     "executable_questions": 13,
     "executable_bad": 0,
-    "unsupported_questions": 13,
+    "unsupported_questions": 19,
     "unsupported_bad": 0
   },
   "whitelist": {
@@ -26,15 +26,14 @@
     "false_reject_rate": 0.0
   },
   "latency_ms": {
-    "p50": 963,
-    "p90": 1433,
-    "max": 1536,
+    "p50": 959,
+    "p90": 1291,
+    "max": 1818,
     "over_2000": 0
   },
   "thresholds": {
     "blocking": "pass",
     "false_reject": "pass",
     "car_control_parsing": "pass"
-  },
-  "note": "红线/能力边界分开统计；改车指令另测「可执行的是否解析得到」与「做不到的是否被明确拒绝（而非悄悄退化成真动作）」"
+  }
 }

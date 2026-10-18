@@ -147,12 +147,20 @@ class EngineCarTests(unittest.TestCase):
 
     def test_compound_request_never_touches_sdk(self):
         sdk = FakeSdk(flags=0xFF)
-        a = self._assistant(sdk=sdk, available={"AST_NO_CAR_CONTROL"})
+        a = self._assistant(sdk=sdk, available={"AST_CC_COMPOUND"})
         rec, played = self._ask(a, "设置成软胎")
         self.assertFalse(rec["ok"])
         self.assertEqual(sdk.calls, [])                # 一个字节都没发
-        self.assertEqual(played, ["AST_NO_CAR_CONTROL"])
+        self.assertEqual(played, ["AST_CC_COMPOUND"])
         self.assertIn("配方", rec["reason"])
+
+    def test_compound_request_uses_dedicated_message(self):
+        sdk = FakeSdk(flags=0xFF)
+        a = self._assistant(sdk=sdk, available={"AST_CC_COMPOUND"})
+        rec, played = self._ask(a, "换雨胎")
+        self.assertFalse(rec["ok"])
+        self.assertEqual(sdk.calls, [])
+        self.assertEqual(played, ["AST_CC_COMPOUND"])
 
     def test_car_setup_request_never_touches_sdk(self):
         sdk = FakeSdk(flags=0xFF)

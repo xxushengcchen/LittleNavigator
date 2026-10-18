@@ -208,12 +208,26 @@ class CommandMatchTests(unittest.TestCase):
         self.assertEqual(match("清空进站")["kind"], "clear")
 
     def test_compound_is_unsupported_not_silently_tyre(self):
-        # 用户要软胎，我们只勾「换胎」就是做错了还装作做对
-        for text in ("换软胎", "设置成软胎", "换硬胎"):
+        # 用户要软胎，我们只勾「换胎」就是做错了还装作做对。
+        # 用「有胎字 + 配方修饰词」判断，而不是枚举配方名——
+        # 枚举漏过「换湿胎」「换干地胎」，会悄悄按普通换胎执行。
+        cases = ("换软胎", "设置成软胎", "换硬胎", "换干胎", "换雨胎",
+                 "换湿胎", "换干地胎", "换中性胎", "换半雨胎", "换全雨胎",
+                 "上雨胎", "切到雨胎", "换雪胎", "换超软")
+        for text in cases:
             with self.subTest(text=text):
                 r = match(text)
                 self.assertEqual(r["kind"], "unsupported")
                 self.assertIn("配方", r["reason"])
+                self.assertEqual(r["say"], "AST_CC_COMPOUND")
+
+    def test_plain_tyre_change_is_not_mistaken_for_compound(self):
+        for text in ("换胎", "换左前胎", "换四条胎", "换右后", "换前胎"):
+            with self.subTest(text=text):
+                self.assertEqual(match(text)["kind"], "tyre")
+
+    def test_cancel_tyre_is_not_compound(self):
+        self.assertEqual(match("取消换胎")["kind"], "clear_tires")
 
     def test_car_setup_is_unsupported(self):
         for text in ("调刹车平衡", "改尾翼角度", "调胎压"):

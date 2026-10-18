@@ -241,7 +241,7 @@ class Assistant:
             reason = action.get("reason") or "这件事软件做不到"
             p(f"  ✗ 改车不支持：{reason}")
             rec.update({"ok": False, "reason": reason})
-            self._say_with_fallback(NO_CAR_CONTROL)
+            self._say_with_fallback(action.get("say") or NO_CAR_CONTROL)
             self._log(self.miss_log, rec)
             return rec
 

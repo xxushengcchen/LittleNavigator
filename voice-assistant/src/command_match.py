@@ -16,8 +16,14 @@ import re
 
 from .phrase_match import normalize
 
-# 轮胎配方：广播 API 做不到，必须明确拒绝而不是将就执行
-_COMPOUND_WORDS = ("软胎", "硬胎", "中性胎", "半雨胎", "雨胎", "干胎", "超软", "配方")
+# 轮胎配方：广播 API 做不到，必须明确拒绝而不是将就执行。
+#
+# 不能靠枚举配方名——漏一个就变成「悄悄按普通换胎执行」。
+# 实测漏过「换湿胎」「换干地胎」两条：用户要湿胎，我们只勾了换胎复选框，
+# 进站换下来还是干胎，白丢一次进站。
+# 所以改成「有『胎』字 + 有配方修饰词」两个条件同时成立。
+_COMPOUND_DESCRIPTORS = ("软", "硬", "中性", "中胎", "超软", "超硬",
+                         "干", "湿", "雨", "雪", "全雨", "半雨", "配方")
 
 # 其他车内设置：完全是另一套东西，改不了。
 #
@@ -151,8 +157,14 @@ def match(text: str) -> dict | None:
         return None
 
     # 1) 明确做不到的，先说清楚，不要落到下面的「换胎」分支里去
-    if any(w in q for w in _COMPOUND_WORDS):
-        return {"kind": "unsupported",
+    # 口语常省略「胎」字：「换超软」也是要换配方。
+    # 条件是「配方修饰词」+（胎 / 换 / 切）之一同时成立。
+    if (any(w in q for w in _COMPOUND_DESCRIPTORS)
+            and ("胎" in q or "换" in q or "切" in q)):
+        return {"kind": "unsupported", "say": "AST_CC_COMPOUND",
+                "reason": "轮胎配方要在黑框里选，广播消息没有这个操作"}
+    if "配方" in q:
+        return {"kind": "unsupported", "say": "AST_CC_COMPOUND",
                 "reason": "轮胎配方要在黑框里选，广播消息没有这个操作"}
     if (any(v in q for v in _ACTION_VERBS)
             and any(n in q for n in _SETUP_NOUNS)):

@@ -230,9 +230,16 @@ class RefusalMessageTests(unittest.TestCase):
         return rec, played
 
     def test_car_control_request_selects_capability_message(self):
-        rec, played = self._ask_with_pack("设置成软胎", {"AST_NO_CAR_CONTROL"})
+        # 驾驶建议类没有专用话术，走通用的「做不到」
+        rec, played = self._ask_with_pack("这个弯该几档过", {"AST_NO_CAR_CONTROL"})
         self.assertEqual(rec["kind"], "operation")
         self.assertEqual(played, ["AST_NO_CAR_CONTROL"])
+
+    def test_compound_request_selects_compound_message(self):
+        # 配方请求有专用话术：通用「做不到」说不清为什么
+        rec, played = self._ask_with_pack("设置成软胎", {"AST_CC_COMPOUND"})
+        self.assertEqual(rec["kind"], "operation")
+        self.assertEqual(played, ["AST_CC_COMPOUND"])
 
     def test_penalty_question_selects_policy_message(self):
         rec, played = self._ask_with_pack("为什么我被罚了", {"AST_REFUSE_CANT"})
