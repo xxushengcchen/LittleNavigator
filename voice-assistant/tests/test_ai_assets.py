@@ -17,7 +17,9 @@ class ContentEntryTests(unittest.TestCase):
             rows.extend(data.get("items") or [])
         return rows
 
-    NEW_IDS = ("AST_AI_SEE_SCREEN", "AST_NO_CAR_CONTROL")
+    NEW_IDS = ("AST_AI_SEE_SCREEN", "AST_NO_CAR_CONTROL",
+               "AST_CC_TYRE", "AST_CC_FUEL", "AST_CC_WS",
+               "AST_CC_FR", "AST_CC_CLEAR", "AST_CC_FAIL")
 
     def test_msgids_exist_in_content(self):
         ids = [it.get("msgId") for it in self._items()]

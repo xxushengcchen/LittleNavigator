@@ -700,7 +700,36 @@
     var statusText = !a.enabled ? "未启用"
       : (s.configured ? (s.available ? "就绪" : "已暂停（连续超时）") : "未配置 API");
 
-    card.innerHTML = '<div class="ira-form">' +
+    var ccCfg = (st.config && st.config.car_control) || {};
+    var ccSt = st.car_control || {};
+    var ccState = !ccCfg.enabled ? "未启用"
+      : (ccSt.available ? "就绪" : "未连接游戏 / 未装 pyirsdk");
+
+    card.innerHTML =
+      "<span class='ira-label'>语音改车（直接操作游戏）</span>" +
+      "<div class='ira-form'>" +
+      field("允许语音改车",
+        '<select class="ira-select" id="ira-cc-on">' +
+        '<option value="1"' + (ccCfg.enabled ? " selected" : "") + ">开</option>" +
+        '<option value="0"' + (ccCfg.enabled ? "" : " selected") + ">关</option></select>",
+        "当前：" + ccState + "。打开后说「换胎」「加二十升油」会真的改进站设置。") +
+      field("发送后回读确认",
+        '<select class="ira-select" id="ira-cc-verify">' +
+        '<option value="1"' + (ccCfg.verify ? " selected" : "") + ">开</option>" +
+        '<option value="0"' + (ccCfg.verify ? "" : " selected") + ">关</option></select>",
+        "回读 PitSvFlags 确认游戏真的受理了；关掉会快一点，但分不清「发了」和「生效了」") +
+      "</div>" +
+      "<div class='ira-hint' style='margin-top:8px'>" +
+      "能做：换胎（按角或四条）、加油（可带升数）、快修、撕膜、清空进站。<br>" +
+      "做不到：轮胎配方（软/硬）—— 广播消息里没有这个操作，只能在黑框里选；" +
+      "刹车平衡 / TC / ABS / 雨刷 / 方向盘 —— 车内设置，广播 API 管不到。<br>" +
+      "⚠ 语音会听错。建议先在练习赛里试熟再上正式比赛。" +
+      "</div>" +
+      "<div class='ira-row' style='margin-top:10px'>" +
+      "<button class='ira-btn' id='ira-cc-save'>保存</button>" +
+      "<span class='ira-savehint' id='ira-cc-out'></span></div>" +
+      "<hr class='ira-hr'>" +
+      '<div class="ira-form">' +
       field("启用 AI 分析",
         '<select class="ira-select" id="ira-ai-on">' +
         '<option value="1"' + (a.enabled ? " selected" : "") + ">开</option>" +
@@ -796,6 +825,20 @@
   }
 
   function bindAiPanel(panel, hint) {
+    var ccSave = $("#ira-cc-save", panel);
+    if (ccSave) {
+      ccSave.addEventListener("click", async function () {
+        var out = $("#ira-cc-out", panel);
+        try {
+          await api("/api/config", { patch: { car_control: {
+            enabled: $("#ira-cc-on", panel).value === "1",
+            verify: $("#ira-cc-verify", panel).value === "1"
+          } } });
+          out.textContent = "已保存";
+          await loadSettings();
+        } catch (e) { out.textContent = "失败：" + e.message; }
+      });
+    }
     var preset = $("#ira-ai-preset", panel);
     if (preset) {
       preset.addEventListener("change", function () {

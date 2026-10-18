@@ -103,6 +103,13 @@ def classify(text: str, intent: str | None) -> QueryKind:
     if any(word in q for word in OPERATION_WORDS):
         return QueryKind.OPERATION
 
+    # 2b) 进站服务指令（换胎/加油/快修/撕膜/清空）。
+    #     词表做子串匹配认不出「换左前胎」这种结构，所以交给 command_match
+    #     判断——它认得出就说明这是一条命令，绝不能落进 UNKNOWN 被送去模型。
+    from . import command_match
+    if command_match.match(q) is not None:
+        return QueryKind.OPERATION
+
     has_analysis = any(word in q for word in ANALYSIS_WORDS)
 
     # 3) 分析类先于**弱**操作词：避免把「我调整了刹车之后为什么推头」

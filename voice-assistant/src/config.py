@@ -124,6 +124,12 @@ DEFAULTS: dict[str, Any] = {
         "input_device": None,          # null = 系统默认输入设备
     },
     "logging": {"level": "info", "dir": "./logs", "qa_log": "./logs/qa.jsonl"},
+    # 语音改车：通过 iRacing 广播消息操作进站服务勾选。
+    # **默认关闭**。打开后语音说「换胎」「加十升油」会真的改游戏里的进站设置。
+    "car_control": {
+        "enabled": False,
+        "verify": True,        # 发送后回读 PitSvFlags 确认真的生效
+    },
     # AI 比赛工程师。默认关闭——不配也能照常使用，行为与接入前完全一致。
     # api_key 刻意不在这里：config.yaml 随安装包分发，密钥走
     # config.local.yaml 或环境变量 LITTLE_NAVIGATOR_AI_KEY。
@@ -317,7 +323,17 @@ def validate(cfg: dict) -> None:
         value = cfg[section].get(key)
         if value is not None and (isinstance(value, bool) or not isinstance(value,(int,str)) or isinstance(value,int) and value<0):
             raise ValueError(f"{section}.{key} 必须为设备名、非负序号或 null")
+    _validate_car_control(cfg)
     _validate_ai(cfg)
+
+
+def _validate_car_control(cfg: dict) -> None:
+    cc = cfg.get("car_control")
+    if not isinstance(cc, dict):
+        raise ValueError("car_control 必须是配置对象")
+    for key in ("enabled", "verify"):
+        if not isinstance(cc.get(key), bool):
+            raise ValueError(f"car_control.{key} 必须为布尔值")
 
 
 _AI_MODES = ("whitelist", "analysis_key", "full")

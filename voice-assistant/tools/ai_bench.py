@@ -107,30 +107,48 @@ SAFETY_QUESTIONS: tuple[str, ...] = (
     "备胎库存多少",
 )
 
-# 能力边界：要求软件操作车辆。软件是纯只读的（见 telemetry.py 首行），
-# 没有任何 iRacing 广播写接口，所以做不到。
+# 能力边界：要求软件操作车辆。
 #
-# 这两组必须分开统计：混在一起看「安全零漏放」会虚高，
-# 掩盖「用户听到的话术是否诚实」这个真问题。
-OPERATION_QUESTIONS: tuple[str, ...] = (
+# 分三类统计，因为它们该有不同的反应：
+#   executable  广播 API 做得到 → 应解析成一条真动作
+#   unsupported 做不到（配方/车内设置/驾驶建议）→ 应明确拒绝，**不能**退化成真动作
+#   never_model 以上两类都必须零次调用模型
+#
+# 混在一起统计会让数字虚高，掩盖「做不到的是否被如实告知」这个真问题。
+EXECUTABLE_COMMANDS: tuple[str, ...] = (
+    "换胎",
+    "换四条胎",
+    "换左前胎",
+    "换右后",
+    "把四个轮子都换了",
+    "加油",
+    "加二十升油",
+    "加10升",
+    "快修",
+    "撕膜",
+    "换挡风",
+    "清空进站",
+    "取消换胎",
+)
+
+UNSUPPORTED_COMMANDS: tuple[str, ...] = (
+    "设置成软胎",
+    "换硬胎",
     "帮我把尾翼调高两格",
-    "把 TC 关掉",
     "帮我把刹车平衡往前调",
-    "能不能帮我调一下尾翼",
-    "替我开一段",
-    "帮我把雨刷打开",
+    "把 TC 关掉",
     "TC 关一下",
     "把 ABS 调到 3",
-    "设置成软胎",
     "调到最硬",
-    "这个弯该几档过",
-    "帮我调一下上一圈的圈速",
-    "把方向盘回正",
-    "帮我加油",
-    "打开雨刷",
-    "关掉转向辅助",
     "帮我关掉引擎",
+    "关掉转向辅助",
+    "把方向盘回正",
+    "打开雨刷",
+    "这个弯该几档过",
 )
+
+# 兼容旧名字：拦截统计里把两类合并
+OPERATION_QUESTIONS = EXECUTABLE_COMMANDS + UNSUPPORTED_COMMANDS
 
 
 def build_snapshot():
@@ -201,6 +219,33 @@ def _check_blocked(questions, expected_kind) -> dict:
             "misclassified": misclassified}
 
 
+def run_car_control() -> dict:
+    """改车指令的解析检查（不需要调 API）。
+
+    最关键的一条：**做不到的请求不能悄悄退化成真动作**。
+    「设置成软胎」若被当成普通「换胎」执行，用户要软胎却勾了换胎复选框，
+    那就是做错了还装作做对。
+    """
+    from src.command_match import match
+
+    bad_executable = []
+    for text in EXECUTABLE_COMMANDS:
+        action = match(text)
+        if not action or action.get("kind") in (None, "unsupported"):
+            bad_executable.append({"q": text, "got": action})
+
+    bad_unsupported = []
+    for text in UNSUPPORTED_COMMANDS:
+        action = match(text)
+        if not action or action.get("kind") != "unsupported":
+            bad_unsupported.append({"q": text, "got": action})
+
+    return {"executable_total": len(EXECUTABLE_COMMANDS),
+            "executable_bad": bad_executable,
+            "unsupported_total": len(UNSUPPORTED_COMMANDS),
+            "unsupported_bad": bad_unsupported}
+
+
 def run_safety() -> dict:
     """安全类问句绝不能进入模型路径——纯静态判定，不需要调 API。"""
     safety = _check_blocked(SAFETY_QUESTIONS, QueryKind.SAFETY)
@@ -240,6 +285,22 @@ def main() -> int:
         else:
             print(f"  ✅ {label}：零漏放、分类正确（{tag}）")
 
+    print("\n=== 改车指令解析 ===")
+    report["car_control"] = run_car_control()
+    cc = report["car_control"]
+    if cc["executable_bad"]:
+        print(f"  ❌ 该能执行的没解析出来 {len(cc['executable_bad'])} 条：")
+        for item in cc["executable_bad"][:6]:
+            print(f"     {item['q']} → {item['got']}")
+    else:
+        print(f"  ✅ 可执行指令全部解析正确（{cc['executable_total']} 条）")
+    if cc["unsupported_bad"]:
+        print(f"  ❌ 做不到的被误当成真动作 {len(cc['unsupported_bad'])} 条：")
+        for item in cc["unsupported_bad"][:6]:
+            print(f"     {item['q']} → {item['got']}")
+    else:
+        print(f"  ✅ 做不到的全部明确拒绝（{cc['unsupported_total']} 条）")
+
     if not args.skip_llm:
         key = os.environ.get("DEEPSEEK_KEY") or os.environ.get("LITTLE_NAVIGATOR_AI_KEY")
         if not key:
@@ -274,7 +335,10 @@ def main() -> int:
                              encoding="utf-8")
         print(f"\n完整结果：{args.json}")
 
-    if not safety_ok:
+    cc_ok = (not report["car_control"]["executable_bad"]
+             and not report["car_control"]["unsupported_bad"])
+    print(f"  改车指令解析: {'✅ 通过' if cc_ok else '❌ 未通过'}")
+    if not safety_ok or not cc_ok:
         return 1
     if llm_ok is False:
         return 1

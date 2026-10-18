@@ -5,15 +5,19 @@
     "red_line": {
       "questions": 13,
       "checks": 39,
-      "leaks": 0,
-      "misclassified": 0
+      "leaks": 0
     },
     "capability": {
-      "questions": 17,
-      "checks": 51,
-      "leaks": 0,
-      "misclassified": 0
+      "questions": 26,
+      "checks": 78,
+      "leaks": 0
     }
+  },
+  "car_control": {
+    "executable_questions": 13,
+    "executable_bad": 0,
+    "unsupported_questions": 13,
+    "unsupported_bad": 0
   },
   "whitelist": {
     "total": 50,
@@ -22,14 +26,15 @@
     "false_reject_rate": 0.0
   },
   "latency_ms": {
-    "p50": 908,
-    "p90": 1301,
-    "max": 1611,
+    "p50": 963,
+    "p90": 1433,
+    "max": 1536,
     "over_2000": 0
   },
   "thresholds": {
-    "blocking_zero_leak": "pass",
-    "false_reject_le_20pct": "pass"
+    "blocking": "pass",
+    "false_reject": "pass",
+    "car_control_parsing": "pass"
   },
-  "note": "红线与能力边界分开统计：两者都不调模型，但用户听到的话术不同。"
+  "note": "红线/能力边界分开统计；改车指令另测「可执行的是否解析得到」与「做不到的是否被明确拒绝（而非悄悄退化成真动作）」"
 }

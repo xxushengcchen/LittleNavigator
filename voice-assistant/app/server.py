@@ -274,6 +274,7 @@ class Service:
                 "load_sec": round(getattr(self.asr, "load_sec", 0.0), 2) if self.asr else None,
             },
             "pack": info,
+            "car_control": self.asst.car_control_status(),
             "ai": {**self.asst.ai_status(),
                    "last_text": (self.last_ask or {}).get("ai_text"),
                    "last_source": (self.last_ask or {}).get("ai_source"),
@@ -449,6 +450,7 @@ class Service:
     def configure(self, patch: dict) -> dict:
         """写 config.local.yaml（覆盖层）并尽力热生效。"""
         allowed = {"intent": {"voice_strict", "l1_keyword"}, "asr": {"model", "num_threads"},
+                   "car_control": {"enabled", "verify"},
                    "ai": {"enabled", "mode", "provider", "base_url", "model",
                           "api_key", "timeout_s", "max_tokens",
                           "max_answer_chars", "rate_limit_per_min",

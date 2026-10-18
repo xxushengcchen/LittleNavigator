@@ -25,12 +25,17 @@ from .player import Player
 from .voicepack import VariantPicker, VoicePack
 from .ai_pipeline import AiPipeline
 from .query_class import QueryKind, classify
+from . import car_control, command_match
 
 # 拒绝话术（在 assistant-extra 素材包里，同一音色合成）
 REFUSE_HEARD = "AST_REFUSE_HEARD"    # 没听清 / 对不上短语库
 REFUSE_CANT = "AST_REFUSE_CANT"      # 听懂了，但遥测答不了
 AI_SEE_SCREEN = "AST_AI_SEE_SCREEN"  # AI 答了但没配 TTS：请用户看屏幕
-NO_CAR_CONTROL = "AST_NO_CAR_CONTROL"  # 要求软件操作车辆：软件是只读的，如实说
+NO_CAR_CONTROL = "AST_NO_CAR_CONTROL"  # 改车未启用 / 这件事做不到
+CC_CONFIRM = {"tyre": "AST_CC_TYRE", "fuel": "AST_CC_FUEL",
+              "tearoff": "AST_CC_WS", "fast_repair": "AST_CC_FR",
+              "clear": "AST_CC_CLEAR", "clear_tires": "AST_CC_CLEAR"}
+CC_FAIL = "AST_CC_FAIL"
 
 
 def exclusive(fn):
@@ -93,6 +98,12 @@ class Assistant:
             cfg["telemetry"]["poll_hz"], cfg["telemetry"].get("thread_priority"))
         # AI 只在显式启用时构造；不启用时下面所有入口都判空，行为与接入前完全一致。
         self.ai = self._build_ai(cfg)
+        # 语音改车：默认关闭。未启用时 self.car.enabled 为假，所有入口判空。
+        try:
+            self.car = car_control.CarController(cfg, out=self.out)
+        except Exception as exc:      # noqa: BLE001
+            print(f"  ⚠ 改车控制器初始化失败：{exc}", file=self.out)
+            self.car = None
 
     # ------------------------------------------------------------------ AI
     def _build_ai(self, cfg: dict) -> AiPipeline | None:
@@ -168,6 +179,17 @@ class Assistant:
         rec: dict = {"q": text, "source": source, **extra}
         kind = classify(text, tr["intent"])
 
+        # 改车指令走确定性匹配，绝不经模型。认不出来才落到下面的拒绝流程。
+        #
+        # 为什么连 UNKNOWN 也试：分类是按词表做子串匹配的，而「换左前胎」
+        # 这种「换 + 角位 + 胎」的结构词表覆盖不到，会落进 UNKNOWN。
+        # 真正的把关在 command_match.match()——它认不出来就返回 None，
+        # 这里什么都不会发生。
+        if kind in (QueryKind.OPERATION, QueryKind.UNKNOWN):
+            handled = self._try_car_command(text, rec)
+            if handled is not None:
+                return handled
+
         if tr["intent"] is None:
             p(f"  意图：拒绝（{tr['_hit'].reason}）")
             rec.update({"ok": False, "intent": None, "layer": "refuse",
@@ -195,6 +217,89 @@ class Assistant:
         return self._play_plan(text, snap, dec, rec, source, extra)
 
 
+    # ------------------------------------------------------------------ 改车
+    def car_control_status(self) -> dict:
+        if self.car is None:
+            return {"enabled": False, "available": False, "verify": False,
+                    "error": "未初始化"}
+        return self.car.status()
+
+    def _try_car_command(self, text: str, rec: dict) -> dict | None:
+        """尝试把一句话当改车指令执行。返回记录，或 None（不是改车指令）。
+
+        这条路径**完全不经过模型**：能做什么靠确定性词表，做不了就如实说。
+        """
+        p = lambda s: print(s, file=self.out)  # noqa: E731
+        action = command_match.match(text)
+        if action is None:
+            return None            # 认不出来，交给原来的拒绝流程
+
+        rec.update({"cc_action": dict(action), "kind": "operation",
+                    "intent": None})
+
+        if action["kind"] == "unsupported":
+            reason = action.get("reason") or "这件事软件做不到"
+            p(f"  ✗ 改车不支持：{reason}")
+            rec.update({"ok": False, "reason": reason})
+            self._say_with_fallback(NO_CAR_CONTROL)
+            self._log(self.miss_log, rec)
+            return rec
+
+        if self.car is None or not self.car.enabled:
+            p("  ✗ 改车未启用")
+            rec.update({"ok": False, "reason": "改车功能未启用"})
+            self._say_with_fallback(NO_CAR_CONTROL)
+            self._log(self.miss_log, rec)
+            return rec
+
+        if not self.car.available:
+            p("  ✗ 改车不可用（未连接游戏 / 未装 pyirsdk）")
+            rec.update({"ok": False, "reason": "未连接游戏，改车指令没有发出"})
+            self._say_with_fallback(NO_CAR_CONTROL)
+            self._log(self.miss_log, rec)
+            return rec
+
+        if action["kind"] == "fuel":
+            litres = command_match.clamp_litres(
+                action.get("litres"), car_control.FUEL_MIN_L,
+                car_control.FUEL_MAX_L)
+            action["litres"] = litres
+            rec["cc_action"] = dict(action)
+
+        result = self.car.apply(action)
+        rec.update({"cc_sent": result.get("sent"),
+                    "cc_error": result.get("error")})
+        if not result.get("ok"):
+            p(f"  ✗ 改车发送失败：{result.get('error')}")
+            rec.update({"ok": False, "reason": result.get("error")})
+            self._say_with_fallback(CC_FAIL)
+            self._log(self.miss_log, rec)
+            return rec
+
+        verified = None
+        if self.car.verify:
+            verified = self.car.verify_applied(
+                action, lambda: self.snapshot().pit_sv_flags)
+            rec["cc_verified"] = verified
+            p(f"  改车回读：{verified}")
+
+        # 只有回读确认过才算真的成功；没验证能力的动作（clear 类）按发送成功算。
+        applied = verified is None or verified.get("verified") is not False
+        if not applied:
+            rec.update({"ok": False, "reason": verified.get("reason")})
+            self._say_with_fallback(CC_FAIL)
+            self._log(self.miss_log, rec)
+            return rec
+
+        rec.update({"ok": True, "kind": "operation",
+                    "reason": "已执行改车指令",
+                    "cc_applied": applied})
+        msg_id = CC_CONFIRM.get(action["kind"], CC_FAIL)
+        p(f"  ✓ 改车：{action}")
+        self._say_with_fallback(msg_id)
+        self._log(self.qa_log, rec)
+        return rec
+
     @staticmethod
     def _refusal_for(kind) -> str:
         """按分类选拒绝话术。三类的原因不同，说给用户听的话也必须不同。
@@ -207,19 +312,23 @@ class Assistant:
             return REFUSE_CANT
         return REFUSE_HEARD
 
-    def _say_refusal(self, kind) -> None:
-        """播拒绝话术，素材缺失时逐级降级。
+    def _say_with_fallback(self, preferred: str) -> None:
+        """播一句话术，素材缺失时逐级降级。
 
-        降级链存在的原因：`AST_NO_CAR_CONTROL` 是新加的素材，用户重建语音包
-        之前它不在包里。直接播会走 `_say()` 的静默跳过——那比播一句
+        降级链存在的原因：新加的素材（AST_NO_CAR_CONTROL / AST_CC_*）在用户
+        重建语音包之前不在包里。直接播会走 `_say()` 的静默跳过——那比播一句
         措辞不完美的话更糟：用户按完 PTT 什么都没听到，会以为软件坏了。
         """
-        for msg_id in (self._refusal_for(kind), REFUSE_CANT, REFUSE_HEARD):
+        for msg_id in (preferred, REFUSE_CANT, REFUSE_HEARD):
             if self.pack.has(msg_id):
                 self._say(msg_id)
                 return
         # 三个都没有：至少别让用户面对完全的沉默
-        print("  ⚠ 拒绝话术素材全部缺失，本次无声", file=self.out)
+        print("  ⚠ 话术素材全部缺失，本次无声", file=self.out)
+
+    def _say_refusal(self, kind) -> None:
+        """按分类播拒绝话术。"""
+        self._say_with_fallback(self._refusal_for(kind))
 
     def _strict_for(self, source: str) -> bool:
         """语音路径默认严格：只认短语库。打字场景可以走 L1 兜底。"""
