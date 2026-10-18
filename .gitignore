@@ -11,3 +11,6 @@ tmp/
 .env.*
 *.pem
 *.key
+
+# macOS
+.DS_Store
