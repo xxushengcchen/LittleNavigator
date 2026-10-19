@@ -124,13 +124,15 @@ body.desktop-shell .window-controls { display: flex; }
 .ira-mark {
   display: grid;
   place-items: center;
-  width: 26px; height: 26px;
+  width: 30px; height: 30px;
   flex: none;
   color: var(--shell-ink);
   border: 1px solid var(--shell-line);
   border-radius: var(--r);
+  overflow: hidden;
 }
 .ira-mark i, .ira-mark svg { width: 14px; height: 14px; display: block; }
+.ira-mark img { width: 100%; height: 100%; display: block; object-fit: cover; }
 
 .ira-brand { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
 .ira-brand strong {
@@ -897,7 +899,7 @@ body.desktop-shell .window-controls { display: flex; }
 
 <div class="ira-window" role="application" aria-label="iRacing 小小领航员">
   <header class="ira-top">
-    <span class="ira-mark"><i data-lucide="radio" aria-hidden="true"></i></span>
+    <span class="ira-mark"><img src="/static/avatar.png" alt="小小领航员"></span>
     <div class="ira-brand pywebview-drag-region">
       <strong>小小领航员</strong>
       <span>iRacing</span>
