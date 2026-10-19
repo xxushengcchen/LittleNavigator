@@ -8,6 +8,7 @@
 - 方向盘读取使用 PySDL2 / SDL2；音频、拼音和繁简转换依赖见 requirements-tested.txt，相关库保留各自许可。
 - 中文语音使用豆包小何 2.0 音色预生成。播放器正常运行不需要语音服务凭据；调用语音生成服务需要自行取得权限并承担服务费用。
 - 横幅及软件中的团队、品牌标识用于展示项目相关信息，不作为 MIT 许可素材重新授权。
+- 首页 IFP Wargame、MoonDrop 与 Drag-On XTT 标识由项目维护者提供。透明 PNG 与内嵌素材的 SVG 排版源位于 `assets/readme/`；IFP 使用生成式去底派生图，单色标识另提供深色主题版本，处理记录见 [品牌图来源](assets/readme/source/PROVENANCE.md)，相关权利仍归原持有人。
 - Inno Setup 简体中文语言文件来自 kira-96/Inno-Setup-Chinese-Simplified-Translation，文件内保留原维护者信息。
 
 模型和大量音频放在 Release / 本地资源目录，源码仓库不收录这些二进制资源。

@@ -1,0 +1,13 @@
+# Preserve earlier working proposals locally without publishing generated duplicates.
+design-demos/
+refs/
+taste-directions/
+assets/
+build_drafts.py
+render_drafts.cjs
+draft-validation.json
+final-preview/*
+!final-preview/readme-light-1440.png
+!final-preview/readme-dark-375.png
+!final-preview/readme-brands-light.png
+!final-preview/readme-brands-dark.png

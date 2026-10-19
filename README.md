@@ -1,129 +1,146 @@
-![Moondrop · Moondrop Gravity · Drag-On XT · Moondrip Racing](assets/banner.png)
-
 # 小小领航员 LittleNavigator
 
-当前版本 **v1.4.5**：重新设计全部十个界面，加入进站服务读回示意图，并合入近期比赛发现的控制与遥测问答修复。查看 [版本说明](docs/releases/v1.4.5.md)、[新版界面指南](docs/guide/v1.4.5-interface.md) 和 [真机问题修复记录](docs/live-race-fixes.md)。
+🏁 给 iRacing 中文玩家的语音助手与 Spotter 语音包。按住按钮说话，松开后听回答，让注意力留在赛道。
 
-一个给 iRacing 中文玩家做的语音助手和中文 Spotter 语音包。
+Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码 MIT](LICENSE)
 
-比赛时不方便低头找油量、圈速和前后车信息，小小领航员让你按住方向盘上的一个按钮，直接开口问即可。它在本机识别问题，读取 iRacing 遥测，再用同一套中文音色回答。语音包也可以单独装进 iRacing，不开助手照样能用。
+[⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [快速开始](#三步开始使用) · [使用指南](docs/guide/v1.4.5-interface.md) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
 
-但是一个人能想到的问法、能测试的方向盘和赛车都有限，能力也只够维护一个音色的语音包，所以希望中文社区里的玩家一起来补充这个开源项目。即便只是告诉我哪句话没听懂、哪条播报不对，或者提一句你比赛时真的会问的话，都很有帮助。
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/ifp-wargame-dark.png">
+    <img src="assets/readme/ifp-wargame.png" width="130" align="middle" alt="赞助支持：IFP Wargame，透明底">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/moondrop-dark.png">
+    <img src="assets/readme/moondrop.png" width="150" align="middle" alt="赞助支持：水月雨 MoonDrop，透明底横向字标">
+  </picture>
+  &nbsp;
+  <picture>
+    <img src="assets/readme/drag-on-xtt.png" width="180" align="middle" alt="车队支持：Drag-On XTT racing team，透明底">
+  </picture>
+</p>
 
-[下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues) · [参与开发](CONTRIBUTING.md)
+🤝 赞助支持：**IFP Wargame、MoonDrop**；车队：**Drag-On XTT**。感谢他们对项目的支持。
 
-## 现在能做什么
+## 开车时，直接开口问
 
-- 按住键盘或方向盘按钮说话，松开后回答；可在设置中采集绑定。
-- 查询油量、油耗、续航、比赛圈数和时间、名次、圈速、前后车、进站维修、天气和车辆状态。
-- 查询全场第一名、赛道前车和后车的上一完整圈及最佳圈速。
-- 本地 SenseVoice 识别，短语和意图匹配，离线语音播放。日常使用不需要大模型或语音 API Key。
-- 自动记录没听明白的问法，便于后续补充。
+- 🎙️ **少找一次黑框。** 查询油量、剩余时间、名次、圈速和前后车信息，再用中文语音回答。
+- **日常问答留在本机。** 本地语音识别、规则匹配与录音播报，不要求接入大模型或语音服务。
+- **需要时再扩展。** AI 分析、AI 回答的语音合成（TTS）、语音进站控制分别启用，默认关闭。
+- **语音包也能独立使用。** 只安装中文 Spotter，由 iRacing 触发原有播报，不必启动助手。
 
-v1.4.3 起新增三项可选能力，**默认全部关闭**，不配置时行为与 v1.4.2 完全一致：
+## 三步开始使用
 
-- **AI 大模型接驳**：规则层答不上时，把问题和一份精简遥测交给你自己接的大模型。填 `base_url` / `model` / `api_key` 即可，按 OpenAI 兼容协议调用，不绑定厂商。
-- **语音合成**：AI 回答可以念出来。TTS 失败不影响文字显示。
-- **语音改车**：语音换胎、加油、快修、清洁挡风、清空进站设置。
+1. 在 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases/latest) 下载最新 Windows 安装包（文件名以 `Setup-x64.exe` 结尾）并安装，**无需安装 Python**。
+2. 打开软件，在「语音输入」选择麦克风，采集键盘或方向盘上的说话键，然后开启监听。
+3. 进入 iRacing，按住绑定键说「还剩多少时间」，松开后等待回答。
 
-当前版本 v1.4.5 有 1,769 条问法、14 类遥测意图；助手合并语音资源有 3,153 条音频（主包 2,496 + 拼接连接件 30 + 助手话术 627）。语音数量和可回答的问题不是一回事：有些问题需要先读到有效遥测才能回答。
+当前正式版为 [v1.4.5](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.5)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.4.5.md)。
 
-![v1.4.5 比赛控制台，模拟数据](docs/ui-preview/v1.4.5/dashboard.png)
+<details>
+<summary>不开游戏试用、升级与安装问题</summary>
 
-界面截图使用模拟数据。进站图只读，断线后会清空数据。
+在安装目录打开 PowerShell，可用模拟数据启动；界面会明确标记模拟模式：
 
-## 下载和安装助手
+```powershell
+& ".\小小领航员.exe" --sim
+```
 
-在 [v1.4.5 发布页](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.5) 下载 `LittleNavigator-1.4.5-Setup-x64.exe`，含完整模型与语音。完整变化与测试边界见 [版本说明](docs/releases/v1.4.5.md)。
+系统缺少 WebView2 时，安装包中的微软官方引导器需要联网补装。项目安装包未代码签名，下载页附 `SHA256SUMS.txt`，用于核对安装文件。
 
-1. 运行安装文件，自行选择安装位置。
-2. 启动软件，在「语音输入」选好麦克风，采集键盘或方向盘按钮。
-3. 开启 iRacing。按住绑定按钮问一句，松开后等播报。
+升级前退出软件，使用与旧版相同的安装范围和目录。安装版配置、日志和状态位于 `%LOCALAPPDATA%\LittleNavigator`，升级和卸载都会保留。旧便携版可在首次启动安装版前，把 `config.local.yaml` 复制到这个目录。
 
-AI 与 TTS 在「AI 工程师」分别启用、保存并填写自己的接口密钥；语音改车在「进站控制」单独启用、保存。**不配置也能照常使用**，规则型问答完全离线。
+</details>
 
-> ⚠️ **语音改车会真的改动游戏里的进站设置。** 语音识别可能听错——把「换左前胎」听成「换右前胎」就是换错轮胎。建议先在练习赛里试熟再上正式比赛。
->
-> 改车做不到的事会明说做不到，不会假装成功：轮胎配方、刹车平衡、TC/ABS 档位、雨刷、方向盘都不在广播接口里，只能自己在车内黑框调。
+## 可以这样问
 
-支持 Windows 10 2004 及以上、Windows 11 x64。安装文件含完整模型、16 kHz 主语音包及助手补充素材（补充素材包含 16/24 kHz，独立语音包附件仍为 24 kHz 母带）；WebView2 运行时多数系统已随 Windows 自带，缺少时由微软官方引导器在安装时联网补装。没有 Python 环境也可以直接安装。
+| 想了解什么 | 试着说 |
+| --- | --- |
+| 燃油与续航 | 油还够吗；目前还有多少油；每圈油耗多少 |
+| 比赛进度 | 还剩多少时间；比赛还剩几圈；我已经跑完几圈 |
+| 自己与对手的圈速 | 我上一圈多少；最佳圈速多少；前车上一圈多少 |
+| 位置与前后车 | 现在第几名；同组第几名；前车多远；后车多远 |
+| 维修与天气 | 还剩几次快修；必修还剩多久；气温多少；路面温度多少 |
+| 进站服务，需先启用 | 帮我取消换胎；只换左侧轮胎；帮我加10升油；勾上快修 |
 
-当前安装包未代码签名，Windows 可能显示未知发布者或 SmartScreen 提示。下载页附 `SHA256SUMS.txt`；请核对文件来源和校验值。
+一次询问一个具体项目。全场第一名、赛道前后车与自己的车辆是不同对象；普通圈速问题默认读取上一完整圈。
+
+## 实际软件界面
+
+![v1.4.5 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.4.5/dashboard.png)
+
+上图来自真实软件，遥测使用明确标记的模拟数据。进站示意图只读显示游戏服务勾选；断线后会清空旧遥测。
+
+[查看完整界面指南](docs/guide/v1.4.5-interface.md)，了解麦克风、耳机路由、文字试问和问答记录的使用方法。
+
+## 按需开启 AI 与进站控制
+
+不配置以下功能，也能使用本地规则问答与中文录音播报。
+
+- **AI 分析：** 在「AI 工程师」填写模型接口、模型名和自己的 API Key，通过兼容 Chat Completions 的接口调用，费用由所接服务决定。
+- **AI 回答语音合成：** 在同页的 TTS 区域单独配置与保存；不配置时 AI 只有文字，不影响规则问题的录音播报。
+- **语音进站控制：** 在「进站控制」单独启用并保存，可设置换胎、加油、快修、清洁挡风，或取消、清空进站服务。
+
+⚠️ **语音进站控制会改变游戏中的进站设置。** 语音可能识别错误，请先在练习赛核对软件读回与游戏黑框。当前加油只执行整数升数，小数明确拒绝；轮胎配方、刹车平衡、TC/ABS 档位、雨刷和方向盘不支持语音修改。
 
 ## 语音包单独装进 iRacing
 
-只想换中文 Spotter、不需要语音问答，可以下载发布附件 `LittleNavigator-iRacing-VoicePack-v1.4.1.zip`（24 kHz 母带），解压得到 `Mandarin-CNTW-Xusheng_Chen` 文件夹。助手安装目录里的 `build\pack\Mandarin-CNTW-Xusheng_Chen` 是同一批素材的 16 kHz 派生版，体积更小，也可直接使用。
+只想换中文 Spotter，可在 [v1.4.1 发布附件](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.1) 下载 `LittleNavigator-iRacing-VoicePack-v1.4.1.zip`。已安装助手时，也可使用安装目录下的 `build\pack\Mandarin-CNTW-Xusheng_Chen`。
 
-1. 退出 iRacing 模拟器，解压语音包。
-2. 找到 **iRacing 游戏安装目录**下的 `sound\spcc`。默认安装通常是 `C:\Program Files (x86)\iRacing\sound\spcc`；Steam 或自选安装位置应使用实际游戏目录。
-3. 将整个 `Mandarin-CNTW-Xusheng_Chen` 文件夹复制进去。确认结构如下，不要多套一层同名文件夹：
+退出模拟器，将 `Mandarin-CNTW-Xusheng_Chen` 文件夹复制到 **iRacing 游戏安装目录**的 `sound\spcc`，在游戏 **Options → Sound → Voice Pack** 中选择它，再重新加载模拟器。
 
-```text
-iRacing/
-└─ sound/
-   └─ spcc/
-      └─ Mandarin-CNTW-Xusheng_Chen/
-         ├─ spmsg.txt
-         ├─ SPCC_....WAV
-         └─ ...
-```
+[完整安装步骤与目录示例](docs/guide/spotter-install.md)。注意使用游戏安装目录，通常不是「文档\iRacing」。
 
-4. 进入模拟器的 **Options → Sound → Voice Pack**，选择 `Mandarin-CNTW-Xusheng_Chen`，并确认 Spotter 已开启。
-5. 重新加载模拟器，让新语音包生效。如果列表里没有它，先检查路径和 `spmsg.txt` 是否直接位于语音包文件夹中。
+## 使用前了解
 
-这里使用的是游戏安装目录，不是 `文档\iRacing`。单独安装后，由 iRacing 触发原有 Spotter 播报；助手的按键提问功能仍需要启动小小领航员。`assistant-extra` 和 `assistant-telemetry` 是助手专用素材，不需要复制到游戏目录。
+- 规则问答依赖短语和意图匹配。AI 为可选补充，目前是一问一答，不支持多轮追问或主动工程师提醒。
+- 没有可靠遥测时会说明读不到；事故点不能用来判断具体车损，也不能用秒差代替圈差。
+- 前后车秒差是估计值；冷胎压是设定值，胎温和磨损来自有效进站检测，不能当作持续更新的胎面数据。
+- 支持的字段与赛车有关。真实麦克风、方向盘、AI/TTS 接口和比赛场景仍需要在实际使用中验证。
 
-安装步骤依据 [iRacing 官方第三方语音包说明](https://support.iracing.com/support/solutions/articles/31000133521-using-third-party-spotter-packs) 和 [自定义语音包说明](https://support.iracing.com/support/solutions/articles/31000157884-creating-custom-spotter-packs)。
-
-## 可以怎么问
-
-| 内容 | 常用问法 |
-|---|---|
-| 燃油 | 目前还有多少油？油还能跑几圈？油够跑完吗？每圈油耗多少？ |
-| 自己的圈速 | 我上一圈多少？最佳圈速多少？上一圈比最佳慢多少？ |
-| 对手圈速 | 第一名圈速多少？前车上一圈多少？后车最佳圈速多少？ |
-| 比赛进度 | 比赛还剩几圈？比赛还剩多久？我已经跑完几圈？ |
-| 位置和前后车 | 现在第几名？同组第几名？前车多远？后车追上来了吗？ |
-| 进站和维修 | 维修区限速多少？还剩几次快修？必修还剩多久？ |
-| 天气 | 气温多少？路面温度多少？降雨强度多少？ |
-| 车辆和设置 | 水温多少？油温多少？事故点多少？ABS 现在几档？ |
-
-一次问一项最稳。第一名指全场第一名，前后车指赛道上的邻车，普通圈速问题默认问上一完整圈。
-
-## 目前的限制
-
-- 默认仍是短语和意图匹配，不是自由聊天。规则层答不上时能否追问，取决于你有没有配 AI。
-- AI 层只做单轮问答，不支持多轮追问；回答长度、超时和 token 都有硬上限，超了宁可说「答不了」。
-- AI 回答里的每个数字都必须能在本次遥测里找到出处，对不上就退回「现在读不到可靠数据」。
-- 遥测只到圈级汇总，没有弯道分段。所以能说「这圈慢了 0.4 秒」，说不出「第七弯刹车晚了」。
-- 语音改车只走确定性词表，不经模型；轮胎配方、刹车平衡、TC/ABS、雨刷、方向盘都改不了。
-- 没连上游戏、目标车辆没完成有效圈、缺少字段时，会说明拿不到数据，不拿另一项读数代替。
-- 冷胎压是设定值；胎温和磨损来自有效进站检测，不能当成持续更新的实时胎面数据。
-- 前后车秒差是估计值；事故点不能判断车损的具体部位。
-- 某些设置和遥测字段与赛车有关，换车后可能无法读取。
-- 加油广播目前仅执行整数升数，小数明确拒绝；“加满”若计算出小数也会拒绝。
-- 咨询与操作按语义判断，不依赖问号；单独“快修”“撕膜”仍保留为操作快捷口令。
-
-## 接下来想做的事
-
-1. **增加一个可选的脏话版，并持续扩充语音数量。** 普通版继续保留。希望同一个场景能有更多自然的说法，也欢迎玩家一起写文案、指出不合适或听不清的播报。
-2. **弯道级归因。** 现在只有圈级汇总，想回答「哪个弯慢」需要时间-距离轨迹，已预留接口但本期没做。
-3. **多轮追问与主动播报。** 当前一问一答，也不能在比赛里主动提醒。
-
-如果你愿意帮忙做接口、补中文口语、调试语音和方向盘支持，欢迎开 Issue 或 PR，一起讨论怎么做。
-
-## 升级、配置和日志
-
-升级前退出软件，运行新版安装文件，选择与旧版相同的安装范围和目录。安装版用户数据在 `%LOCALAPPDATA%\LittleNavigator`，升级和卸载都会保留。旧便携版可以在首次启动安装版前，把 `config.local.yaml` 复制到这个目录。
-
-反馈识别问题时，最好写出原话、界面显示的识别文字、使用的版本和预期回答。需要日志时只提供相关片段，不要上传 API Key 或完整私人日志。
+更多数据范围、操作边界与后续计划见 [能力与限制](docs/guide/capabilities-and-limits.md)。
 
 ## 开发和参与
 
-主要代码在 `voice-assistant/`：`src/` 负责识别、遥测、问答及播放，`app/` 是桌面窗口和界面，`tests/` 是回归测试，`packaging/` 是打包与安装脚本。`scripts/` 和 `content/` 放语音文案及生成工具。
+💬 欢迎补充真实问法、报告播报问题、测试车型与方向盘，或提交代码。反馈时请附版本、车型、赛道、原话、识别文字和预期结果；只提供相关日志片段，**不要上传 API Key 或完整私人日志**。
 
-开发环境使用 Windows、Python 3.12，模型和音频通过 Release 获取，不塞进 Git 历史。详细步骤见 [开发指南](DEVELOPMENT.md)，反馈和提交方式见 [贡献指南](CONTRIBUTING.md)。
+[贡献指南](CONTRIBUTING.md) · [开发与构建](DEVELOPMENT.md) · [真机问题修复记录](docs/live-race-fixes.md)
 
-代码采用 [MIT License](LICENSE)。预训练模型、第三方依赖、品牌标识和语音资源不自动适用本项目的 MIT 许可，保留各自来源和使用条件，见 [素材与依赖说明](THIRD_PARTY_NOTICES.md)。
+主要代码在 [`voice-assistant/`](voice-assistant/)：`src/` 负责识别、遥测、问答和播放，`app/` 是桌面窗口与界面，`tests/` 为回归测试，`packaging/` 负责打包。语音文案与生成工具位于 `content/`、`scripts/`。
 
-制作：xushengchen from Moondrop-Dox Racing。项目由社区维护，不是 iRacing 官方软件。
+## 许可与致谢
+
+程序源代码采用 [MIT License](LICENSE)。预训练模型、第三方依赖、品牌标识与语音资源保留各自来源和使用条件，详见 [素材与依赖说明](THIRD_PARTY_NOTICES.md)。
+
+
+**MoonDrop 五款标识**
+
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/moondrop-dark.png">
+    <img src="assets/readme/moondrop.png" width="140" align="middle" alt="MoonDrop 五款标识：水月雨横向字标">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/moondrop-racing-dark.png">
+    <img src="assets/readme/moondrop-racing.png" width="150" align="middle" alt="MoonDrop 五款标识：Racing 字标">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/moondrop-signature-dark.png">
+    <img src="assets/readme/moondrop-signature.png" width="160" align="middle" alt="MoonDrop 五款标识：手写签名">
+  </picture>
+  &nbsp;
+  <picture>
+    <img src="assets/readme/moondrop-headphones.png" width="150" align="middle" alt="MoonDrop 五款标识：粉色耳机人物标">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/moondrop-symbol-dark.png">
+    <img src="assets/readme/moondrop-symbol.png" width="88" align="middle" alt="MoonDrop 五款标识：黑色图形标">
+  </picture>
+</p>
+
+制作：xushengchen from Moondrop-Dox Racing。感谢 IFP Wargame、MoonDrop 的赞助支持，以及 Drag-On XTT 车队的支持。项目由社区维护，**不是 iRacing 官方软件**。

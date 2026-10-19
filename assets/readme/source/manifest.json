@@ -1,0 +1,122 @@
+[
+  {
+    "name": "ifp-wargame",
+    "canvas": [
+      320,
+      112
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "55 110 1870 475"
+  },
+  {
+    "name": "ifp-wargame-dark",
+    "canvas": [
+      320,
+      112
+    ],
+    "transparent": true,
+    "light_ink": true,
+    "crop_viewBox": "55 110 1870 475"
+  },
+  {
+    "name": "drag-on-xtt",
+    "canvas": [
+      400,
+      148
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "60 300 2680 1000"
+  },
+  {
+    "name": "moondrop",
+    "canvas": [
+      360,
+      112
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "70 560 1335 300"
+  },
+  {
+    "name": "moondrop-dark",
+    "canvas": [
+      360,
+      112
+    ],
+    "transparent": true,
+    "light_ink": true,
+    "crop_viewBox": "70 560 1335 300"
+  },
+  {
+    "name": "moondrop-racing",
+    "canvas": [
+      400,
+      124
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "70 915 1390 340"
+  },
+  {
+    "name": "moondrop-racing-dark",
+    "canvas": [
+      400,
+      124
+    ],
+    "transparent": true,
+    "light_ink": true,
+    "crop_viewBox": "70 915 1390 340"
+  },
+  {
+    "name": "moondrop-signature",
+    "canvas": [
+      400,
+      132
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "45 2035 1340 390"
+  },
+  {
+    "name": "moondrop-signature-dark",
+    "canvas": [
+      400,
+      132
+    ],
+    "transparent": true,
+    "light_ink": true,
+    "crop_viewBox": "45 2035 1340 390"
+  },
+  {
+    "name": "moondrop-headphones",
+    "canvas": [
+      360,
+      180
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "20 2670 1210 600"
+  },
+  {
+    "name": "moondrop-symbol",
+    "canvas": [
+      240,
+      224
+    ],
+    "transparent": true,
+    "light_ink": false,
+    "crop_viewBox": "60 4235 1165 1080"
+  },
+  {
+    "name": "moondrop-symbol-dark",
+    "canvas": [
+      240,
+      224
+    ],
+    "transparent": true,
+    "light_ink": true,
+    "crop_viewBox": "60 4235 1165 1080"
+  }
+]

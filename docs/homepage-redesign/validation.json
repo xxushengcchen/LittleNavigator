@@ -1,0 +1,415 @@
+{
+  "passed": true,
+  "renderer": "GitHub official Markdown API + real github.com repository DOM/CSS; unpublished PNGs served locally by browser request interception",
+  "checks": [
+    {
+      "theme": "light",
+      "viewport": 1440,
+      "width": 838,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(255, 255, 255)",
+      "localAnchors": true
+    },
+    {
+      "theme": "light",
+      "viewport": 768,
+      "width": 406,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(255, 255, 255)",
+      "localAnchors": true
+    },
+    {
+      "theme": "light",
+      "viewport": 375,
+      "width": 309,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(255, 255, 255)",
+      "localAnchors": true
+    },
+    {
+      "theme": "light",
+      "viewport": 320,
+      "width": 254,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(255, 255, 255)",
+      "localAnchors": true
+    },
+    {
+      "theme": "dark",
+      "viewport": 1440,
+      "width": 838,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol-dark.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(13, 17, 23)",
+      "localAnchors": true
+    },
+    {
+      "theme": "dark",
+      "viewport": 768,
+      "width": 406,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol-dark.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(13, 17, 23)",
+      "localAnchors": true
+    },
+    {
+      "theme": "dark",
+      "viewport": 375,
+      "width": 309,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol-dark.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(13, 17, 23)",
+      "localAnchors": true
+    },
+    {
+      "theme": "dark",
+      "viewport": 320,
+      "width": 254,
+      "bodyOverflow": false,
+      "articleOverflow": false,
+      "broken": 0,
+      "logos": [
+        {
+          "alt": "赞助支持：IFP Wargame，透明底",
+          "w": 130,
+          "h": 45.5
+        },
+        {
+          "alt": "赞助支持：水月雨 MoonDrop，透明底横向字标",
+          "w": 150,
+          "h": 46.65625
+        },
+        {
+          "alt": "车队支持：Drag-On XTT racing team，透明底",
+          "w": 180,
+          "h": 66.59375
+        }
+      ],
+      "moondropVariants": [
+        {
+          "alt": "MoonDrop 五款标识：水月雨横向字标",
+          "selected": "moondrop-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：Racing 字标",
+          "selected": "moondrop-racing-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：手写签名",
+          "selected": "moondrop-signature-dark.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：粉色耳机人物标",
+          "selected": "moondrop-headphones.png"
+        },
+        {
+          "alt": "MoonDrop 五款标识：黑色图形标",
+          "selected": "moondrop-symbol-dark.png"
+        }
+      ],
+      "h1": "32px",
+      "body": "16px",
+      "background": "rgb(13, 17, 23)",
+      "localAnchors": true
+    }
+  ],
+  "detailsToggle": true
+}

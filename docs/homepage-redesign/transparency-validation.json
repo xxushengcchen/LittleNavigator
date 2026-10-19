@@ -1,0 +1,224 @@
+{
+  "passed": true,
+  "uniqueMarks": 7,
+  "moondropVariants": 5,
+  "totalBytes": 179212,
+  "checks": [
+    {
+      "file": "drag-on-xtt.png",
+      "dimensions": [
+        400,
+        148
+      ],
+      "bytes": 40007,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "ifp-wargame-dark.png",
+      "dimensions": [
+        320,
+        112
+      ],
+      "bytes": 11478,
+      "alphaRange": [
+        0,
+        254
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "ifp-wargame.png",
+      "dimensions": [
+        320,
+        112
+      ],
+      "bytes": 23764,
+      "alphaRange": [
+        0,
+        254
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-dark.png",
+      "dimensions": [
+        360,
+        112
+      ],
+      "bytes": 8633,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-headphones.png",
+      "dimensions": [
+        360,
+        180
+      ],
+      "bytes": 21486,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-racing-dark.png",
+      "dimensions": [
+        400,
+        124
+      ],
+      "bytes": 7423,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-racing.png",
+      "dimensions": [
+        400,
+        124
+      ],
+      "bytes": 7184,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-signature-dark.png",
+      "dimensions": [
+        400,
+        132
+      ],
+      "bytes": 13614,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-signature.png",
+      "dimensions": [
+        400,
+        132
+      ],
+      "bytes": 13089,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-symbol-dark.png",
+      "dimensions": [
+        240,
+        224
+      ],
+      "bytes": 12092,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop-symbol.png",
+      "dimensions": [
+        240,
+        224
+      ],
+      "bytes": 12170,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "moondrop.png",
+      "dimensions": [
+        360,
+        112
+      ],
+      "bytes": 8272,
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}
