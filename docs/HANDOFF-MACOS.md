@@ -112,6 +112,13 @@ python -m unittest discover -s tests
 
 预期 **480 项通过**。
 
+三个语音包目录都必须存在，缺任何一个都会让 `test_driver_questions` 与
+`test_regressions.ServiceTests` 的 `setUpClass` 失败，合计 26 个用例跑不起来：
+
+- `build/pack/Mandarin-CNTW-Xusheng_Chen/` — 主包（`SPCC_*`）
+- `build/assistant-extra/` — 拼接连接件（5 个 msgId × 6 变体 = 30 条）
+- `build/assistant-telemetry/` — 助手话术（117 个 msgId × 627 条）
+
 没有 `build/` 时会有 1–2 项跳过（依赖运行时光盘素材的用例），属正常。
 若 `test_msgid_exists_in_pack` **失败**，说明文案有、音频没有——按第 4 节重建。
 
@@ -158,6 +165,34 @@ python scripts/synthesize_telemetry.py \
   （`build/telemetry-tts/*.mp3`，按 `msgId__序号.mp3` 命名）
 - 全新环境没有缓存时会真的合成 627 条，耗时约 2 小时（Windows 实测），且消耗 TTS 额度
 - 结束会自动调 `build_pack.py` 产出 `build/assistant-telemetry/`
+
+### 路线 B 补充：三个包要分开建
+
+`synthesize_telemetry.py` 的输出目录**硬编码**成 `build/assistant-telemetry`，
+用它建 `assistant-extra` 会把 telemetry 包的 `spmsg.txt` 覆盖掉
+（WAV 不会丢，但清单元数据会没）。正确做法是分两步：
+
+```bash
+# 1) 合成（只生成 mp3 缓存，不关心包名）
+python scripts/synthesize_telemetry.py \
+  --content content/assistant-telemetry-v1.1.json \
+            content/assistant-telemetry-v1.2.json \
+  --workers 3 --version 1.2.0
+
+# 2) 分别打包到各自目录
+python scripts/build_pack.py \
+  --content content/assistant-telemetry-v1.1.json content/assistant-telemetry-v1.2.json \
+  --audio build/telemetry-tts --out build --name assistant-telemetry \
+  --rate 24000 --display simplified --no-null --version 1.2.0
+
+python scripts/build_pack.py \
+  --content content/assistant-extra.json \
+  --audio build/telemetry-tts --out build --name assistant-extra \
+  --rate 24000 --display simplified --no-null --version 2.0.0
+```
+
+`build/pack/Mandarin-CNTW-Xusheng_Chen/`（主包，2496 条 `SPCC_*`）不在这条流程里，
+它来自 iRacing 原厂语音包，从安装目录或本地素材目录直接复制即可。
 
 ### 重建后自检
 

@@ -1,0 +1,83 @@
+{
+  "meta": {
+    "version": "2.0.0",
+    "note": "助手拼接连接件：与数字片段组合成完整句子。历史上是独立包，源文件一度不在仓库里。"
+  },
+  "items": [
+    {
+      "msgId": "AST_LAPS_LEAD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "还剩",
+        "剩下",
+        "还有",
+        "还剩大概",
+        "还差",
+        "剩余"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_LAPS_TAIL",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "圈。",
+        "圈左右。",
+        "圈了。",
+        "圈的样子。",
+        "圈吧。",
+        "圈。好。"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_LAST_LAP_LEAD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "上一圈",
+        "上圈",
+        "刚才那圈",
+        "上一个圈速",
+        "上圈成绩",
+        "刚跑完那圈"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_GAP_AHEAD_LEAD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "前车距离",
+        "跟前面差",
+        "离前车",
+        "跟前车差",
+        "前方间隔",
+        "前面领先你"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_GAP_BEHIND_LEAD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "后车距离",
+        "跟后面差",
+        "离后车",
+        "跟后车差",
+        "后方间隔",
+        "后面落后你"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    }
+  ]
+}
