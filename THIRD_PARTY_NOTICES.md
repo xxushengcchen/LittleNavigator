@@ -11,3 +11,10 @@
 - Inno Setup 简体中文语言文件来自 kira-96/Inno-Setup-Chinese-Simplified-Translation，文件内保留原维护者信息。
 
 模型和大量音频放在 Release / 本地资源目录，源码仓库不收录这些二进制资源。
+
+## 界面字体
+
+- Public Sans，来自 [Public Sans](https://github.com/uswds/public-sans)，以 SIL Open Font License 1.1 分发。
+- JetBrains Mono，来自 [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)，以 SIL Open Font License 1.1 分发。
+
+两种字体均本地加载，不依赖在线字体服务；字体与许可在 `voice-assistant/app/static/fonts/`，安装包保留对应 OFL 文件。中文由系统字体回退显示。

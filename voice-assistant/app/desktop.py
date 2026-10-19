@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         import webview
         controls=WindowControls()
         window = webview.create_window(WEBVIEW_TITLE, url,
-            width=1080, height=780, resizable=False, frameless=True, easy_drag=False,
+            width=1180, height=820, min_size=(900, 650), resizable=True, frameless=True, easy_drag=False,
             shadow=False, js_api=controls, background_color="#FFFFFF")
         controls._window=window
         if args.window_smoke_test:

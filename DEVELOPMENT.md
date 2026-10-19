@@ -40,6 +40,22 @@ Set-Location voice-assistant
 
 涉及窗口依赖和打包的改动，还应对实际打包后的 exe 使用 `--window-smoke-test --sim` 检查页面加载。无窗口的服务测试不能代替 WebView2 窗口启动检查。麦克风、方向盘和真实比赛问题也需要实际设备验证。
 
+## 浏览器界面回归
+
+Node.js 22 用于开发测试，发行版不需要 Node。仓库根目录执行 `npm ci`。Windows 默认使用本机 Microsoft Edge；其他环境执行 `npx playwright install chromium`，并将 `PLAYWRIGHT_BROWSER_CHANNEL` 设置为 `chromium`。
+
+先在 `voice-assistant/` 启动隔离服务，使用测试专用配置，禁用 AI、改车及播放：
+
+```powershell
+..\.venv\Scripts\python.exe -m app.server --config <测试配置.yaml> --sim --no-listen --port 8789
+```
+
+然后在仓库根目录执行 `npm run test:ui`。可通过 `LN_UI_URL` 指定地址，`LN_UI_OUT` 指定报告目录。测试模拟 API 写入，不会启动麦克风、调用收费 AI 或发送改车广播；预览请求使用 `play:false`。
+
+覆盖十个页面、表单标签、草稿跨页保留、分区保存、预览竞争、错误恢复、零值/缺失数据、轮胎掩码、抽屉键盘操作，以及 1440/1180/900/768/390/375px 和缩放布局。报告与截图默认保存在 `tmp/ui-qa-v1.4.5/`。测试夹具带明确模拟标记，不能代表真实比赛验收。
+
+v1.4.5 本次后端回归 539 项、浏览器回归 16 组通过。原生打包窗口仍须单独检查。
+
 ## 打包
 
 回到仓库根目录，修改 `voice-assistant/VERSION` 后构建便携发行目录：

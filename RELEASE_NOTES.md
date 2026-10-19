@@ -1,5 +1,13 @@
 ![Moondrop · Moondrop Gravity · Drag-On XT · Moondrip Racing](https://raw.githubusercontent.com/xxushengcchen/LittleNavigator/v1.4.1/assets/banner.png)
 
+## 🖥️ 小小领航员 v1.4.5 — 全新比赛工程台
+
+重做十个页面、分组导航、可调整原生窗口与窄屏抽屉。控制台集中显示最近回答、关键遥测和只读进站服务；AI 与进站控制分开设置。补上表单草稿、断线清空、错误恢复和预览竞争保护。
+
+合入无标点咨询边界、精确换胎/取消/整数加油读回、改车独立连接与 AI 过期数据检查。后端 539 项和浏览器 16 组回归通过；真实 ASR、外部 AI/TTS 与比赛后续由真实用户验证。
+
+[完整说明](docs/releases/v1.4.5.md) · [新版界面指南](docs/guide/v1.4.5-interface.md) · [下载安装](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.5)
+
 ## 🔧 小小领航员 v1.4.4 — 修复版
 
 **功能范围与 v1.4.3 相同，没有新增能力**；三项新功能（AI、语音合成、语音改车）仍然默认关闭。这一版修的是 v1.4.3 实测出的 10 个问题。

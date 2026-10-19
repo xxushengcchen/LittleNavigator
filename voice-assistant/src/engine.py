@@ -713,6 +713,9 @@ class Assistant:
             'relative_humidity':s.relative_humidity,'water_temp':s.water_temp,'oil_temp':s.oil_temp,
             'rpm':s.rpm,'gear':s.gear,'voltage':s.voltage,
             'pits_open':s.pits_open,'gap_estimated':s.gap_estimated,'tyre_history':s.tyre_history,
+            'pit_sv_flags':s.pit_sv_flags,'pit_sv_fuel':s.pit_sv_fuel,
+            'fast_repairs_available':s.fast_repairs_available,
+            'on_pit_road':s.on_pit_road,'in_pit_stall':s.in_pit_stall,
             "time_remain_s": s.time_remain_s,
         }
 

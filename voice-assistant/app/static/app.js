@@ -25,14 +25,8 @@
     return result;
   }
   function reportError(error) {
-    var notice = $("#ira-error");
-    if (!notice) {
-      notice = document.createElement("div"); notice.id = "ira-error"; notice.setAttribute("role", "alert");
-      notice.style.cssText = "position:fixed;bottom:18px;right:18px;max-width:480px;padding:14px 20px;background:#fff1f0;color:#a02020;z-index:9999;border:1px solid #d99;border-radius:8px";
-      notice.onclick = function () { notice.hidden = true; };
-      document.body.appendChild(notice);
-    }
-    notice.textContent = error.message || String(error); notice.hidden = false;
+    setText('[data-error-message]', error && error.message || String(error));
+    $('#ira-error').hidden = false;
   }
   window.addEventListener("unhandledrejection", function (event) { event.preventDefault(); reportError(event.reason); });
 
@@ -67,18 +61,6 @@
     });
   }
 
-  /* ---------- 样式补丁 ---------- */
-  var css = document.createElement("style");
-  css.textContent = [
-    ".ira-logrows .ira-logrow{cursor:default}",
-    ".ira-bad{color:#C0392B}", ".ira-good{color:#0E9F6E}",
-    ".ira-kvgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px 14px}",
-    ".ira-savehint{font-size:12px;color:#0E9F6E;margin-left:8px}",
-    ".ira-field .ira-btn{margin-top:4px}",
-    "i.ira-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none}",
-  ].join("");
-  document.head.appendChild(css);
-
   /* ---------- 分页切换 ---------- */
   var tabs = $$("[data-nav]");
   var panels = $$("[data-view-panel]");
@@ -89,9 +71,13 @@
       b.setAttribute("aria-selected", on ? "true" : "false");
     });
     panels.forEach(function (p) { p.hidden = p.getAttribute("data-view-panel") !== id; });
+    tabs.forEach(function (b) { if (b.dataset.nav === id) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); b.removeAttribute('aria-selected'); });
+    var wasOpen=document.body.classList.contains('nav-open');closeNav();if(wasOpen)$('#ira-main').focus({preventScroll:true});
+    if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+    $('#ira-main').scrollTop = 0;
     if (id === "log") loadLog();
     if (id === "stats") loadStats();
-    if (id === "model" || id === "asr" || id === "pack" || id === "route" || id === "ai") loadSettings();
+    if (id === "model" || id === "asr" || id === "pack" || id === "route" || id === "ai" || id === "pit") loadSettings();
   }
   tabs.forEach(function (b) {
     b.addEventListener("click", function () { showView(b.getAttribute("data-nav")); });
@@ -163,164 +149,69 @@
     else { busSet("car", "ok", "可执行"); }
   }
 
+  function formatTime(seconds, decimals) {
+    if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds)) || seconds < 0) return '—';
+    var minutes = Math.floor(seconds / 60), rest = (seconds % 60).toFixed(decimals || 0);
+    return minutes + ':' + rest.padStart(decimals ? decimals + 3 : 2, '0');
+  }
+  function renderPitServices(st) {
+    var t = st.telemetry || {}, flags = t.connected && Number.isInteger(t.pit_sv_flags) ? t.pit_sv_flags : null;
+    var key = JSON.stringify([flags, t.pit_sv_fuel, t.fast_repairs_available]);
+    $$('[data-pit-service]').forEach(function(host) {
+      if (host.dataset.key === key) return;
+      host.dataset.key = key;
+      var wheels = [['左前',1],['右前',2],['左后',4],['右后',8]];
+      host.innerHTML = '<div class="pit-diagram" aria-label="轮胎更换勾选状态">' + wheels.map(function(w,i) {
+        return '<div class="pit-wheel" data-on="'+(flags!==null && !!(flags&w[1]))+'"><span>'+w[0]+'</span><span>'+ (flags===null?'未读到':flags&w[1]?'已勾选':'不更换') +'</span></div>' + (i===1?'<svg class="pit-car" viewBox="0 0 66 138" fill="none" aria-hidden="true"><path d="M17 8 24 3h18l7 5 7 28v68l-7 27H17l-7-27V36Z" stroke="currentColor"/><path d="m17 37 7-15h18l7 15-4 20H21Zm4 45h24l4 25H17Z" stroke="currentColor"/><path d="M10 59h46M10 78h46M4 126h58" stroke="currentColor"/></svg>':'');
+      }).join('')+'</div><div class="pit-service-row"><span>加油目标</span><strong class="ira-num">'+(flags===null?'—':flags&16?fmt(t.pit_sv_fuel,' L',1):'不加油')+'</strong></div><div class="pit-service-row"><span>快速维修</span><strong>'+ (flags===null?'—':flags&64?'已勾选':'未勾选') +'</strong></div><div class="pit-service-row"><span>剩余快修</span><strong class="ira-num">'+(t.connected && t.fast_repairs_available!=null?(t.fast_repairs_available===255?'不限次数':t.fast_repairs_available+' 次'):'—')+'</strong></div>';
+    });
+  }
   function renderState(st) {
     renderBus(st);
-    var app = $("#ira-app");
-    var tele = st.telemetry || {};
-    var online = !!tele.connected;
-    document.body.classList.toggle('desktop-shell',!!st.desktop);
-    app.setAttribute("data-sim", online ? "online" : "offline");
-    var topRight = $(".ira-topright");
-    if (topRight) {
-      setText("[data-conn-label]", st.sim ? "模拟模式" : (online ? "已连接" : "未连接"), topRight);
-      setText("[data-ptt-label]", PTT_TEXT[st.ptt.state] || st.ptt.state, topRight);
-      $$("[data-conn-state]", topRight).forEach(function (el) { el.setAttribute("data-state", online ? "on" : "off"); });
-      $$("[data-ptt-state]", topRight).forEach(function (el) { el.setAttribute("data-state", st.ptt.state); });
+    var tele = st.telemetry || {}, ptt = st.ptt || {}, online = !!tele.connected;
+    document.body.classList.toggle('desktop-shell', !!st.desktop);
+    $('#ira-app').setAttribute('data-sim',online?'online':'offline');
+    $('#connection-lost').hidden = true;
+    setText('.ira-session', st.sim ? '模拟遥测 · 仅供测试' : online ? 'iRacing 已连接 · 第 ' + (tele.lap ?? '—') + ' 圈' : '等待 iRacing 连接');
+    setText('[data-ptt-label]',PTT_TEXT[ptt.state] || '待机');
+    setText('[data-dashboard-subtitle]',st.sim?'当前使用模拟数据，操作结果不代表真实比赛。':online?'遥测已连接，你的领航员已在工程台。':'打开 iRacing 后自动连接，先把说话键和耳机准备好。');
+    var notice = $('#connection-notice');
+    notice.hidden = online && !st.sim && !ptt.error;
+    notice.dataset.tone = ptt.error || st.sim ? 'warn' : 'neutral';
+    notice.textContent = ptt.error ? '语音输入未就绪：' + ptt.error : st.sim ? '模拟模式 · 以下读数仅用于功能与界面测试。' : '尚未读到游戏数据。你仍可配置语音、耳机和 AI，连接后自动更新。';
+    setText('[data-binding]',({'键盘 0xA3':'右 Ctrl','键盘 0xA2':'左 Ctrl','键盘 0xA1':'右 Shift'})[ptt.binding_label] || ptt.binding_label || '未绑定');
+    var listen = $('#dashboard-listen');
+    if(listen.dataset.networkFailed){delete listen.dataset.networkFailed;listen.disabled=false;}
+    if (!listen.disabled) listen.textContent = ptt.running ? '暂停监听' : '开启监听';
+    var rec = st.last, ans = $('.ira-answer');
+    if (rec && (rec.q || rec.trace)) {
+      var tr = rec.trace || {}, actionNames = {clear_tires:'已取消换胎',tyre:'已设置换胎',fuel:'已设置加油',clear_fr:'已取消快修',fast_repair:'已勾选快修',clear:'已清空进站服务',clear_fuel:'已取消加油',clear_ws:'已取消撕膜',tearoff:'已勾选撕膜'};
+      var a = rec.ai_text || rec.text || (rec.ok && rec.cc_action ? actionNames[rec.cc_action.kind] : '') || rec.reason || (tr.plan || []).map(function(p){return p.text || '';}).join('') || '本次没有可用回答。';
+      setText('.ira-q','“'+(rec.q || tr.text || '')+'”',ans);
+      setText('.ira-a',a,ans);
+      var state = $('[data-answer-status]');
+      state.textContent = rec.trace && rec.ok==null ? '仅预览' : rec.ok ? (rec.kind==='operation'?'操作已完成':'已回应') : '未能完成';
+      state.dataset.tone = rec.trace && rec.ok==null ? 'neutral' : rec.ok ? 'good' : 'bad';
+      var path = rec.kind==='operation'?'进站操作':rec.ai_source==='model'?'AI 模型':rec.ai_source==='learn'?'学习库':rec.ai_source==='refused'?'AI 未回答':'本地规则';
+      var latency = rec.ai_latency_ms != null ? 'AI 总耗时 '+fmt(rec.ai_latency_ms/1000,' s',2) : rec.first_audio_ms != null ? '开始播报 '+rec.first_audio_ms+' ms' : '';
+      $('[data-answer-meta]').innerHTML = '<span class="ira-badge">'+esc(path)+'</span><span class="ira-meta ira-num">'+esc(latency)+'</span><span class="ira-meta">'+esc(rec.ts || '')+'</span>';
     }
-
-    // 定稿稿里的演示开关：真实应用不需要
-    var simctl = $(".ira-simctl");
-    if (simctl) { simctl.style.display = "none"; }
-
-    // 顶部会话行与延迟
-    var session = $(".ira-session");
-    if (session) {
-      if (st.sim) {
-        session.textContent = "模拟模式 · 以下为测试数据";
-      } else if (online) {
-        var bits = [];
-        if (tele.lap) { bits.push("第 " + tele.lap + " 圈"); }
-        if (tele.laps_remain !== null && tele.laps_remain !== undefined) {
-          bits.push("剩 " + tele.laps_remain + " 圈");
-        }
-        session.textContent = bits.join(" · ") || "已连接";
-      } else {
-        session.textContent = st.sim ? "模拟遥测（未开游戏）" : "iRacing 未连接";
-      }
+    var tiles=$$('.ira-strip .ira-tile');
+    fillTile(tiles[0],'油量',online?fmt(tele.fuel_level,'',1):'—','L',online && tele.laps_of_fuel!=null?'预计可跑 '+fmt(tele.laps_of_fuel,' 圈',1):'等待完整圈油耗');
+    fillTile(tiles[1],'名次',online && tele.position!=null?'P'+tele.position:'—',online && tele.field_size!=null?'/ '+tele.field_size:'','当前全场名次');
+    fillTile(tiles[2],'后车差距',online?fmt(tele.gap_behind_s,'',1):'—','s',online && tele.gap_behind_s!=null?(tele.gap_estimated?'按位置估计':'时间间隔'):'尚无有效读数');
+    fillTile(tiles[3],'上一圈',online?formatTime(tele.lap_last,2):'—','','最近完成的一圈');
+    setText('[data-lap]',online && tele.lap!=null?tele.lap:'—');
+    setText('[data-remaining]',online?formatTime(tele.time_remain_s):'—');
+    setText('[data-track-state]',online?flagCn(tele.flags)+' · '+(tele.track_wetness==null?'干湿未知':tele.track_wetness>=3?'湿地':'干地'):'赛道状态未知');
+    setText('[data-snapshot-status]',online?(st.now || '已更新'):'尚无数据');
+    renderPitServices(st);
+    var foot=$('.ira-navfoot'), version=st.app && st.app.version || '—';
+    if (foot.dataset.version!==version) {
+      foot.dataset.version=version;
+      foot.innerHTML='<strong>小小领航员 <span class="ira-num">v'+esc(version)+'</span></strong><div class="credit">xushengchen · Moondrop-Dox Racing</div><img src="/static/partner-logos.png" alt="Moondrop 水月雨、Gravity 陨月重工、Drag-On XT Racing Team 与 Moondrip Racing" loading="lazy">';
     }
-    var ms = null;
-    if (st.last && st.last.first_audio_ms !== undefined) { ms = st.last.first_audio_ms; }
-    else if (st.ptt && st.ptt.last && st.ptt.last.asr_ms) { ms = st.ptt.last.asr_ms; }
-    var topLat = $(".ira-topright .ira-num");
-    if (topLat) { topLat.textContent = ms === null ? "—" : (ms / 1000).toFixed(2); }
-
-    // 连接卡
-    var connCard = cardByLabel("连接");
-    if (connCard) {
-      var dot = $("[data-conn-state]", connCard);
-      if (dot) { dot.setAttribute("data-state", online ? "on" : "off"); dot.setAttribute("data-conn-state", online ? "on" : "off"); }
-      setText("[data-conn-label]", st.sim ? "模拟模式" : (online ? "iRacing 已连接" : "iRacing 未连接"), connCard);
-      setText(".ira-meta", (tele.source || "-") + " · " + (st.sim ? "模拟遥测" : "实时遥测"), connCard);
-    }
-
-    // PTT 卡
-    var pttCard = cardByLabel("按住说话（PTT）");
-    if (pttCard) {
-      var pd = $("[data-ptt-state]", pttCard);
-      if (pd) { pd.setAttribute("data-state", st.ptt.state); pd.setAttribute("data-ptt-state", st.ptt.state); }
-      setText("[data-ptt-label]", PTT_TEXT[st.ptt.state] || st.ptt.state, pttCard);
-      var meta = $(".ira-meta", pttCard);
-      if (meta) {
-        meta.textContent = st.ptt.running
-          ? st.ptt.binding_label
-          : (st.ptt.error ? "监听未启动" : st.ptt.binding_label + " · 未启动");
-      }
-    }
-
-    // 上次回应
-    var latCard = cardByLabel("上次回应");
-    if (latCard) {
-      setText(".ira-num", ms === null ? "—" : (ms / 1000).toFixed(2), latCard);
-      setText(".ira-meta", ms === null ? "还没有问答" : "回应处理 " + ms + " ms · 目标 <300 ms", latCard);
-    }
-
-    // 最后一条问答
-    var ans = $(".ira-answer");
-    if (ans) {
-      var rec = st.last;
-      if (rec && (rec.q || rec.trace)) {
-        var tr = rec.trace || null;
-        var q = rec.q || (tr && tr.text) || "—";
-        var a = rec.text || (tr && tr.plan && tr.plan.map(function (p) { return p.text || ""; }).join("")) || "";
-        // AI 回答优先显示：它是新句子，规则层没有对应录音
-        if (rec.ai_text) { a = rec.ai_text; }
-        if (!a && !tr && rec.ok === false) { a = "（" + (rec.reason || "没听明白，请再说一次") + "）"; }
-        if (!a && tr && !tr.intent) { a = "（没听明白，已经拒绝——绝不猜）"; }
-        else if (!a && tr && !tr.decision.ok) { a = "（听懂了，但答不了：" + tr.decision.reason + "）"; }
-        setText(".ira-q", "「" + q + "」", ans);
-        setText(".ira-a", a || "（没有播报）", ans);
-        var row = $(".ira-metarow", ans);
-        if (row) {
-          var layer = (tr && tr.layer) || rec.layer || (rec.intent ? "phrase" : "refuse");
-          var badgeCls = layer === "phrase" ? "l1" : (layer === "l1_keyword" ? "l2" : "l3");
-          var planIds = (rec.plan || (tr && tr.decision.plan) || []).join(" + ") || "—";
-          if (rec.ai_source) { layer = rec.ai_source === "learn" ? "学习库" : "AI"; badgeCls = "l3"; }
-          row.innerHTML = badge(badgeCls, layer) +
-            '<span class="ira-num ira-meta">' + (rec.first_audio_ms !== undefined
-              ? (rec.first_audio_ms / 1000).toFixed(2) + " s" : "—") + "</span>" +
-            '<span class="ira-meta">' + (rec.ts || st.now) + "</span>" +
-            '<span class="ira-meta">' + esc(planIds) + "</span>";
-        }
-      }
-    }
-
-    // 遥测条
-    var tiles = $$(".ira-strip .ira-tile");
-    if (tiles.length === 4) {
-      fillTile(tiles[0], "油量",
-        fmt(tele.fuel_level, "", 1), "L",
-        tele.laps_of_fuel === null || tele.laps_of_fuel === undefined
-          ? "算不出每圈油耗" : "够跑 " + fmt(tele.laps_of_fuel, " 圈", 1));
-      fillTile(tiles[1], "名次",
-        tele.position === null || tele.position === undefined ? "—" : "P" + tele.position,
-        tele.field_size ? "/ " + tele.field_size : "",
-        "");
-      fillTile(tiles[2], "落差",
-        tele.gap_behind_s === null || tele.gap_behind_s === undefined
-          ? "—" : fmt(tele.gap_behind_s, "", 1),
-        "秒 · 后车",
-        tele.gap_behind_s === null || tele.gap_behind_s === undefined
-          ? "对手数据读不到"
-          : (tele.gap_behind_trend < -0.05 ? "在追近" : "当前稳定"));
-      var wet = tele.track_wetness;
-      var track = wet === null || wet === undefined || wet === 0 ? "—" : (wet >= 3 ? "湿" : "干");
-      fillTile(tiles[3], "赛道", track, flagCn(tele.flags),
-        tele.incident_count === null || tele.incident_count === undefined
-          ? "" : "事故点 " + tele.incident_count);
-    }
-
-    // 页脚
-    var foot = $(".ira-navfoot");
-    var footerKey=JSON.stringify([st.app,st.pack.version,st.pack.msgIds,st.desktop,online]);
-    if (foot && foot.dataset.renderKey!==footerKey) {
-      foot.dataset.renderKey=footerKey;
-      var appVer = (st.app && st.app.version) || "—";
-      foot.innerHTML = [
-        "小小领航员 v" + esc(appVer),
-        "xushengchen from Moondrop-Dox Racing",
-        "语音包 v" + esc(st.pack.version || "?") + " · " +
-          (st.pack.msgIds || 0).toLocaleString() + " msgId",
-        online ? "" : "iRacing 未连接",
-      ].filter(Boolean).join("<br>");
-      foot.insertAdjacentHTML('beforeend','<div class="partner-logos" role="group" aria-label="合作品牌">' +
-        ['Moondrop 水月雨','Moondrop Gravity 陨月重工','Drag-On XT Racing Team','Moondrip Racing'].map(function(name){
-          return '<div class="partner-logo" role="img" aria-label="'+esc(name)+'" title="'+esc(name)+'"></div>';
-        }).join('')+'</div>');
-      if (st.desktop) {
-        var q = document.createElement("button");
-        q.type = "button";
-        q.className = "ira-btn";
-        q.style.marginTop = "10px";
-        q.textContent = "退出程序";
-        q.onclick = async function () {
-          q.disabled = true;
-          q.textContent = "正在退出…";
-          try { await api("/api/quit", {}); } catch (e) { /* 服务先关了也无所谓 */ }
-        };
-        foot.appendChild(q);
-      }
-    }
-    window.__state = st;
+    window.__state=st;
   }
 
   function fillTile(tile, label, value, unit, meta) {
@@ -369,7 +260,7 @@
                                                    : (r.asr_ms !== undefined ? r.asr_ms : null);
         return {
           time: (r.ts || "").slice(11) || r.ts || "",
-          q: r.q, a: r.text || (r.reason ? "（" + r.reason + "）" : ""),
+          q: r.q, a: r.ai_text || r.text || (r.reason ? "（" + r.reason + "）" : ""),
           path: path,
           ms: msRaw === null ? "" : (msRaw < 100 ? msRaw + " ms" : (msRaw / 1000).toFixed(2) + " s"),
         };
@@ -423,7 +314,7 @@
     // 行1：短语库
     var s1 = $("[data-dbg-l1-state]", rows[0]);
     var d1 = $("[data-dbg-l1-detail]", rows[0]);
-    s1.textContent = phrase.intent ? "✓ 命中 " + phrase.intent : "✗ 拒绝";
+    s1.textContent = phrase.intent ? "命中 " + phrase.intent : "未命中";
     s1.setAttribute("data-state", phrase.intent ? "hit" : "miss");
     d1.textContent = phrase.intent
       ? "短语「" + phrase.phrase + "」得分 " + phrase.score + "（阈值 " + phrase.accept + "，领先 " + phrase.margin + "）"
@@ -436,7 +327,7 @@
       s2.setAttribute("data-state", "skip");
       d2.textContent = "短语库说话算数；关键词兜底只在她拿不准时才上";
     } else if (tr.l1 && tr.l1.hit) {
-      s2.textContent = "✓ 兜底命中 " + tr.l1.intent;
+      s2.textContent = "关键词命中 " + tr.l1.intent;
       s2.setAttribute("data-state", "hit");
       d2.textContent = tr.l1.why;
     } else if (tr.strict) {
@@ -444,7 +335,7 @@
       s2.setAttribute("data-state", "skip");
       d2.textContent = "对不上短语库就直接拒绝，不猜";
     } else {
-      s2.textContent = tr.l1 ? "✗ 未命中" : "— 关闭";
+      s2.textContent = tr.l1 ? "未命中" : "— 关闭";
       s2.setAttribute("data-state", tr.l1 ? "miss" : "skip");
       d2.textContent = tr.l1 ? "关键词一个都没中" : "config 里关掉了关键词兜底";
     }
@@ -459,10 +350,10 @@
       s3.textContent = "— 未进入路由"; s3.setAttribute("data-state", "skip");
       d3.textContent = "先要有意图才能查遥测";
     } else if (tr.decision.ok) {
-      s3.textContent = "✓ 可以回答"; s3.setAttribute("data-state", "hit");
+      s3.textContent = "可以回答"; s3.setAttribute("data-state", "hit");
       d3.textContent = tr.decision.reason;
     } else {
-      s3.textContent = "✗ 答不了"; s3.setAttribute("data-state", "miss");
+      s3.textContent = "答不了"; s3.setAttribute("data-state", "miss");
       d3.textContent = tr.decision.reason;
     }
     // 判定结果
@@ -513,14 +404,22 @@
     };
   }
 
+  var previewRequest = 0;
   async function runQuery(text) {
+    var request=++previewRequest, button=$('#ira-send');
+    $('#ira-q').value=text;
+    $('[data-audition]').disabled=true;
+    button.disabled=true;button.textContent='解析中…';
     try {
       var tr = await api("/api/ask", { text: text, play: false });
+      if(request!==previewRequest || $('#ira-q').value!==text)return;
       renderTrace(tr);
       var input = $("#ira-q");
       if (input) { input.value = text; }
     } catch (e) {
       reportError(e);
+    } finally {
+      if(request===previewRequest){button.disabled=false;button.textContent='预览解析';}
     }
   }
 
@@ -528,6 +427,7 @@
     var form = $("#ira-qform");
     var send = $("#ira-send");
     var input = $("#ira-q");
+    input.addEventListener('input',function(){previewRequest++;send.disabled=false;send.textContent='预览解析';$('[data-audition]').disabled=true;setText('[data-dbg-note]','文字已更改，请重新预览后再执行。');});
     if (form) { form.addEventListener("submit", function (e) { e.preventDefault(); runQuery(input.value); }); }
     if (send) { send.addEventListener("click", function () { runQuery(input.value); }); }
     $$("[data-q]").forEach(function (b) {
@@ -544,8 +444,8 @@
     var buckets = s.buckets || [0, 0, 0, 0];
     var maxB = Math.max(1, Math.max.apply(null, buckets));
     var totalLayers = Object.keys(s.layers || {}).reduce(function (a, k) { return a + s.layers[k]; }, 0) || 1;
-    var cls = { phrase: "#0E9F6E", l1_keyword: "#4A9BE8", refuse: "#6E7F97",
-                "?": "#B9C4D2" };
+    var cls = { phrase: "var(--accent)", l1_keyword: "var(--muted)", refuse: "var(--faint)",
+                "?": "var(--control)" };
     var label = { phrase: "短语库", l1_keyword: "关键词兜底", refuse: "拒绝",
                   "?": "旧记录（未分类）" };
 
@@ -561,18 +461,15 @@
     var bars = $(".ira-bars", panel);
     if (bars) {
       var names = ["≤ 0.25 s", "0.25–0.35", "0.35–0.7", "> 0.7 s"];
-      bars.innerHTML = buckets.map(function (v, i) {
-        return '<div class="ira-bar"><span class="ira-barval ira-num">' + v + "</span>" +
-          '<div class="ira-barfill" style="height:' + Math.round(v / maxB * 100) + '%"></div>' +
-          '<span class="ira-barlabel">' + names[i] + "</span></div>";
-      }).join("");
+      var step=Math.max(1,Math.ceil(maxB/4));
+      Charts.bars(bars,{labels:names,values:buckets,yTicks:[0,step,step*2,step*3,step*4,step*5],height:190,format:Charts.fmt.int});
     }
     var share = $(".ira-share", panel);
     if (share) {
       share.innerHTML = Object.keys(s.layers || {}).map(function (k) {
         return '<span style="width:' + (s.layers[k] / totalLayers * 100) + "%;background:" +
           (cls[k] || "#1A6FE0") + '"></span>';
-      }).join("") || '<span style="width:100%;background:#6E7F97"></span>';
+      }).join("") || '<span class="ira-meta">暂无分类记录</span>';
     }
     var legend = $(".ira-legend", panel);
     if (legend) {
@@ -607,20 +504,27 @@
 
   /* ---------- 设置页 ---------- */
   async function loadSettings() {
+    var id = $("[data-nav][aria-current=page]").dataset.nav;
     var st = window.__state || await api("/api/state");
     var dev;
     try { dev = await api("/api/devices"); }
     catch (e) { dev = {inputs: [], outputs: []}; reportError(e); }
     window.__devices = dev;
-    renderIntentPanel(st, dev);
-    renderAsrPanel(st, dev);
-    renderPackPanel(st);
-    renderRoutePanel(st, dev);
-    renderAiPanel(st);
+    if ($('[data-nav][aria-current=page]').dataset.nav!==id) return;
+    var priorPanel=$('[data-view-panel="'+id+'"]'),openSections=$$('details',priorPanel).map(function(d){return d.open;});
+    var renders={model:renderIntentPanel,asr:renderAsrPanel,pack:renderPackPanel,route:renderRoutePanel,ai:renderAiPanel,pit:renderCarPanel};
+    if (renders[id]) renders[id](st,dev);
+    var current=$('[data-view-panel="'+id+'"]');
+    $$('details',current).forEach(function(d,i){if(i<openSections.length)d.open=openSections[i];});
+    Object.keys(pendingDrafts).forEach(function(key){var el=current.querySelector('#'+key);if(el)el.value=pendingDrafts[key];});
+    if (current.querySelector('input,select') && Object.keys(pendingDrafts).some(function(key){return !!current.querySelector('#'+key);})) setText('[data-savehint]','有未保存的更改',current);
+    paintIcons(current);
   }
 
   async function save(patch, hintEl, note) {
     var r = await api("/api/config", { patch: patch });
+    var ids=patch.car_control?['ira-cc-on','ira-cc-verify']:patch.ai && patch.ai.tts?['ira-tts-adapter','ira-tts-url','ira-tts-speaker','ira-tts-key']:patch.ai && !patch.ai.analysis_key?['ira-ai-on','ira-ai-mode','ira-ai-preset','ira-ai-url','ira-ai-model','ira-ai-key']:[];
+    ids.forEach(function(id){delete pendingDrafts[id];});
     if (hintEl) {
       hintEl.textContent = "已保存" + (r.restart_hint && r.restart_hint.length
         ? "（" + r.restart_hint.join("、") + " 重启后生效）" : "（已生效）");
@@ -630,9 +534,13 @@
     renderState(st);
   }
 
+  var fieldSequence=0;
   function field(label, inner, hint) {
-    return '<div class="ira-field"><label>' + label + "</label>" + inner +
-      (hint ? '<span class="ira-hint">' + hint + "</span>" : "") + "</div>";
+    var match=inner.match(/\bid=["']([^"']+)/), id=match && match[1];
+    if (!id && /<(input|select)/.test(inner)) { id='ira-field-'+(++fieldSequence); inner=inner.replace(/<(input|select)/,'<$1 id="'+id+'"'); }
+    var hintId=id ? id+'-hint' : '';
+    if (hint && id) inner=inner.replace(/<(input|select)/,'<$1 aria-describedby="'+hintId+'"');
+    return '<div class="ira-field"><label'+(id?' for="'+id+'"':'')+'>'+label+'</label>'+inner+(hint?'<span class="ira-hint"'+(hintId?' id="'+hintId+'"':'')+'>'+hint+'</span>':'')+'</div>';
   }
 
   function renderIntentPanel(st, dev) {
@@ -778,104 +686,38 @@
     var statusText = !a.enabled ? "未启用"
       : (s.configured ? (s.available ? "就绪" : "已暂停（连续超时）") : "未配置 API");
 
-    var ccCfg = (st.config && st.config.car_control) || {};
-    var ccSt = st.car_control || {};
-    var ccState = !ccCfg.enabled ? "未启用"
-      : (ccSt.available ? "就绪" : "未连接游戏 / 未装 pyirsdk");
-
-    card.innerHTML =
-      "<span class='ira-label'>语音改车（直接操作游戏）</span>" +
-      "<div class='ira-form'>" +
-      field("允许语音改车",
-        '<select class="ira-select" id="ira-cc-on">' +
-        '<option value="1"' + (ccCfg.enabled ? " selected" : "") + ">开</option>" +
-        '<option value="0"' + (ccCfg.enabled ? "" : " selected") + ">关</option></select>",
-        "当前：" + ccState + "。打开后说「换胎」「加二十升油」会真的改进站设置。") +
-      field("发送后回读确认",
-        '<select class="ira-select" id="ira-cc-verify">' +
-        '<option value="1"' + (ccCfg.verify ? " selected" : "") + ">开</option>" +
-        '<option value="0"' + (ccCfg.verify ? "" : " selected") + ">关</option></select>",
-        "回读 PitSvFlags 确认游戏真的受理了；关掉会快一点，但分不清「发了」和「生效了」") +
-      "</div>" +
-      "<div class='ira-hint' style='margin-top:8px'>" +
-      "能做：换胎（按角或四条）、加油（可带升数）、快修、撕膜、清空进站。<br>" +
-      "做不到：轮胎配方（软/硬）—— 广播消息里没有这个操作，只能在黑框里选；" +
-      "刹车平衡 / TC / ABS / 雨刷 / 方向盘 —— 车内设置，广播 API 管不到。<br>" +
-      "⚠ 语音会听错。建议先在练习赛里试熟再上正式比赛。" +
-      "</div>" +
-      "<div class='ira-row' style='margin-top:10px'>" +
-      "<button class='ira-btn' id='ira-cc-save'>保存</button>" +
-      "<span class='ira-savehint' id='ira-cc-out'></span></div>" +
-      "<hr class='ira-hr'>" +
-      '<div class="ira-form">' +
-      field("启用 AI 分析",
-        '<select class="ira-select" id="ira-ai-on">' +
-        '<option value="1"' + (a.enabled ? " selected" : "") + ">开</option>" +
-        '<option value="0"' + (a.enabled ? "" : " selected") + ">关</option></select>",
-        "当前状态：" + statusText + "。关掉后行为与之前完全一致。") +
-      field("档位",
-        '<select class="ira-select" id="ira-ai-mode">' +
-        '<option value="whitelist"' + (a.mode === "whitelist" ? " selected" : "") + ">C · 白名单（推荐）</option>" +
-        '<option value="analysis_key"' + (a.mode === "analysis_key" ? " selected" : "") + ">B · 按住分析键才用</option>" +
-        '<option value="full"' + (a.mode === "full" ? " selected" : "") + ">A · 规则答不上就接管</option>" +
-        "</select>",
-        "C 最省：只对分析型问题与白名单意图调模型。A 每个问题都可能慢 2 秒。") +
-      "</div><hr class='ira-hr'>" +
-      "<span class='ira-label'>模型接入</span>" +
-      "<div class='ira-form'>" +
-      field("预设", '<select class="ira-select" id="ira-ai-preset">' +
-        aiPresetOptions(a.provider) + "</select>",
-        "只是帮你填地址，填完可以改") +
-      field("接口地址", '<input class="ira-input" id="ira-ai-url" value="' +
-        esc(a.base_url || "") + '" placeholder="https://api.deepseek.com">',
-        "按 OpenAI Chat Completions 协议调用") +
-      field("模型名", '<input class="ira-input" id="ira-ai-model" value="' +
-        esc(a.model || "") + '" placeholder="deepseek-chat">', "") +
-      field("API Key", '<input class="ira-input" id="ira-ai-key" type="password" placeholder="' +
-        (a.api_key_set ? "已配置，留空则不修改" : "粘贴你的 key") + '">',
-        "明文存在 config.local.yaml，不进安装包、不进日志。也可用环境变量 LITTLE_NAVIGATOR_AI_KEY") +
-      "</div>" +
-      "<div class='ira-row' style='margin-top:10px'>" +
-      "<button class='ira-btn' id='ira-ai-save'>保存</button>" +
-      "<button class='ira-btn ghost' id='ira-ai-test'>测试连接</button>" +
-      "<span class='ira-savehint' id='ira-ai-testout'></span></div>" +
-      "<hr class='ira-hr'>" +
-      "<span class='ira-label'>分析键（B 档用）</span>" +
-      "<div class='ira-form'>" +
-      field("当前绑定",
-        '<input class="ira-input" id="ira-ai-keyname" readonly value="' +
-        (a.analysis_key_bound ? "已绑定" : "未绑定") + '">',
-        "按住它提问会直接走 AI；与 PTT 是两套按键") +
-      "</div>" +
-      "<div class='ira-row'><button class='ira-btn ghost' id='ira-ai-keycap'>采集按键</button>" +
-      "<span class='ira-savehint' id='ira-ai-keyout'></span></div>" +
-      "<hr class='ira-hr'>" +
-      "<span class='ira-label'>语音合成（可选）</span>" +
-      "<div class='ira-form'>" +
-      field("适配器",
-        '<select class="ira-select" id="ira-tts-adapter">' +
-        '<option value="off"' + (tts.adapter === "off" ? " selected" : "") + ">关闭（只出文字）</option>" +
-        '<option value="doubao"' + (tts.adapter === "doubao" ? " selected" : "") + ">豆包</option>" +
-        '<option value="openai"' + (tts.adapter === "openai" ? " selected" : "") + ">OpenAI 兼容</option>" +
-        "</select>",
-        "不配也能用：AI 回答显示在屏幕上") +
-      field("地址", '<input class="ira-input" id="ira-tts-url" value="' +
-        esc(tts.base_url || "") + '" placeholder="OpenAI 兼容才需要">', "") +
-      field("音色 / speaker", '<input class="ira-input" id="ira-tts-speaker" value="' +
-        esc(tts.speaker || tts.voice || "") + '" placeholder="豆包填音色 ID，OpenAI 填 voice">', "") +
-      field("API Key", '<input class="ira-input" id="ira-tts-key" type="password" placeholder="' +
-        (tts.api_key_set ? "已配置，留空则不修改" : "粘贴 TTS 的 key") + '">', "") +
-      "</div>" +
-      "<div class='ira-row' style='margin-top:10px'>" +
-      "<button class='ira-btn' id='ira-tts-save'>保存</button>" +
-      "<button class='ira-btn ghost' id='ira-tts-test'>试听</button>" +
-      "<span class='ira-savehint' id='ira-tts-out'></span></div>" +
-      "<hr class='ira-hr'>" +
-      "<div class='ira-row'><button class='ira-btn ghost' id='ira-learn-clear'>清空学习库</button>" +
-      "<span class='ira-savehint' id='ira-learn-out'></span></div>";
+    card.innerHTML='<h2>模型接入</h2><div class="ira-form ai-form-grid">'+
+      field('启用 AI 分析','<select class="ira-select" id="ira-ai-on"><option value="0"'+(!a.enabled?' selected':'')+'>关闭</option><option value="1"'+(a.enabled?' selected':'')+'>开启</option></select>','当前状态：'+statusText)+
+      field('响应方式','<select class="ira-select" id="ira-ai-mode"><option value="whitelist"'+(a.mode==='whitelist'?' selected':'')+'>白名单 · 推荐</option><option value="analysis_key"'+(a.mode==='analysis_key'?' selected':'')+'>分析键触发</option><option value="full"'+(a.mode==='full'?' selected':'')+'>规则答不上就接管</option></select>','分析问题交给模型，日常事实查询优先使用本地规则。')+
+      field('服务预设','<select class="ira-select" id="ira-ai-preset">'+aiPresetOptions(a.provider)+'</select>','选择服务商后可继续修改地址和模型名。')+
+      field('模型名','<input class="ira-input" id="ira-ai-model" value="'+esc(a.model || '')+'" placeholder="服务商提供的模型名">','与接口服务中开放的名称一致。')+
+      field('接口地址','<input class="ira-input" id="ira-ai-url" value="'+esc(a.base_url || '')+'" placeholder="https://api.deepseek.com">','使用兼容 Chat Completions 的接口。')+
+      field('API Key','<input class="ira-input" id="ira-ai-key" type="password" autocomplete="off" placeholder="'+(a.api_key_set?'已配置，留空不修改':'粘贴你的密钥')+'">','密钥仅保存在本机，不随安装包发布。')+
+      '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" id="ira-ai-save" type="button">保存模型设置</button><button class="ira-btn" id="ira-ai-test" type="button">测试连接</button><span class="ira-savehint" id="ira-ai-testout" role="status"></span></div>'+
+      '<details class="settings-disclosure"'+(tts.adapter && tts.adapter!=='off'?' open':'')+'><summary>语音合成<span>让 AI 回答通过耳机播放</span></summary><div class="ira-form ai-form-grid">'+
+      field('合成服务','<select class="ira-select" id="ira-tts-adapter"><option value="off"'+(tts.adapter==='off'?' selected':'')+'>关闭 · 仅文字</option><option value="doubao"'+(tts.adapter==='doubao'?' selected':'')+'>豆包</option><option value="openai"'+(tts.adapter==='openai'?' selected':'')+'>OpenAI 兼容</option></select>','本地规则的语音包播报不受此开关影响。')+
+      field('音色','<input class="ira-input" id="ira-tts-speaker" value="'+esc(tts.speaker || tts.voice || '')+'" placeholder="speaker 或 voice">','填写语音服务支持的音色名称。')+
+      field('服务地址','<input class="ira-input" id="ira-tts-url" value="'+esc(tts.base_url || '')+'" placeholder="OpenAI 兼容服务才需要">','豆包使用内置服务地址。')+
+      field('语音 API Key','<input class="ira-input" id="ira-tts-key" type="password" autocomplete="off" placeholder="'+(tts.api_key_set?'已配置，留空不修改':'粘贴语音服务密钥')+'">','与模型密钥分别保存。')+
+      '</div><div class="ira-row settings-actions"><button class="ira-btn" id="ira-tts-save" type="button">保存语音合成</button><button class="ira-btn" id="ira-tts-test" type="button">试听</button><span class="ira-savehint" id="ira-tts-out" role="status"></span></div></details>'+
+      '<details class="settings-disclosure"><summary>分析键绑定<span>仅按键触发模式需要</span></summary><div class="ira-form">'+
+      field('当前绑定','<input class="ira-input" id="ira-ai-keyname" readonly value="'+(a.analysis_key_bound?'已绑定':'未绑定')+'">','独立于普通 PTT。按住分析键提问时直接请求 AI。')+
+      '</div><div class="ira-row settings-actions"><button class="ira-btn" id="ira-ai-keycap" type="button">采集分析键</button><span class="ira-savehint" id="ira-ai-keyout" role="status"></span></div></details>'+
+      '<details class="settings-disclosure"><summary>学习库维护<span>删除已保存的问答</span></summary><p class="ira-hint">清空后会失去已确认的知识和条件模板。此操作不会删除模型配置。</p><div class="ira-row settings-actions"><button class="ira-btn danger-button" id="ira-learn-clear" type="button">清空学习库</button><span class="ira-savehint" id="ira-learn-out" role="status"></span></div></details>';
 
     bindAiPanel(panel, hint);
     renderAiReview();
+  }
+
+  function renderCarPanel(st) {
+    var panel=$('[data-view-panel="pit"]'), c=st.config.car_control || {};
+    $('.ira-card',panel).innerHTML='<h2>语音进站操作</h2><div class="ira-form" style="margin-top:24px">'+
+      field('允许语音改车','<select class="ira-select" id="ira-cc-on"><option value="0"'+(!c.enabled?' selected':'')+'>关闭</option><option value="1"'+(c.enabled?' selected':'')+'>开启</option></select>','开启后，明确的换胎、加油、快修指令会更改游戏中的进站服务。')+
+      field('执行后确认','<select class="ira-select" id="ira-cc-verify"><option value="1"'+(c.verify?' selected':'')+'>读取游戏状态确认（推荐）</option><option value="0"'+(!c.verify?' selected':'')+'>只检查发送结果</option></select>','确认换胎范围、服务勾选和加油目标。读不到结果时不会报告执行成功。')+
+      '</div><div class="ira-row" style="margin-top:24px"><button class="ira-btn ira-btn-primary" type="button" id="ira-cc-save">保存进站设置</button></div><hr class="ira-hr"><div class="pit-details-grid"><section><h2>游戏中的服务勾选</h2><div class="pit-settings-preview" data-pit-service></div></section><section><h2>常用进站指令</h2><p class="support-copy">'+
+      '<strong>可以说</strong>　帮我取消换胎 · 只换左侧轮胎 · 加10升油 · 取消快修 · 勾上快修<br>轮胎配方、刹车平衡、TC、ABS 和雨刷需在游戏中设置。加油目前只支持整数升数。<br>语音可能识别错误，请先在练习中确认。</p></section></div>';
+    $('#ira-cc-save',panel).onclick=async function(){var b=this;b.disabled=true;try{await save({car_control:{enabled:$('#ira-cc-on').value==='1',verify:$('#ira-cc-verify').value==='1'}},$('[data-savehint]',panel));await loadSettings();}finally{b.disabled=false;}};
+    renderPitServices(st);
   }
 
   function aiPatchFromPanel(panel) {
@@ -903,20 +745,6 @@
   }
 
   function bindAiPanel(panel, hint) {
-    var ccSave = $("#ira-cc-save", panel);
-    if (ccSave) {
-      ccSave.addEventListener("click", async function () {
-        var out = $("#ira-cc-out", panel);
-        try {
-          await api("/api/config", { patch: { car_control: {
-            enabled: $("#ira-cc-on", panel).value === "1",
-            verify: $("#ira-cc-verify", panel).value === "1"
-          } } });
-          out.textContent = "已保存";
-          await loadSettings();
-        } catch (e) { out.textContent = "失败：" + e.message; }
-      });
-    }
     var preset = $("#ira-ai-preset", panel);
     if (preset) {
       preset.addEventListener("change", function () {
@@ -1103,8 +931,8 @@
       "<span class='ira-arrow'>→</span><span class='ira-node'>片段拼装</span>" +
       "<span class='ira-arrow'>→</span><span class='ira-node ok'>扬声器</span></div>" +
       "<hr class='ira-hr'><div class='ira-switchrow'>" +
-      "<input class='ira-switch' type='checkbox' checked disabled>" +
-      "<label><span class='ira-swtitle'>播放时自动静麦</span>" +
+      "<input class='ira-switch' id='ira-auto-mute' type='checkbox' checked disabled>" +
+      "<label for='ira-auto-mute'><span class='ira-swtitle'>播放时自动静麦</span>" +
       "<span class='ira-hint'>固定开启：不按 PTT 不开麦，播报期间按键忽略 —— 这条不开就会自己问自己答</span></label></div>";
 
     $("#ira-outdev2", panel).onchange = function () {
@@ -1117,12 +945,26 @@
   }
 
   /* ---------- 启动 ---------- */
+  var pendingDrafts={};
+  $('#ira-main').addEventListener('input',function(event){var el=event.target,panel=el.closest('[data-view-panel]');if(el.id && panel && ['ai','pit'].includes(panel.dataset.viewPanel) && !el.readOnly){pendingDrafts[el.id]=el.value;setText('[data-savehint]','有未保存的更改',panel);}});
+  function closeNav(){document.body.classList.remove('nav-open');$('#nav-toggle').setAttribute('aria-expanded','false');$('#nav-toggle').setAttribute('aria-label','打开导航');$('#ira-navigation').inert=matchMedia('(max-width:800px)').matches;}
+  $('#nav-toggle').onclick=function(){var open=!document.body.classList.contains('nav-open');document.body.classList.toggle('nav-open',open);this.setAttribute('aria-expanded',String(open));this.setAttribute('aria-label',open?'关闭导航':'打开导航');$('#nav-scrim').hidden=!open;$('#ira-navigation').inert=!open;if(open)tabs[0].focus();};
+  matchMedia('(max-width:800px)').addEventListener('change',function(e){$('#ira-navigation').inert=e.matches && !document.body.classList.contains('nav-open');});
+  $('#nav-scrim').onclick=closeNav;
+  document.addEventListener('keydown',function(e){if(e.key==='Escape' && document.body.classList.contains('nav-open')){closeNav();$('#nav-toggle').focus();}});
+  document.addEventListener('keydown',function(e){if(e.key==='Tab' && document.body.classList.contains('nav-open')){var first=$('#nav-toggle'),last=tabs[tabs.length-1];if(e.shiftKey && document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first.focus();}}});
+  $$('[data-go]').forEach(function(b){b.onclick=function(){showView(b.dataset.go);};});
+  $('#dismiss-error').onclick=function(){$('#ira-error').hidden=true;};
+  $('#retry-connection').onclick=function(){poll();};
+  $('#stats-refresh').onclick=function(){loadStats();};
+  $('#ira-export-logs').onclick=async function(){var b=this;b.disabled=true;b.textContent='导出中…';try{var r=await api('/api/export-logs');if(!r.ok)throw new Error(r.error||'导出失败');reportError({message:'日志已导出：'+r.path});}finally{b.disabled=false;b.textContent='导出日志';}};
+  $('#dashboard-listen').onclick=async function(){var b=this;b.disabled=true;b.textContent='处理中…';try{await api(window.__state && window.__state.ptt.running?'/api/ptt/stop':'/api/ptt/start',{});await poll();}finally{b.disabled=false;b.textContent=window.__state && window.__state.ptt.running?'暂停监听':'开启监听';}};
   bindDebug();
   $('#window-close').onclick=async function(){await api('/api/quit',{});};
   $('#window-minimize').onclick=function(){if(window.pywebview){window.pywebview.api.minimize();}};
   bindPttButtons();
   relabelFunnel();
-  showView("dash");
+  showView(tabs.some(function(b){return b.dataset.nav===location.hash.slice(1);})?location.hash.slice(1):"dash");
 
   function relabelFunnel() {
     var names = ["短语库", "关键词兜底", "遥测路由"];
@@ -1155,7 +997,7 @@
     try {
       renderState(await api("/api/state"));
       paintIcons(document);            /* 重绘后补画图标 */
-      if ($('#ira-tab-asr').getAttribute('aria-selected')==='true' && Date.now()-wheelRefreshAt>3000) {
+      if ($('#ira-tab-asr').getAttribute('aria-current')==='page' && Date.now()-wheelRefreshAt>3000) {
         wheelRefreshAt=Date.now();
         var wheels=await api('/api/wheels');
         var hint=$('#ira-wheel-devices');if(hint){hint.innerHTML=wheelDeviceText(wheels);}
@@ -1163,8 +1005,8 @@
     } catch (e) {
       var app = $("#ira-app");
       if (app) { app.setAttribute("data-sim", "offline"); }
-      var card = cardByLabel("连接");
-      if (card) { setText("[data-conn-label]", "服务未连接", card); }
+      $('#connection-lost').hidden=false;
+      if(window.__state){var stale=Object.assign({},window.__state,{telemetry:{connected:false},last:window.__state.last});renderState(stale);$('#connection-lost').hidden=false;setText('.ira-session','服务连接已断开');['link','mic','ai','car'].forEach(function(k){busSet(k,'off','状态未知');});$('#dashboard-listen').disabled=true;$('#dashboard-listen').dataset.networkFailed='1';}
     }
   }
   // 首屏把图标画出来（否则顶栏左上角是个空白方块）
