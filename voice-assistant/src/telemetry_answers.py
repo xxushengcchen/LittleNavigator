@@ -102,6 +102,9 @@ def answer(intent,s,q):
         if '湿度' in q:return numeric('HUMIDITY',s.relative_humidity*100 if valid(s.relative_humidity,0,1) else None,percent=True,hi=100)
         if any(w in q for w in ('雨大','雨量','降水','降雨强度')):return numeric('PRECIP',s.precip*100 if valid(s.precip,0,1) else None,percent=True,hi=100)
     if intent=='query_gap':
+        from .router import asks_lap_gap
+        if asks_lap_gap(q):
+            return refuse('没有可靠的前后车圈差数据，不能用秒差代替圈差')
         # 「前车/后车是第几名」会被 L1 关键词送进差距意图，这里先转派成名次回答
         if any(w in q for w in ('第几','名次','排名')) and any(w in q for w in ('前车','前車','后车','後車')):
             ahead=any(w in q for w in ('前车','前車'))

@@ -25,7 +25,7 @@ RULES: list[tuple[str, str, list[str]]] = [
     ("query_flags", "旗语", [r"旗", r"黄旗", r"绿旗", r"白旗", r"黑旗", r"蓝旗", r"判定"]),
     ("query_damage", "车损", [r"损伤", r"车损", r"撞", r"事故", r"车还好", r"incident",
                               r"扣分", r"伤"]),
-    ("query_pit", "进站", [r"进站", r"维修区", r"换胎", r"进pit", r"pit"]),
+    ("query_pit", "进站", [r"进站", r"维修", r"必修", r"选修", r"快修", r"换胎", r"进pit", r"pit"]),
     ("query_laptime", "圈速", [r"圈速", r"单圈", r"上圈", r"最快圈", r"慢了", r"快了",
                                r"丢时间", r"成绩"]),
     ("query_gap", "差距", [r"差距", r"多远", r"差[几多少\d]", r"[几多少]\s*秒",

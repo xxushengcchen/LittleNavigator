@@ -42,7 +42,13 @@ def _refuse(reason: str) -> Decision:
     return Decision([], reason)
 
 
-_NUM_WORDS = ("多少", "几", "多大", "是多少", "多远")
+_NUM_WORDS = ("多少", "几", "多大", "是多少", "多远", "多近")
+
+
+def asks_lap_gap(q: str) -> bool:
+    """圈差不能由秒差替代，也不能交给模型从秒差猜算。"""
+    import re
+    return bool(re.search(r'(?:差|落后|领先|相隔|套).{0,6}(?:几|多少|[0-9]+)圈|圈差|套圈', normalize(q)))
 
 
 def _asks_number(q: str) -> bool:

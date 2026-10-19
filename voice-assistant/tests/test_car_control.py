@@ -106,7 +106,7 @@ class SendTests(unittest.TestCase):
         c = controller()
         r = c.apply({"kind": "tyre", "corners": ["LF"]})
         self.assertTrue(r["ok"])
-        self.assertEqual(c.sdk.calls, [(cc.PIT_LF, 0)])
+        self.assertEqual(c.sdk.calls, [(cc.PIT_CLEAR_TIRES, 0), (cc.PIT_LF, 0)])
 
     def test_all_corners_sends_four_commands(self):
         c = controller()
@@ -180,11 +180,11 @@ class VerifyTests(unittest.TestCase):
         r = c.verify_applied({"kind": "fuel", "litres": 10}, lambda: None)
         self.assertIsNone(r["verified"])
 
-    def test_clear_has_no_expected_flags(self):
+    def test_clear_verifies_all_service_bits_are_off(self):
         c = controller()
         self.assertEqual(c.expected_flags({"kind": "clear"}), 0)
         r = c.verify_applied({"kind": "clear"}, lambda: 0)
-        self.assertIsNone(r["verified"])
+        self.assertTrue(r["verified"])
 
 
 class CommandMatchTests(unittest.TestCase):

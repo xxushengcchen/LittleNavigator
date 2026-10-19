@@ -27,7 +27,7 @@ class AiResult:
     def __init__(self, ok: bool = False, text: str = "", source: str = "refused",
                  reason: str = "", checks: dict | None = None,
                  latency_ms: int = 0, dynamic: bool = False,
-                 template: dict | None = None):
+                 template: dict | None = None, evidence: dict | None = None):
         self.ok = ok
         self.text = text
         self.source = source          # "learn" | "model" | "refused"
@@ -37,12 +37,14 @@ class AiResult:
         # 复盘入库用：动态型必须带合法模板，否则只能按知识型处理
         self.dynamic = dynamic
         self.template = template
+        self.evidence = evidence or {}
 
     def as_dict(self) -> dict:
         return {"ok": self.ok, "text": self.text, "source": self.source,
                 "reason": self.reason, "checks": self.checks,
                 "latency_ms": self.latency_ms,
-                "dynamic": self.dynamic, "template": self.template}
+                "dynamic": self.dynamic, "template": self.template,
+                "evidence": self.evidence}
 
 
 def should_engage(kind: QueryKind, mode: str, rule_ok: bool,
@@ -100,7 +102,7 @@ class AiPipeline:
     """
 
     def __init__(self, cfg: dict, store: LearnStore | None = None, out=None,
-                 player=None):
+                 player=None, snapshot_provider=None):
         import sys
 
         self.cfg = cfg
@@ -134,6 +136,7 @@ class AiPipeline:
         # 生成出来的音频得有地方去。原先 synth() 的返回值被直接丢弃，
         # 结果「TTS 成功」却什么都没播出来（实测确认）。
         self.player = player
+        self.snapshot_provider = snapshot_provider
 
     # ------------------------------------------------------------------
     @property
@@ -153,11 +156,45 @@ class AiPipeline:
                rule_ok: bool = False, intent: str | None = None) -> AiResult:
         """走完整条链。任何失败都返回 ok=False，不抛异常给引擎。"""
         started = time.monotonic()
+        captured = getattr(snap, 't', None)
+        initial_age = max(0., time.time() - captured) if isinstance(captured, (int, float)) else 0.
 
         def done(result: AiResult) -> AiResult:
             result.latency_ms = round((time.monotonic() - started) * 1000)
             self._log(question, kind, result)
             return result
+
+        def freshness() -> str | None:
+            age = initial_age + time.monotonic() - started
+            if age > const.AI_TOTAL_DEADLINE_HARD_MAX:
+                return '回答生成超过实时数据预算'
+            if self.snapshot_provider is None:
+                return None
+            try:
+                current = self.snapshot_provider()
+                if not current.connected:
+                    return '游戏已断开'
+                for field in ('session_id', 'on_pit_road', 'in_pit_stall',
+                              'fast_repairs_available', 'in_garage'):
+                    before, after = getattr(snap, field, None), getattr(current, field, None)
+                    if before is not None and after != before:
+                        return '比赛或进站状态已经变化'
+                before = getattr(snap, 'fuel_level', None)
+                after = getattr(current, 'fuel_level', None)
+                if isinstance(before, (int, float)) and isinstance(after, (int, float)) and after > before + .5:
+                    return '加油后油量已经变化'
+            except Exception:
+                return '无法确认最新遥测状态'
+            return None
+
+        def speak(result: AiResult) -> AiResult:
+            result.checks['pre_tts_data_age_s'] = round(initial_age + time.monotonic() - started, 3)
+            stale = freshness()
+            if stale:
+                self._expire(result, stale)
+            else:
+                self._maybe_speak(result.text, result, before_play=freshness)
+            return done(result)
 
         if not should_engage(kind, self.mode, rule_ok, intent, self.whitelist):
             return done(AiResult(reason="当前档位不接管这类问题"))
@@ -165,7 +202,7 @@ class AiPipeline:
         # 1) 学习库优先：模板能用当下数值重算，比固定答案可靠
         learned = self._from_learn(question, snap, laps, kind)
         if learned is not None:
-            return done(learned)
+            return speak(learned)
 
         # 2) 模型
         if self.client is None:
@@ -201,15 +238,14 @@ class AiPipeline:
                                            self.max_answer_chars)
         if not ok:
             return done(AiResult(reason="校验未通过：" + checks.get("reasons", ""),
-                                 checks=checks))
+                                 checks=checks, evidence={'answer': text, 'context': ctx}))
 
         template = payload.get("template")
         result = AiResult(
             ok=True, text=text, source="model", checks=checks,
             dynamic=bool(payload.get("dynamic")) and isinstance(template, dict),
             template=template if isinstance(template, dict) else None)
-        self._maybe_speak(text, result)
-        return done(result)
+        return speak(result)
 
     # ------------------------------------------------------------------
     def _from_learn(self, question: str, snap, laps: list[dict],
@@ -228,7 +264,18 @@ class AiPipeline:
             return None           # 填不出来就退回模型，不要播半句
         return AiResult(ok=True, text=filled, source="learn")
 
-    def _maybe_speak(self, text: str, result: AiResult) -> None:
+    def _expire(self, result: AiResult, reason: str) -> None:
+        result.ok = False
+        result.source = 'refused'
+        result.reason = reason
+        result.text = '数据已经变化，请重新提问。'
+        result.dynamic = False
+        result.template = None
+        result.checks = {**result.checks, 'freshness': 'expired'}
+        # 固定提示不引用遥测数值，不把过期回答或模板留给播放/学习路径。
+        self._maybe_speak(result.text, result)
+
+    def _maybe_speak(self, text: str, result: AiResult, before_play=None) -> None:
         """有 TTS 就合成并**播放**；失败只记一笔，文字照常返回。
 
         刻意捕获 `Exception` 而不只是 `TtsError`：TTS 是可选装饰，
@@ -237,8 +284,17 @@ class AiPipeline:
         """
         if self.tts is None:
             return
+        if self.player is not None and not getattr(self.player, "enabled", True):
+            result.checks = {**result.checks, "tts": "disabled"}
+            return
         try:
             audio = self.tts.synth(text)
+            # TTS 本身也可能耗时，必须在声音真正送出前再次检查。
+            if before_play is not None:
+                stale = before_play()
+                if stale:
+                    self._expire(result, stale)
+                    return
             # 实测问题：这里原先只检查「合成没报错」，把音频字节丢掉了，
             # 于是界面显示 tts: ok，实际一声没出。必须真的交给播放器。
             played = False

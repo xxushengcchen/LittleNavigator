@@ -669,6 +669,8 @@ query_gap:
   - gap_trend
   template: '{who}距你{sec}秒，{trend}'
   examples:
+  - 前车和我差几圈
+  - 后车和我差几圈
   - 后车多远
   - 后面那台车多远
   - 后车离我多远
@@ -1027,6 +1029,10 @@ query_laps:
   - SessionLapsRemainEx
   template: 还剩{laps}圈
   examples:
+  - 还剩多久
+  - 还剩多少时间
+  - 剩余时间多少
+  - 还有多少时间
   - 还剩几圈
   - 还有几圈
   - 剩几圈

@@ -451,7 +451,11 @@
     // 行3：遥测路由
     var s3 = $("[data-dbg-l3-state]", rows[2]);
     var d3 = $("[data-dbg-l3-detail]", rows[2]);
-    if (!tr.intent) {
+    if (tr.kind === "operation") {
+      s3.textContent = tr.playback ? "改车执行结果" : "改车指令（尚未执行）";
+      s3.setAttribute("data-state", tr.playback && !tr.playback.ok ? "miss" : "hit");
+      d3.textContent = tr.playback ? tr.playback.reason : (tr.note || "执行会更改进站设置");
+    } else if (!tr.intent) {
       s3.textContent = "— 未进入路由"; s3.setAttribute("data-state", "skip");
       d3.textContent = "先要有意图才能查遥测";
     } else if (tr.decision.ok) {
@@ -463,7 +467,8 @@
     }
     // 判定结果
     var badgeEl = $("[data-dbg-intent]", panel);
-    badgeEl.textContent = tr.intent ? tr.intent + " · " + (tr.layer || "") : "拒绝";
+    badgeEl.textContent = tr.kind === "operation" ? "改车 · " + ((tr.cc_action || {}).kind || "")
+      : tr.intent ? tr.intent + " · " + (tr.layer || "") : "拒绝";
     badgeEl.className = "ira-badge " + (tr.intent ? "l1" : "l3");
     setText("[data-dbg-totaltime]", "判定耗时 " + tr.intent_ms + " ms", panel);
 
@@ -491,20 +496,20 @@
     var plan = tr.plan || [];
     setText("[data-dbg-msgid]", plan.map(function (p) { return p.msgId; }).join(" + ") || "—", panel);
     setText("[data-dbg-file]", plan.map(function (p) { return p.file || "缺件"; }).join(" + ") || "—", panel);
-    var note = plan.length
+    var note = tr.playback && tr.playback.ai_text ? "AI 回答：" + tr.playback.ai_text : plan.length
       ? plan.map(function (p) {
           return p.msgId + "「" + (p.text || "缺件") + "」" + (p.variants ? " · " + p.variants + " 变体" : "");
         }).join("；")
       : "没有可播的内容";
     setText("[data-dbg-note]", note, panel);
     var audition = $("[data-audition]", panel);
-    audition.disabled = !plan.length;
-    audition.textContent = "试听（真播）";
+    audition.disabled = false;
+    audition.textContent = tr.kind === "operation" ? "执行并播报（更改进站设置）" : "问答并播报";
     audition.onclick = async function () {
       audition.disabled = true;
       audition.textContent = "播报中…";
-      try { await api("/api/ask", { text: tr.text, play: true }); }
-      finally { audition.disabled = false; audition.textContent = "试听（真播）"; }
+      try { renderTrace(await api("/api/ask", { text: tr.text, play: true })); }
+      finally { audition.disabled = false; audition.textContent = tr.kind === "operation" ? "执行并播报（更改进站设置）" : "问答并播报"; }
     };
   }
 

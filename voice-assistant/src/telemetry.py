@@ -154,6 +154,7 @@ class Snapshot:
     # 进站服务勾选位（PitSvFlags）。语音改车之后回读它做闭环验证：
     # 「已发送」不等于「已生效」，只有这个位真的变了才算数。
     pit_sv_flags: int | None = None
+    pit_sv_fuel: float | None = None
 
     # 派生量（由 DerivedTracker 填）
     fuel_per_lap: float | None = None
@@ -525,6 +526,7 @@ class IrsdkTelemetry:
             session_flags_known=get('SessionFlags') is not None,
             on_pit_road=get("OnPitRoad"), incident_count=get("PlayerCarMyIncidentCount"),
             pit_sv_flags=get("PitSvFlags"),
+            pit_sv_fuel=get("PitSvFuel"),
             relative_humidity=get('RelativeHumidity'),class_position=get('PlayerCarClassPosition'),
             lap_current=get('LapCurrentLapTime'),speed_kph=get('Speed')*3.6 if get('Speed') is not None else None,
             water_temp=get('WaterTemp'),oil_temp=get('OilTemp'),engine_warnings=get('EngineWarnings'),

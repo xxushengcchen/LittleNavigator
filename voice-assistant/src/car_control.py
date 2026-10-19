@@ -24,6 +24,8 @@
 from __future__ import annotations
 
 import time
+import threading
+import math
 
 # 广播消息：BroadcastMsg.pit_command
 _BROADCAST_PIT_COMMAND = 9
@@ -57,6 +59,7 @@ FUEL_MAX_L = 120.0
 
 _VERIFY_TIMEOUT_S = 1.0
 _VERIFY_POLL_S = 0.05
+_CONNECT_RETRY_S = 1.0
 
 
 class CarControlError(RuntimeError):
@@ -74,6 +77,10 @@ class CarController:
         self.verify = bool(cc.get("verify", True))
         self.out = out or sys.stdout
         self.sdk = sdk
+        self._owns_sdk = sdk is None
+        self._connection_lock = threading.RLock()
+        self._next_connect_at = 0.0
+        self._closed = False
         self._err: str | None = None
         if self.sdk is None and self.enabled:
             try:
@@ -85,14 +92,42 @@ class CarController:
     # ------------------------------------------------------------------
     @property
     def available(self) -> bool:
-        """能不能真的发指令。未启用 / 无 pyirsdk / 未连接都返回 False。"""
-        if not self.enabled or self.sdk is None:
-            return False
-        try:
-            return bool(getattr(self.sdk, "is_initialized", False)
-                        and getattr(self.sdk, "is_connected", False))
-        except Exception:      # noqa: BLE001
-            return False
+        """独立连接共享内存；重连只恢复连接，绝不重放操作。"""
+        with self._connection_lock:
+            if self._closed or not self.enabled or self.sdk is None:
+                return False
+            try:
+                if self.sdk.is_initialized and self.sdk.is_connected:
+                    self._err = None
+                    return True
+                now = time.monotonic()
+                if now < self._next_connect_at:
+                    return False
+                self._next_connect_at = now + _CONNECT_RETRY_S
+                startup = getattr(self.sdk, "startup", None)
+                if not callable(startup):
+                    return False
+                if self.sdk.is_initialized and self._owns_sdk:
+                    self.sdk.shutdown()
+                startup()
+                connected = bool(self.sdk.is_initialized and self.sdk.is_connected)
+                self._err = None if connected else "iRacing 尚未连接"
+                return connected
+            except Exception as exc:      # noqa: BLE001
+                self._err = f"iRacing 连接失败：{exc}"
+                return False
+
+    def close(self) -> None:
+        """只释放自己持有的连接；关闭后状态轮询不能再次拉起它。"""
+        with self._connection_lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._owns_sdk and self.sdk is not None:
+                try:
+                    self.sdk.shutdown()
+                except Exception:      # noqa: BLE001
+                    pass
 
     def status(self) -> dict:
         return {"enabled": self.enabled,
@@ -107,6 +142,8 @@ class CarController:
             raise CarControlError("改车功能未启用")
         if self.sdk is None:
             raise CarControlError(self._err or "pyirsdk 不可用")
+        if not self.available:
+            raise CarControlError(self._err or "未连接游戏，改车指令没有发出")
         try:
             # pyirsdk 的 pit_command(mode, var) 内部就是 BroadcastMsg.pit_command
             self.sdk.pit_command(mode, int(var))
@@ -154,13 +191,24 @@ class CarController:
                 self._send(PIT_CLEAR_FR)
                 sent.append(PIT_CLEAR_FR)
             elif kind == "tyre":
-                for corner in action.get("corners") or []:
+                corners = list(dict.fromkeys(action.get("corners") or []))
+                if not corners or any(corner not in _CORNER_CMD for corner in corners):
+                    raise CarControlError("没有有效的换胎角位")
+                # 勾选SDK命令只会追加，默认四胎已勾时必须先取消再选指定侧。
+                if set(corners) != set(_CORNER_CMD):
+                    self._send(PIT_CLEAR_TIRES)
+                    sent.append(PIT_CLEAR_TIRES)
+                for corner in corners:
                     pressure = int(action.get("pressure_kpa") or 0)
                     self._send(_CORNER_CMD[corner], pressure)
                     sent.append(_CORNER_CMD[corner])
             elif kind == "fuel":
                 litres = action.get("litres")
-                self._send(PIT_FUEL, int(round(litres)) if litres else 0)
+                if litres is not None and (not isinstance(litres, (int, float))
+                        or not math.isfinite(litres) or not float(litres).is_integer()
+                        or not FUEL_MIN_L <= litres <= FUEL_MAX_L):
+                    raise CarControlError("进站广播只支持 1–120 的整数升数，小数不会取整发送")
+                self._send(PIT_FUEL, int(litres) if litres is not None else 0)
                 sent.append(PIT_FUEL)
             elif kind == "tearoff":
                 self._send(PIT_WS)
@@ -176,24 +224,44 @@ class CarController:
                 "expected_flags": self.expected_flags(action)}
 
     # ------------------------------------------------------------------
-    def verify_applied(self, action: dict, read_flags) -> dict:
+    def verify_applied(self, action: dict, read_flags, read_fuel=None) -> dict:
         """回读进站服务位，确认游戏真的受理了。
 
         `read_flags` 是个零参函数，返回当前 PitSvFlags（拿不到返回 None）。
         超时也算失败——宁可不做承诺，也不能说「设好了」而其实没设。
         """
+        kind = action.get("kind")
         expected = self.expected_flags(action)
-        if expected == 0:
-            return {"verified": None, "reason": "该动作没有可回读的位"}
+        clear_masks = {"clear": 0x7F, "clear_tires": 0x0F,
+                       "clear_fuel": FLAG_FUEL, "clear_ws": FLAG_WS,
+                       "clear_fr": FLAG_FR}
+        mask = clear_masks.get(kind, 0x0F if kind == "tyre" else expected)
+        if not mask:
+            return {"verified": None, "reason": "未知动作，没有可回读的位"}
         deadline = time.monotonic() + _VERIFY_TIMEOUT_S
         last = None
-        while time.monotonic() < deadline:
-            last = read_flags()
+        while True:
+            try:
+                last = read_flags()
+            except Exception as exc:      # noqa: BLE001
+                return {"verified": None, "reason": f"回读 PitSvFlags 失败：{exc}"}
             if last is None:
                 return {"verified": None, "reason": "读不到 PitSvFlags"}
-            if (last & expected) == expected:
-                return {"verified": True, "flags": last}
+            matched = (last & mask) == expected
+            fuel = None
+            if matched and kind == "fuel" and action.get("litres") is not None:
+                try:
+                    fuel = float(read_fuel()) if read_fuel is not None else None
+                except Exception:      # noqa: BLE001
+                    fuel = None
+                if fuel is None or not math.isfinite(fuel):
+                    return {"verified": None, "flags": last, "reason": "读不到加油目标 PitSvFuel"}
+                matched = abs(fuel - action["litres"]) <= 0.05
+            if matched:
+                return {"verified": True, "flags": last, "fuel_litres": fuel}
+            if time.monotonic() >= deadline:
+                break
             time.sleep(_VERIFY_POLL_S)
         return {"verified": False, "flags": last,
-                "reason": f"游戏没有点亮这些位（期望 {expected:#x}，实际 "
-                          f"{0 if last is None else last:#x}）"}
+                "reason": f"进站设置回读不符（掩码 {mask:#x}，期望 {expected:#x}，实际 "
+                          f"{0 if last is None else last:#x}，加油目标 {fuel}）"}

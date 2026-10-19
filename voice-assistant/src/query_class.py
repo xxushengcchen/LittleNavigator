@@ -86,6 +86,8 @@ ANALYSIS_WORDS: tuple[str, ...] = (
     "还能撑", "撑得住", "够不够用",
     "为啥", "哪里可以", "哪里还能", "再快一点",
     "保胎", "push", "提前进站",
+    "是否需要", "需不需要", "解释", "判断", "总结", "稳定性",
+    "有什么变化", "哪些变化", "有什么区别", "哪些数据能够支持",
 )
 
 # 「弱」操作词：单独出现时不足以判操作。中文里它们也做「调取/查看」讲
@@ -116,7 +118,7 @@ def classify(text: str, intent: str | None) -> QueryKind:
     #     词表做子串匹配认不出「换左前胎」这种结构，所以交给 command_match
     #     判断——它认得出就说明这是一条命令，绝不能落进 UNKNOWN 被送去模型。
     from . import command_match
-    if command_match.match(q) is not None:
+    if command_match.match(text) is not None:
         return QueryKind.OPERATION
 
     has_analysis = any(word in q for word in ANALYSIS_WORDS)

@@ -51,6 +51,8 @@ class FakeSdk:
 
     def pit_command(self, mode, var=0):
         self.calls.append((mode, var))
+        if mode == 2:
+            self.fuel = var
 
 
 class EngineCarTests(unittest.TestCase):
@@ -76,9 +78,12 @@ class EngineCarTests(unittest.TestCase):
         played = []
         with patch.object(a, "_say", side_effect=lambda m: played.append(m)), \
              patch.object(a, "snapshot") as snap:
-            s = MagicMock()
-            s.pit_sv_flags = getattr(a.car.sdk, "flags", 0) if a.car else 0
-            snap.return_value = s
+            def current_snapshot():
+                s = MagicMock()
+                s.pit_sv_flags = getattr(a.car.sdk, "flags", 0) if a.car else 0
+                s.pit_sv_fuel = getattr(a.car.sdk, "fuel", None) if a.car else None
+                return s
+            snap.side_effect = current_snapshot
             rec = a.ask(text, source="voice")
         return rec, played
 
@@ -88,7 +93,7 @@ class EngineCarTests(unittest.TestCase):
         a = self._assistant(sdk=sdk, available={"AST_CC_TYRE"})
         rec, played = self._ask(a, "换左前胎")
         self.assertTrue(rec["ok"])
-        self.assertEqual(sdk.calls, [(3, 0)])          # PIT_LF
+        self.assertEqual(sdk.calls, [(7, 0), (3, 0)])  # 清掉其他胎，再选 LF
         self.assertEqual(played, ["AST_CC_TYRE"])
 
     def test_fuel_command_passes_litres(self):
@@ -134,7 +139,7 @@ class EngineCarTests(unittest.TestCase):
         a = self._assistant(sdk=sdk, available={"AST_CC_FAIL", "AST_CC_TYRE"})
         rec, played = self._ask(a, "换左前胎")
         self.assertFalse(rec["ok"])
-        self.assertEqual(sdk.calls, [(3, 0)])          # 发了
+        self.assertEqual(sdk.calls, [(7, 0), (3, 0)])  # 发了，但游戏未受理
         self.assertEqual(played, ["AST_CC_FAIL"])      # 但没说成功
 
     def test_verify_disabled_trusts_send(self):

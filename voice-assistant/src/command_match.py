@@ -102,10 +102,35 @@ _DIRECT_UNSUPPORTED = (
 # 疑问句不是指令。「要不要加油」「该不该换胎」是分析问题，必须走正常路由。
 # 「还剩几次快修」曾经触发过一次真快修——提问被当成指令，必须先挡掉。
 # 这里聚的是「这句话在问，不是在命令」的信号。
-_QUESTION_MARKERS = ("吗", "呢", "要不要", "该不该", "够不够", "为什么",
+_QUESTION_MARKERS = ("吗", "么", "呢", "要不要", "该不该", "够不够", "为什么",
+                     "是否", "需不需要", "能否", "能不能", "有没有",
+                     "怎么", "怎样", "如何", "哪些", "什么",
+                     "解释", "分析", "判断", "建议", "总结", "有必要",
+                     "如果", "假如", "考虑",
                      "多少", "几时", "多久", "?", "？",
                      # 存量/数量提问：还剩几次快修 / 加油还有多少 / 撕膜还有几张
                      "还剩", "还有", "几次", "几张", "几条", "几次", "要多久")
+
+
+def _service_request(q: str, words: tuple[str, ...]) -> bool:
+    """快修/撕膜必须是明确请求，不能仅凭提到服务名执行。
+
+    ASR 通常没有标点，因此疑问语义和请求句式都按无标点文字判断。
+    保留「快修」这样的简短口令，以及「我要进站了帮我勾上快修」。
+    """
+    prefixes = ("我马上要进站了", "我马上要进站", "我要进站了", "我要进站", "下次进站",
+                "这次进站", "进站时", "进站", "麻烦", "请", "帮我", "给我",
+                "替我", "我要", "这次")
+    while True:
+        prefix = next((p for p in prefixes if q.startswith(p)), None)
+        if prefix is None:
+            break
+        q = q[len(prefix):]
+    q = q.removeprefix('把')
+    service = "(?:" + "|".join(re.escape(w) for w in words) + ")"
+    return bool(re.fullmatch(
+        r"(?:开|开启|启用|打开|勾上|勾选|安排|执行|做|用|来个|来次|进行)?"
+        + service + r"(?:一下|一次|安排上|勾上|勾选|开起来|开启)?", q))
 
 # 中文数字（ASR 有时输出汉字，有时输出阿拉伯数字，两种都要认）
 _CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
@@ -239,7 +264,7 @@ def match(text: str) -> dict | None:
 
     # 0) 疑问句不是指令。「要不要加油」「该不该换胎」是分析问题，
     #    交给正常路由，别在这里把疑问当命令执行。
-    if any(marker in q for marker in _QUESTION_MARKERS):
+    if any(marker in q for marker in _QUESTION_MARKERS) or any(m in raw for m in ('?', '？')):
         return None
 
     # 1) 明确做不到的，先说清楚，不要落到下面的「换胎」分支里去
@@ -291,9 +316,9 @@ def match(text: str) -> dict | None:
                 "reason": "一次说一个指令，多个我听不准"}
 
     # 3) 撕膜 / 快修
-    if any(w in q for w in _TEAROFF_WORDS):
+    if _service_request(q, _TEAROFF_WORDS):
         return {"kind": "tearoff"}
-    if any(w in q for w in _FAST_REPAIR_WORDS):
+    if _service_request(q, _FAST_REPAIR_WORDS):
         return {"kind": "fast_repair"}
 
     # 4) 换胎。口语常省略「胎」字：「换右后」就是换右后胎。

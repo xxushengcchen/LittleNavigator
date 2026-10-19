@@ -34,7 +34,9 @@ AI_SEE_SCREEN = "AST_AI_SEE_SCREEN"  # AI 答了但没配 TTS：请用户看屏�
 NO_CAR_CONTROL = "AST_NO_CAR_CONTROL"  # 改车未启用 / 这件事做不到
 CC_CONFIRM = {"tyre": "AST_CC_TYRE", "fuel": "AST_CC_FUEL",
               "tearoff": "AST_CC_WS", "fast_repair": "AST_CC_FR",
-              "clear": "AST_CC_CLEAR", "clear_tires": "AST_CC_CLEAR"}
+              "clear": "AST_CC_CLEAR", "clear_tires": "AST_CC_CLEAR",
+              "clear_fuel": "AST_CC_CLEAR", "clear_ws": "AST_CC_CLEAR",
+              "clear_fr": "AST_CC_CLEAR"}
 CC_FAIL = "AST_CC_FAIL"
 
 
@@ -120,7 +122,8 @@ class Assistant:
             except Exception:      # noqa: BLE001
                 store = None       # 学习库坏了不该拖垮主流程
         try:
-            return AiPipeline(cfg, store=store, out=self.out, player=self.player)
+            return AiPipeline(cfg, store=store, out=self.out, player=self.player,
+                              snapshot_provider=lambda: self.snapshot())
         except Exception as exc:   # noqa: BLE001
             print(f"  ⚠ AI 初始化失败：{exc}", file=self.out)
             return None
@@ -149,6 +152,8 @@ class Assistant:
             self.ai = None
 
         # 改车：关闭时置 None，开启时重建并重新探测可用性
+        if self.car is not None:
+            self.car.close()
         try:
             self.car = car_control.CarController(cfg, out=self.out)
         except Exception as exc:      # noqa: BLE001
@@ -194,6 +199,8 @@ class Assistant:
         # 发出去的请求里「问题：」后面什么都没有，白花钱还播一条无意义回答。
         if not (text or "").strip():
             return False
+        if router.asks_lap_gap(text):
+            return False
         from .ai_pipeline import should_engage
         return should_engage(kind, self.ai.mode, rule_ok, intent,
                              self.ai.whitelist)
@@ -213,6 +220,15 @@ class Assistant:
         snap = self.snapshot()
         rec: dict = {"q": text, "source": source, **extra}
         kind = classify(text, tr["intent"])
+
+        # 分析问题即使命中某个事实意图，也不能只播一个油量数字就结束。
+        # 上层会立即接续 ask_ai；此处不先播一遍「没听清/答不了」。
+        if kind is QueryKind.ANALYSIS and self._ai_should_engage(kind, text, tr['intent'], False):
+            rec.update({'ok': False, 'intent': tr['intent'], 'layer': tr['layer'],
+                        'kind': kind.value, 'ai_eligible': True,
+                        'reason': '需要结合遥测进行分析'})
+            self._log(self.miss_log, rec)
+            return rec
 
         # 改车指令走确定性匹配，绝不经模型。认不出来才落到下面的拒绝流程。
         #
@@ -339,10 +355,6 @@ class Assistant:
                     self._log(self.miss_log, rec)
                     return rec
                 action["litres"] = litres
-            else:
-                action["litres"] = command_match.clamp_litres(
-                    action.get("litres"), car_control.FUEL_MIN_L,
-                    car_control.FUEL_MAX_L)
             rec["cc_action"] = dict(action)
 
         result = self.car.apply(action)
@@ -358,12 +370,13 @@ class Assistant:
         verified = None
         if self.car.verify:
             verified = self.car.verify_applied(
-                action, lambda: self.snapshot().pit_sv_flags)
+                action, lambda: self.snapshot().pit_sv_flags,
+                read_fuel=lambda: self.snapshot().pit_sv_fuel)
             rec["cc_verified"] = verified
             p(f"  改车回读：{verified}")
 
-        # 只有回读确认过才算真的成功；没验证能力的动作（clear 类）按发送成功算。
-        applied = verified is None or verified.get("verified") is not False
+        # 启用确认后，取消和设置都必须确实读到目标位；未知不算成功。
+        applied = verified is None or verified.get("verified") is True
         if not applied:
             rec.update({"ok": False, "reason": verified.get("reason")})
             self._say_with_fallback(CC_FAIL)
@@ -500,17 +513,18 @@ class Assistant:
                     "ai_latency_ms": result.latency_ms,
                     "ai_dynamic": bool(result.dynamic),
                     "ai_template": result.template,
+                    "ai_evidence": result.evidence,
                     "review_id": uuid.uuid4().hex[:12]})
         if not result.ok:
             rec["reason"] = result.reason
             p(f"  ✗ AI 未给出可用回答：{result.reason}")
             # 素材可能还没合成（Task 17）。有就播，没有就只留文字。
-            if self.pack.has(AI_SEE_SCREEN):
+            if result.checks.get('tts') != 'ok' and self.pack.has(AI_SEE_SCREEN):
                 self._say(AI_SEE_SCREEN)
             self._log(self.miss_log, rec)
             return rec
         p(f"  ✎ AI（{result.source}）{result.latency_ms}ms：{result.text}")
-        if self.pack.has(AI_SEE_SCREEN):
+        if result.checks.get("tts") != "ok" and self.pack.has(AI_SEE_SCREEN):
             self._say(AI_SEE_SCREEN)
         self._log(self.qa_log, rec)
         return rec
@@ -720,6 +734,8 @@ class Assistant:
     def close(self):
         self.player.stop()
         self.sampler.close()
+        if self.car is not None:
+            self.car.close()
 
 
     # ------------------------------------------------------------------

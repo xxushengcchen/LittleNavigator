@@ -175,14 +175,14 @@ class Service:
         self.listener_err = None
         return {"running": True}
 
-    def _maybe_ai(self, rec: dict, text: str, *, source: str) -> None:
+    def _maybe_ai(self, rec: dict, text: str, *, source: str) -> dict:
         """规则层答不上、且档位允许时，转 AI 路径。
 
         规则层答得上时 `ai_eligible` 为 False，压根不会进这里——
         「规则优先」这条不靠调用方自觉，靠 ask() 返回的标志。
         """
         if not rec.get("ai_eligible"):
-            return
+            return rec
         try:
             from src.query_class import QueryKind
             kind = QueryKind(rec.get("kind") or QueryKind.UNKNOWN.value)
@@ -190,8 +190,10 @@ class Service:
                                       source=source, extra=rec)
             # 规则层的拒绝记录已经在 miss_log 里，这里只补 AI 结果供界面看
             self.last_ask = ai_rec
+            return ai_rec
         except Exception as exc:       # noqa: BLE001
-            self.log(f"AI 转交失败：{exc}")
+            self.log.write(f"AI 转交失败：{exc}\n")
+            return rec
 
     def stop_listener(self) -> dict:
         with self.listener_lock:
@@ -291,8 +293,9 @@ class Service:
             tr = self.asst.explain(text, strict=False)
             if play:
                 rec = self.asst.ask(text)
-                tr["playback"] = rec
                 self.last_ask = rec
+                rec = self._maybe_ai(rec, text, source="keyboard")
+                tr["playback"] = rec
                 # 实测问题：调试台先跑 explain() 只做意图识别，
                 # 而 explain() 不知道改车指令会抢在路由之前被 command_match 截获，
                 # 于是「加1.5升油」预览显示 query_fuel，实际执行却是改车加油。
@@ -539,19 +542,16 @@ class Service:
         # 写回内存配置，state() 立即可见
         self.cfg = cfg_mod.load(self.cfg_path)
         self.asst.cfg = self.cfg
+        switched = {}
         with self.asst._operation_lock:
             self.asst.apply_live(live)
             self.asst.picker.cooldown = self.cfg["voice_pack"]["cooldown"]
             duck = self.cfg["playback"]["ducking"]
             self.asst.ducker.amount_db = duck["amount_db"]
             self.asst.ducker.procs = [p.lower() for p in duck["processes"]]
-
-        # AI / 改车开关必须立即生效。
-        # 实测：保存开关后配置正确但运行态没变，关掉后仍显示已启用，
-        # 用户会以为关掉了，实际改车指令照样能发出去。这里显式重建。
-        switched = {}
-        if "ai" in patch or "car_control" in patch:
-            switched = self.asst.reload_switchables(self.cfg)
+            # 与正在执行的改车互斥，避免热重载关闭其 SDK 连接。
+            if "ai" in patch or "car_control" in patch:
+                switched = self.asst.reload_switchables(self.cfg)
 
         needs_restart = []
         if "asr" in patch:
