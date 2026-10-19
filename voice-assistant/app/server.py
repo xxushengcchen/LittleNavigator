@@ -41,6 +41,7 @@ import yaml  # noqa: E402
 from src import config as cfg_mod           # noqa: E402
 from src.engine import Assistant            # noqa: E402
 from src.listener import PttListener, check_input_device, resolve_vk  # noqa: E402
+from src.query_class import classify        # noqa: E402
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 
@@ -292,7 +293,28 @@ class Service:
                 rec = self.asst.ask(text)
                 tr["playback"] = rec
                 self.last_ask = rec
+                # 实测问题：调试台先跑 explain() 只做意图识别，
+                # 而 explain() 不知道改车指令会抢在路由之前被 command_match 截获，
+                # 于是「加1.5升油」预览显示 query_fuel，实际执行却是改车加油。
+                # 预览与执行必须同源——把实际结果里的分类覆盖回去。
+                if rec.get("kind") == "operation":
+                    tr.update({
+                        "intent": rec.get("intent"),
+                        "kind": rec.get("kind"),
+                        "cc_action": rec.get("cc_action"),
+                        "note": "这句话是改车指令，不经过意图路由",
+                    })
             else:
+                # 不执行时，也按真实顺序判断一次是否改车，
+                # 让「试听」看到的就是会发生的事。
+                cc = self.asst.peek_car_command(text)
+                if cc is not None:
+                    tr.update({"intent": None, "kind": "operation",
+                               "cc_action": cc,
+                               "note": "这句话是改车指令，不经过意图路由"})
+                else:
+                    # 普通问答也给出与执行一致的分类，避免预览/执行口径不同
+                    tr["kind"] = classify(text, tr.get("intent")).value
                 self.last_ask = {"q": text, "trace": tr}
             return tr
 
@@ -524,13 +546,22 @@ class Service:
             self.asst.ducker.amount_db = duck["amount_db"]
             self.asst.ducker.procs = [p.lower() for p in duck["processes"]]
 
+        # AI / 改车开关必须立即生效。
+        # 实测：保存开关后配置正确但运行态没变，关掉后仍显示已启用，
+        # 用户会以为关掉了，实际改车指令照样能发出去。这里显式重建。
+        switched = {}
+        if "ai" in patch or "car_control" in patch:
+            switched = self.asst.reload_switchables(self.cfg)
+
         needs_restart = []
         if "asr" in patch:
             self.asr = None
         result = self.start_listener() if restart and was_running else None
         if result and result.get("error"):
-            return {"ok": True, "saved": str(local), "error": result["error"], "restart_hint": []}
-        return {"ok": True, "saved": str(local), "restart_hint": needs_restart}
+            return {"ok": True, "saved": str(local), "error": result["error"],
+                    "restart_hint": [], "applied": switched}
+        return {"ok": True, "saved": str(local), "restart_hint": needs_restart,
+                "applied": switched}
 
 
 # ---------------------------------------------------------------------- HTTP
@@ -631,8 +662,13 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if u.path == "/api/ask":
                 text = str(body.get("text") or "").strip()
-                if not text or len(text) > 512:
+                # 超长和为空是两回事，回报的原因必须对得上——
+                # 实测提交 1000 个「啊」时返回「text 为空」，用户会以为软件没收到。
+                if not text:
                     self._json({"error": "text 为空"}, 400)
+                    return
+                if len(text) > 512:
+                    self._json({"error": "text 过长（最长 512 字符）"}, 400)
                     return
                 self._json(self.service.ask(text, play=bool(body.get("play"))))
             elif u.path == "/api/play":

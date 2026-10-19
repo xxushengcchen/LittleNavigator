@@ -141,6 +141,18 @@ class CarController:
             elif kind == "clear_tires":
                 self._send(PIT_CLEAR_TIRES)
                 sent.append(PIT_CLEAR_TIRES)
+            elif kind == "clear_fuel":
+                # 撤销加油勾选，不改油量本身
+                self._send(PIT_CLEAR_FUEL)
+                sent.append(PIT_CLEAR_FUEL)
+            elif kind == "clear_ws":
+                # 撤销清洁挡风勾选
+                self._send(PIT_CLEAR_WS)
+                sent.append(PIT_CLEAR_WS)
+            elif kind == "clear_fr":
+                # 撤销快修勾选
+                self._send(PIT_CLEAR_FR)
+                sent.append(PIT_CLEAR_FR)
             elif kind == "tyre":
                 for corner in action.get("corners") or []:
                     pressure = int(action.get("pressure_kpa") or 0)

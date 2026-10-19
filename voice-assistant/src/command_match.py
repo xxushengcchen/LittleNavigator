@@ -52,6 +52,24 @@ _CLEAR_TYRE_PATTERNS = (
     re.compile(r"(换|上)(轮胎|胎|轮)[^，。]{0,4}(不用了|算了|取消|不要了|先不)"),
 )
 
+# 取消单类进站服务（实测漏放：这三类原来直接被当成「执行」）。
+# 每条都要求「否定/取消词 + 服务词」同时出现，避免误伤正常提问。
+_CLEAR_FUEL_PATTERNS = (
+    re.compile(r"(取消|不要|不用|别|先不)(加|来)?(油|加油)"),
+    re.compile(r"(加油|油)[^，。]{0,3}(不用了|取消|不要了|先不|算了)"),
+    re.compile(r"不加(油|了)"),
+)
+
+_CLEAR_WS_PATTERNS = (
+    re.compile(r"(取消|不要|不用|别|先不)(撕膜|换挡风|清挡风|擦挡风|清洁挡风)"),
+    re.compile(r"(撕膜|挡风)[^，。]{0,3}(不用了|取消|不要了|先不|算了)"),
+)
+
+_CLEAR_FR_PATTERNS = (
+    re.compile(r"(取消|不要|不用|别|先不)(快修|快速维修|快速修复)"),
+    re.compile(r"(快修|快速维修|快速修复)[^，。]{0,3}(不用了|取消|不要了|先不|算了)"),
+)
+
 # 模糊量词：说不出具体升数时不能瞎猜，也不能退化成「沿用现有量」
 _VAGUE_QUANTITY = ("点油", "加点", "一些", "一点儿", "一些儿")
 
@@ -64,6 +82,12 @@ _FAST_REPAIR_WORDS = ("快修", "快速维修", "快速修复")
 # 「把四个轮子都换了」是倒装，另收一条。
 _TYRE_RE = re.compile(r"(换|把)[^，。！？]{0,8}?(胎|轮子?)[^，。！？]{0,4}换?")
 _TYRE_ALT = ("换四条", "四个胎", "四条胎")
+
+# 范围限定词：出现这些词说明用户只想换一部分胎。
+# 此时若认不出具体角位，绝不能回退成「四条全换」——那等于擅自扩大范围。
+_PARTIAL_HINTS = ("只换", "只把", "就换", "只", "左边", "左侧", "左面", "右面",
+                  "右边", "右侧", "前胎", "后胎", "前轮", "后轮", "前面两个",
+                  "后面两个", "两条", "一对", "单边")
 
 # 直接判「做不到」的词（自带动作含义，不需要再配动作词）
 _DIRECT_UNSUPPORTED = (
@@ -108,42 +132,97 @@ def _cn_to_number(text: str) -> int | None:
 
 
 def parse_litres(text: str) -> float | None:
-    """从话里取加油升数。取不到返回 None。"""
-    m = re.search(r"(\d+(?:\.\d+)?)\s*升", text)
+    """从话里取加油升数。取不到返回 None。
+
+    必须传**原文**，不能传 normalize() 之后的结果：normalize 会按短语匹配的
+    需要删掉小数点和负号，于是「加1.5升」变成「加15升」、「加-10升」变成
+    「加10升」——实测就是这么把 1.5 升加成 15 升的。
+    """
+    if not text:
+        return None
+    # 阿拉伯数字，保留小数与负号。允许「1.5」「1。5」「一点五」
+    m = re.search(r"(-?\d+(?:[.．。]\d+)?)\s*升", text)
     if m:
-        return float(m.group(1))
-    m = re.search(r"升?\s*([零一二两三四五六七八九十百]+)\s*升", text)
+        return float(m.group(1).replace("。", ".").replace("．", "."))
+    # 中文小数：「一点五升」「零点五升」
+    m = re.search(r"(负)?\s*([零一二两三四五六七八九十])\s*[点\.]\s*"
+                  r"([零一二两三四五六七八九])\s*升", text)
+    if m:
+        whole = _CN_DIGITS.get(m.group(2))
+        frac = _CN_DIGITS.get(m.group(3))
+        if whole is not None and frac is not None:
+            value = whole + frac / 10.0
+            return -value if m.group(1) else value
+    # 「十点五升」这类两位数整数部分
+    m = re.search(r"(负)?\s*([一二两三四五六七八九十]{1,3})\s*[点\.]\s*"
+                  r"([零一二两三四五六七八九])\s*升", text)
+    if m:
+        whole = _cn_to_number(m.group(2))
+        frac = _CN_DIGITS.get(m.group(3))
+        if whole is not None and frac is not None:
+            value = whole + frac / 10.0
+            return -value if m.group(1) else value
+    # 纯中文整数：「十升」「十五升」
+    m = re.search(r"([零一二两三四五六七八九十百]+)\s*升", text)
     if m:
         value = _cn_to_number(m.group(1))
         return float(value) if value is not None else None
-    m = re.search(r"加\s*([零一二两三四五六七八九十百]+)\s*升", text)
+    m = re.search(r"加\s*([零一二两三四五六七八九十百]+)", text)
     if m:
         value = _cn_to_number(m.group(1))
         return float(value) if value is not None else None
     return None
 
 
+def _negated_corners(q: str) -> list[str]:
+    """找出被否定的角位。实测「换左前胎，不要换右前胎」把右前也换掉了。"""
+    negated: list[str] = []
+    # 否定词与角位之间允许夹「换」「的」等零碎字
+    pairs = (
+        ("LF", ("左前", "前左")),
+        ("RF", ("右前", "前右")),
+        ("LR", ("左后", "后左")),
+        ("RR", ("右后", "后右")),
+    )
+    for corner, words in pairs:
+        for w in words:
+            if re.search(rf"(不要|不用|别|取消|不)(换|上|动)?[^，。]{{0,4}}{w}", q):
+                negated.append(corner)
+                break
+    return negated
+
+
 def _corners_in(q: str) -> list[str]:
     """从话里认角位。认不出来返回空列表（不是全部）。"""
+    negated = _negated_corners(q)
     found: list[str] = []
-    if any(w in q for w in ("左前", "前左")):
-        found.append("LF")
-    if any(w in q for w in ("右前", "前右")):
-        found.append("RF")
-    if any(w in q for w in ("左后", "后左")):
-        found.append("LR")
-    if any(w in q for w in ("右后", "后右")):
-        found.append("RR")
+    pairs = (
+        ("LF", ("左前", "前左")),
+        ("RF", ("右前", "前右")),
+        ("LR", ("左后", "后左")),
+        ("RR", ("右后", "后右")),
+    )
+    for corner, words in pairs:
+        if corner in negated:
+            continue
+        if any(w in q for w in words):
+            found.append(corner)
     if found:
         return found
-    # 「四个 / 四条 / 全部」= 四条都换
+    # 「四个 / 四条 / 全部」= 四条都换（扣掉被否定的）
     if any(w in q for w in ("四个", "四条", "全部", "所有", "全都", "都换")):
-        return list(_ALL_CORNERS)
+        return [c for c in _ALL_CORNERS if c not in negated]
+    # 侧向限定：「左边 / 左侧」= 左侧两条；「右边」同理。
+    # 实测「只换左边轮胎」原来因为认不出角位而回退成四条全换。
+    if any(w in q for w in ("左边", "左侧", "左面", "左轮", "两左")):
+        return [c for c in ("LF", "LR") if c not in negated]
+    if any(w in q for w in ("右边", "右侧", "右面", "右轮", "两右")):
+        return [c for c in ("RF", "RR") if c not in negated]
     # 「前胎 / 前轮」= 两条前胎
-    if any(w in q for w in ("前胎", "前轮", "前面两个")):
-        return ["LF", "RF"]
-    if any(w in q for w in ("后胎", "后轮", "后面两个")):
-        return ["LR", "RR"]
+    if any(w in q for w in ("前胎", "前轮", "前面两个", "两条前")):
+        return [c for c in ("LF", "RF") if c not in negated]
+    if any(w in q for w in ("后胎", "后轮", "后面两个", "两条后")):
+        return [c for c in ("LR", "RR") if c not in negated]
     return []
 
 
@@ -153,7 +232,8 @@ def match(text: str) -> dict | None:
     返回的 dict 可能带 `kind="unsupported"`——那种情况表示「听懂了，
     但这件事软件做不到」，调用方要如实告诉用户，不能当成认不出来。
     """
-    q = normalize(text or "")
+    raw = text or ""
+    q = normalize(raw)
     if not q:
         return None
 
@@ -184,9 +264,22 @@ def match(text: str) -> dict | None:
             return {"kind": "unsupported", "reason": reason}
 
     # 2) 取消类必须排在设置类前面：「取消换胎」里含「换胎」
+    #
+    #    顺序也有讲究：先判更具体的（换胎），再判其余三类。
+    #    实测「不要快修」「不加油」「别撕膜」原来全部落到执行分支，
+    #    用户说的是否定，软件却照做——这是最危险的一类错误。
     for pattern in _CLEAR_TYRE_PATTERNS:
         if pattern.search(q):
             return {"kind": "clear_tires"}
+    for pattern in _CLEAR_FUEL_PATTERNS:
+        if pattern.search(q):
+            return {"kind": "clear_fuel"}
+    for pattern in _CLEAR_WS_PATTERNS:
+        if pattern.search(q):
+            return {"kind": "clear_ws"}
+    for pattern in _CLEAR_FR_PATTERNS:
+        if pattern.search(q):
+            return {"kind": "clear_fr"}
     for pattern in _CLEAR_PATTERNS:
         if pattern.search(q):
             return {"kind": "clear"}
@@ -206,7 +299,15 @@ def match(text: str) -> dict | None:
     # 4) 换胎。口语常省略「胎」字：「换右后」就是换右后胎。
     corners = _corners_in(q)
     if _TYRE_RE.search(q) or any(w in q for w in _TYRE_ALT):
-        return {"kind": "tyre", "corners": corners or list(_ALL_CORNERS)}
+        if corners:
+            return {"kind": "tyre", "corners": corners}
+        # 认不出角位。如果句子里带了范围限定（只/就/限定某侧某轴），
+        # 说明用户明确想换一部分，这时回退成「四条全换」就是擅自扩大范围。
+        # 实测「只换左边轮胎」被换成四条——宁可说认不出来，也不能换错。
+        if any(w in q for w in _PARTIAL_HINTS):
+            return {"kind": "unsupported",
+                    "reason": "听不出具体要换哪条胎，请说「换左前」「换右边」这样"}
+        return {"kind": "tyre", "corners": list(_ALL_CORNERS)}
     if "换" in q and corners:
         return {"kind": "tyre", "corners": corners}
 
@@ -226,14 +327,15 @@ def match(text: str) -> dict | None:
         if any(w in q for w in _VAGUE_QUANTITY):
             return {"kind": "unsupported",
                     "reason": "说不出具体升数，我不猜，你给个数字"}
-        litres = parse_litres(q)
+        # 用原文取数：normalize 会把小数点和小数点后的数字吃掉
+        litres = parse_litres(raw)
         if litres is not None and litres <= 0:
             return {"kind": "unsupported", "reason": "油量不能为零或负数"}
         if litres is not None and litres > FUEL_MAX_L:
             # 超出范围就拒绝，不能悄悄压到上限——用户说 999，
             # 我们加 120 也是错的，只是错得没那么明显。
             return {"kind": "unsupported",
-                    "reason": f"{litres:.0f} 升超出合理范围，确认一下"}
+                    "reason": f"{litres:.1f} 升超出合理范围，确认一下"}
         return {"kind": "fuel", "litres": litres}
 
     return None

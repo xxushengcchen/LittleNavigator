@@ -99,7 +99,8 @@ class AiPipeline:
       · 三道闸任一不过即降级为「答不了」，不播半句话
     """
 
-    def __init__(self, cfg: dict, store: LearnStore | None = None, out=None):
+    def __init__(self, cfg: dict, store: LearnStore | None = None, out=None,
+                 player=None):
         import sys
 
         self.cfg = cfg
@@ -130,6 +131,9 @@ class AiPipeline:
                 self.tts = TtsEngine(adapter, tts_cfg)
             except ValueError:
                 self.tts = None
+        # 生成出来的音频得有地方去。原先 synth() 的返回值被直接丢弃，
+        # 结果「TTS 成功」却什么都没播出来（实测确认）。
+        self.player = player
 
     # ------------------------------------------------------------------
     @property
@@ -225,7 +229,7 @@ class AiPipeline:
         return AiResult(ok=True, text=filled, source="learn")
 
     def _maybe_speak(self, text: str, result: AiResult) -> None:
-        """有 TTS 就合成；失败只记一笔，文字照常返回。
+        """有 TTS 就合成并**播放**；失败只记一笔，文字照常返回。
 
         刻意捕获 `Exception` 而不只是 `TtsError`：TTS 是可选装饰，
         它出任何问题（编码错误、依赖缺失、适配器内部 bug）都绝不能让
@@ -234,8 +238,15 @@ class AiPipeline:
         if self.tts is None:
             return
         try:
-            self.tts.synth(text)
-            result.checks = {**result.checks, "tts": "ok"}
+            audio = self.tts.synth(text)
+            # 实测问题：这里原先只检查「合成没报错」，把音频字节丢掉了，
+            # 于是界面显示 tts: ok，实际一声没出。必须真的交给播放器。
+            played = False
+            if audio and self.player is not None:
+                self.player.play_bytes(audio)
+                played = True
+            result.checks = {**result.checks,
+                             "tts": "ok" if played else "ok(no-player)"}
         except Exception as exc:       # noqa: BLE001
             result.checks = {**result.checks, "tts": f"fail: {exc}"[:120]}
 

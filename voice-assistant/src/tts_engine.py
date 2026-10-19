@@ -154,10 +154,15 @@ class TtsEngine:
         self._require("base_url", "api_key")
         base = self.config["base_url"].rstrip("/")
         url = base if base.endswith("/audio/speech") else base + "/audio/speech"
+        # 界面把「音色」存进 speaker（那个字段对豆包有意义），
+        # OpenAI 兼容协议叫 voice。只读 voice 会让界面填的音色完全不生效
+        # （实测：表单填 nova，实际请求仍是默认 alloy）。两个都认，voice 优先。
+        voice = (self.config.get("voice") or self.config.get("speaker")
+                 or "alloy")
         body = {
             "model": self.config.get("model") or "tts-1",
             "input": text,
-            "voice": self.config.get("voice") or "alloy",
+            "voice": voice,
             "response_format": self.config.get("response_format") or "wav",
         }
         headers = {

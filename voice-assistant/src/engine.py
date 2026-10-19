@@ -120,7 +120,7 @@ class Assistant:
             except Exception:      # noqa: BLE001
                 store = None       # 学习库坏了不该拖垮主流程
         try:
-            return AiPipeline(cfg, store=store, out=self.out)
+            return AiPipeline(cfg, store=store, out=self.out, player=self.player)
         except Exception as exc:   # noqa: BLE001
             print(f"  ⚠ AI 初始化失败：{exc}", file=self.out)
             return None
@@ -128,6 +128,36 @@ class Assistant:
     @property
     def ai_enabled(self) -> bool:
         return self.ai is not None
+
+    def reload_switchables(self, cfg: dict) -> dict:
+        """按新配置重建 AI / 改车控制器，让开关保存后立即生效。
+
+        实测问题：设置页保存开关后，配置落盘正确，但运行态还是旧的——
+        界面顶栏显示「已启用」，实际 ai.enabled 仍是旧值；反过来关闭也关不掉。
+        根因是这两个对象只在 __init__ 里构造一次。这里提供显式重建入口，
+        调用方必须在**没有正在执行的改车指令**时调用。
+        """
+        before = {"ai": self.ai is not None,
+                  "car": bool(self.car and self.car.enabled)}
+        self.cfg = cfg
+
+        # AI：未启用时置 None，已启用时重建（模型/密钥可能也改了）
+        try:
+            self.ai = self._build_ai(cfg)
+        except Exception as exc:      # noqa: BLE001
+            print(f"  ⚠ AI 重建失败：{exc}", file=self.out)
+            self.ai = None
+
+        # 改车：关闭时置 None，开启时重建并重新探测可用性
+        try:
+            self.car = car_control.CarController(cfg, out=self.out)
+        except Exception as exc:      # noqa: BLE001
+            print(f"  ⚠ 改车控制器重建失败：{exc}", file=self.out)
+            self.car = None
+
+        after = {"ai": self.ai is not None,
+                 "car": bool(self.car and self.car.enabled)}
+        return {"before": before, "after": after}
 
     def learn_store(self):
         """学习库实例；未启用或初始化失败时返回 None。"""
@@ -158,6 +188,11 @@ class Assistant:
                           rule_ok: bool = False) -> bool:
         """档位矩阵的引擎侧入口；未启用时一律 False。"""
         if self.ai is None:
+            return False
+        # 空识别/空输入绝不进模型。
+        # 实测：ASR 返回空串时日志先说「太短或为空，拒绝」，随后仍然调了模型，
+        # 发出去的请求里「问题：」后面什么都没有，白花钱还播一条无意义回答。
+        if not (text or "").strip():
             return False
         from .ai_pipeline import should_engage
         return should_engage(kind, self.ai.mode, rule_ok, intent,
@@ -242,6 +277,19 @@ class Assistant:
             return None                      # 已经满了，没什么可加
         return command_match.clamp_litres(
             need, car_control.FUEL_MIN_L, car_control.FUEL_MAX_L)
+
+    def peek_car_command(self, text: str) -> dict | None:
+        """只解析不执行：这句话会不会被当成改车指令？
+
+        给调试台的「预览」用。原先预览只跑意图识别，看不到改车会在
+        路由之前截获，于是预览显示「查油量」、实际执行却是「加油」。
+        """
+        if not (text or "").strip():
+            return None
+        try:
+            return command_match.match(text)
+        except Exception:      # noqa: BLE001
+            return None
 
     def _try_car_command(self, text: str, rec: dict) -> dict | None:
         """尝试把一句话当改车指令执行。返回记录，或 None（不是改车指令）。
@@ -425,6 +473,15 @@ class Assistant:
             rec.update({"ok": False, "reason": "AI 未启用"})
             return rec
 
+        # 空文本不进模型（与 _ai_should_engage 同一条底线，这里再兜一层，
+        # 防止调用方绕过矩阵直接调 ask_ai）。
+        if not (text or "").strip():
+            p("  ✗ 识别文本为空，不请求模型")
+            rec.update({"ok": False, "reason": "没听到内容，请按住 PTT 重说一次"})
+            self._say_with_fallback(REFUSE_HEARD)
+            self._log(self.miss_log, rec)
+            return rec
+
         self.busy = False          # 让 PTT 能进来（关键：不占用麦克风）
         try:
             snap = self.snapshot()
@@ -487,6 +544,23 @@ class Assistant:
             "voice_pack": {"cooldown": c["voice_pack"]["cooldown"],
                            "gap_ms": self.gap_ms},
             "ai": self.ai_config_view(),
+            # 实测遗漏：界面读 st.config.car_control 却拿不到，于是永远显示
+            # 「关/未启用」，用户再保存一次就把正确的 true 覆盖成 false。
+            # 这里回的是**运行态**（self.car），配置与实际不一致时以实际为准。
+            "car_control": self.car_config_view(),
+        }
+
+    def car_config_view(self) -> dict:
+        """改车配置的对外视图。不使用密钥，可安全回显。"""
+        cf = (self.cfg or {}).get("car_control") or {}
+        live = self.car
+        return {
+            "enabled": bool(live.enabled) if live is not None
+                       else bool(cf.get("enabled", False)),
+            "verify": bool(cf.get("verify", True)),
+            "available": bool(live.available) if live is not None else False,
+            "configured": live is not None,
+            "error": (live.status().get("error") if live is not None else None),
         }
 
     def ai_config_view(self) -> dict:

@@ -5,6 +5,7 @@ Windows 自带的 winsound（只能播到系统默认设备，零依赖兜底）
 """
 from __future__ import annotations
 
+import io
 import pathlib
 import sys
 import time
@@ -26,6 +27,27 @@ def _read_wav(path: pathlib.Path) -> tuple[np.ndarray, int]:
         data = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128) / 128
     else:
         raise ValueError(f"只支持 8/16-bit PCM：{path}")
+    if ch > 1:
+        data = data.reshape(-1, ch).mean(axis=1).astype(np.float32)
+    return data, sr
+
+
+def _read_wav_bytes(blob: bytes) -> tuple[np.ndarray, int]:
+    """从内存里的 WAV 字节读出 (float32, 采样率)。
+
+    TTS 返回的就是内存字节，没必要先落盘再读回来。
+    """
+    with wave.open(io.BytesIO(blob), "rb") as w:
+        sr = w.getframerate()
+        ch = w.getnchannels()
+        width = w.getsampwidth()
+        raw = w.readframes(w.getnframes())
+    if width == 2:
+        data = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    elif width == 1:
+        data = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128) / 128
+    else:
+        raise ValueError("只支持 8/16-bit PCM")
     if ch > 1:
         data = data.reshape(-1, ch).mean(axis=1).astype(np.float32)
     return data, sr
@@ -86,6 +108,41 @@ class Player:
                 self._sd.play(x, sr, device=self.device, blocking=True)
             elif self._winsound is not None:
                 self._winsound.PlaySound(str(p), self._winsound.SND_FILENAME)
+        finally:
+            if self.ducker is not None:
+                self.ducker.restore()
+        return time.perf_counter() - t0
+
+    def play_bytes(self, blob: bytes) -> float:
+        """播内存里的 WAV 字节，返回墙钟耗时（秒）。
+
+        TTS 合成结果是字节，直接播；不要为了复用 play() 先落盘——
+        落盘会带来清理负担，也会在只读目录（Program Files 安装）下失败。
+        """
+        t0 = time.perf_counter()
+        if not self.enabled or not blob:
+            return 0.0
+        if self.ducker is not None:
+            self.ducker.duck()
+        try:
+            if self._sd is not None:
+                x, sr = _read_wav_bytes(blob)
+                if self.volume != 1.0:
+                    x = x * self.volume
+                self._sd.play(x, sr, device=self.device, blocking=True)
+            elif self._winsound is not None:
+                # winsound 只认文件；临时文件是这个后端的唯一出路
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
+                    fh.write(blob)
+                    tmp = fh.name
+                try:
+                    self._winsound.PlaySound(tmp, self._winsound.SND_FILENAME)
+                finally:
+                    try:
+                        pathlib.Path(tmp).unlink()
+                    except OSError:
+                        pass
         finally:
             if self.ducker is not None:
                 self.ducker.restore()
