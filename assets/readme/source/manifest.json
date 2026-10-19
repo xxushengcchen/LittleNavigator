@@ -22,12 +22,14 @@
   {
     "name": "drag-on-xtt",
     "canvas": [
-      400,
-      148
+      560,
+      240
     ],
     "transparent": true,
     "light_ink": false,
-    "crop_viewBox": "60 300 2680 1000"
+    "crop_viewBox": "10 140 1660 680",
+    "original": "3053.PNG",
+    "processing": "imagegen transparent cutout"
   },
   {
     "name": "moondrop",

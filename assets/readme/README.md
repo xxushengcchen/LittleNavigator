@@ -10,7 +10,7 @@
 | moondrop-signature.png | MoonDrop | 手写签名 |
 | moondrop-headphones.png | MoonDrop | 粉色耳机人物标 |
 | moondrop-symbol.png | MoonDrop | 黑色图形标 |
-| drag-on-xtt.png | 车队：Drag-On XTT racing team | 保留原图透明通道与彩色图案 |
+| drag-on-xtt.png | 车队：Drag-On XTT racing team | 使用 3053.PNG 新图去除黑底，保留白色龙形与彩色字标 |
 
 共七款标识。IFP 与 MoonDrop 的四款单色标识另有 `-dark.png` 浅色墨迹版本，共十二张 PNG。README 使用 GitHub 支持的 `<picture>` 按主题切换，彩色标识沿用原配色，品牌名和身份同时以文字保留。裁切范围、尺寸与主题版本见 source/manifest.json；处理来源见 [PROVENANCE.md](source/PROVENANCE.md)。
 

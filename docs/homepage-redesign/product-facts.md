@@ -22,3 +22,11 @@
 远端依据：[仓库 README](https://github.com/xxushengcchen/LittleNavigator/blob/main/README.md)、[正式发布](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.5)。
 
 GitHub 展示约束：最终使用 Markdown、有限 HTML、相对图片路径和必要的 details；不用 JavaScript、iframe、自定义 CSS 或将整篇正文做成图片。
+
+## API 教程补充核对（2026-10-20）
+
+- DeepSeek 当前首次调用文档列出的基础地址为 `https://api.deepseek.com`、示例模型为 `deepseek-flash`；Key 入口指向开放平台 API keys。对照当前 v1.4.5 的前端预设仍为 `deepseek-chat`，因此教程明确要求手动覆盖。来源：https://api-docs.deepseek.com/zh-cn/
+- 豆包语音新版控制台要求注册认证、服务开通、在 API Key 管理获取密钥，并在音色库复制音色 ID。来源：https://docs.volcengine.com/docs/DoubaoVoice/QuickStartNewConsole?lang=zh
+- 当前软件豆包适配器使用 HTTP 单向流式接口、`X-Api-Key` 与默认资源 `seed-tts-2.0`，与官方接口说明匹配。教程使用 2.0 公版音色，不混用旧鉴权或声音复刻。来源：https://docs.volcengine.com/docs/DoubaoVoice/unidirectional-streaming-text-to-speech-http?lang=zh
+- 已核对本地 app.js 表单与保存逻辑、config.py 默认值、llm_engine.py / tts_engine.py 请求实现。未登录用户账号或使用真实 Key 做付费调用；连接与完整分析的区别、时限及验证限制已写入教程。
+- `app/server.py:ai_tts_test` 直接调用 `TtsEngine.test()`，后者仅合成并返回字节数、延迟，不调用播放器；因此文档明确 v1.4.5 的「试听」按钮不发声，耳机声音需通过实际 AI 回答验证。

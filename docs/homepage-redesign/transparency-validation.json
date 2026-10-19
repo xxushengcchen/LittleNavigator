@@ -2,18 +2,18 @@
   "passed": true,
   "uniqueMarks": 7,
   "moondropVariants": 5,
-  "totalBytes": 179212,
+  "totalBytes": 226825,
   "checks": [
     {
       "file": "drag-on-xtt.png",
       "dimensions": [
-        400,
-        148
+        560,
+        240
       ],
-      "bytes": 40007,
+      "bytes": 87620,
       "alphaRange": [
         0,
-        255
+        254
       ],
       "cornerAlpha": [
         0,

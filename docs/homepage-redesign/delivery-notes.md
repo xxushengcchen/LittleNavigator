@@ -1,11 +1,12 @@
 # 首页改版交付说明
 
-按用户选定的 A「阅读优先」完成。左对齐、GitHub 原生字体和间距，三个真实 logo 在宽屏同行展示，在手机自然换行。没有装饰图片、自定义 CSS、JavaScript、iframe、徽章堆叠或虚构的产品画面。
+按用户选定的 A「阅读优先」完成。左对齐、GitHub 原生字体和间距，全部七款品牌标识放在开头：IFP 与新车队图一组，MoonDrop 五款一组，在手机自然换行。没有装饰图片、自定义 CSS、JavaScript、iframe、徽章堆叠或虚构的产品画面。
 
 ## 文件
 
-- 根 `README.md`：定位、价值、三步开始、问法、真实界面、可选接口、独立语音包、边界、贡献与许可。
-- `assets/readme/`：七款透明标识，其中 MoonDrop 五款齐全；含主题版本共十二张 PNG、自包含 SVG 排版源、导出命令与处理记录。PNG 总计 179,212 字节，约 175.0 KiB。
+- 根 `README.md`：定位、价值、三步开始、问法、真实界面、DeepSeek 与豆包语音 API 申请与配置、独立语音包、边界、贡献与许可。
+- `assets/readme/`：七款透明标识，其中 MoonDrop 五款齐全；含主题版本共十二张 PNG、自包含 SVG 排版源、导出命令与处理记录。PNG 总计 226,825 字节，约 221.5 KiB。车队图按用户要求换为 3053.PNG 的透明去底版。
+- `docs/guide/api-setup.md`：接口与表单字段映射、验证流程、常见错误及官方入口；界面指南同步链接。
 - `docs/guide/spotter-install.md`：从首页移出的完整独立语音包安装步骤。
 - `docs/guide/capabilities-and-limits.md`：数据口径、AI 与操作边界、尚未实现的后续计划。
 - `THIRD_PARTY_NOTICES.md`：补充三个品牌的来源和权利说明。
@@ -17,11 +18,12 @@
 ## 验证
 
 - GitHub 官方 Markdown API 成功渲染最终 README。
-- 在真实 github.com 仓库页面 DOM/CSS 中预览官方 HTML；检查浅色、深色两套主题和 1440、768、375、320px 四种宽度，共 8 种组合。无页面或正文横向溢出、无缺图，三个标识均可读，折叠说明能打开。
+- 在真实 github.com 仓库页面 DOM/CSS 中预览官方 HTML；检查浅色、深色两套主题和 1440、768、375、320px 四种宽度，共 8 种组合。无页面或正文横向溢出、无缺图，七款标识全部在首个正文小节之前，折叠说明能打开。
 - 发布前预览中，浏览器仅在本地拦截对应图片请求加载 PNG，没有推送草稿。API 未附带的标题 id 按 GitHub 锚点规则补齐后用于预览导航测试；以上截图与检查数据来自发布前预览。
-- `python scripts/check_readme_links.py`：6 个文档、40 个本地链接/锚点通过；没有自定义样式或脚本，HTML 图片均有 alt。
+- `python scripts/check_readme_links.py`：8 个文档、47 个本地链接/锚点通过；没有自定义样式或脚本，HTML 图片均有 alt。
 - `npm run assets:readme` 对应脚本已实际运行，十二张 PNG 从自包含 SVG 成功导出。维护时先执行 `npm ci`；Windows 默认使用 Edge。
-- 十二张 PNG 逐一检查 RGBA 和透明度范围，四角 alpha 全部为 0；详情见 [透明度检查](transparency-validation.json)。IFP 使用 imagegen 去除白底，其他图沿用原图透明通道；单色标识提供主题适配，来源和提示词保留在素材目录。
+- 十二张 PNG 逐一检查 RGBA 和透明度范围，四角 alpha 全部为 0；详情见 [透明度检查](transparency-validation.json)。IFP 和新车队图使用 imagegen 去底，MoonDrop 沿用原图透明通道；单色标识提供主题适配，来源和提示词保留在素材目录。
+- API 步骤于 2026-10-20 对照 DeepSeek 首次调用文档、豆包语音新版控制台入门及 HTTP 单向流式文档核对，再与当前表单、默认配置和请求代码匹配。需要登录的 Key/服务页面未进入；没有替用户注册、开通、充值或调用付费服务。
 - 最新正式版 v1.4.5、v1.4.1 独立语音包 ZIP 已通过 GitHub 连接器核对存在；安装位置和游戏内选择方式依据 iRacing 官方帮助。
 - `--sim` 已核对当前命令行入口。没有为文档检查启动用户安装的软件、游戏、麦克风或外部 AI/TTS；没有重新跑与文档修改无关的后端测试。
 - `git diff --check` 通过。
