@@ -5,12 +5,26 @@
   2. 发的数值必须与 iRacing SDK 定义一致（错一位就是改错服务）；
   3. 「发送成功」不等于「生效」——回读没点亮对应位就不能说成功。
 """
+import contextlib
 import io
 import unittest
+from unittest.mock import patch
 
 from src import car_control as cc
 from src.car_control import CarControlError, CarController
 from src.command_match import clamp_litres, match, parse_litres
+
+
+@contextlib.contextmanager
+def no_irsdk():
+    """模拟「这台机器没装 pyirsdk」。
+
+    CarController(sdk=None) 会自动 import irsdk。开发机装了 pyirsdk 时，
+    「没有 SDK」的场景会被真实 SDK 顶替，断言就测不到 sdk=None 分支。
+    把 sys.modules['irsdk'] 置 None，import 会抛 ImportError。
+    """
+    with patch.dict("sys.modules", {"irsdk": None}):
+        yield
 
 
 class FakeSdk:
@@ -61,8 +75,9 @@ class AvailabilityTests(unittest.TestCase):
         self.assertFalse(CarController(cfg, sdk=FakeSdk()).enabled)
 
     def test_not_available_without_sdk(self):
-        c = CarController({"car_control": {"enabled": True}}, sdk=None,
-                          out=io.StringIO())
+        with no_irsdk():
+            c = CarController({"car_control": {"enabled": True}}, sdk=None,
+                              out=io.StringIO())
         self.assertFalse(c.available)
 
     def test_not_available_when_disconnected(self):
@@ -79,8 +94,9 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(c.sdk.calls, [])      # 一条都没发
 
     def test_apply_refuses_without_sdk(self):
-        c = CarController({"car_control": {"enabled": True}}, sdk=None,
-                          out=io.StringIO())
+        with no_irsdk():
+            c = CarController({"car_control": {"enabled": True}}, sdk=None,
+                              out=io.StringIO())
         r = c.apply({"kind": "tyre", "corners": ["LF"]})
         self.assertFalse(r["ok"])
 

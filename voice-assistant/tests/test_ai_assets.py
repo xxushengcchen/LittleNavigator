@@ -20,7 +20,10 @@ class ContentEntryTests(unittest.TestCase):
     NEW_IDS = ("AST_AI_SEE_SCREEN", "AST_NO_CAR_CONTROL",
                "AST_CC_TYRE", "AST_CC_FUEL", "AST_CC_WS",
                "AST_CC_FR", "AST_CC_CLEAR", "AST_CC_FAIL",
-               "AST_CC_COMPOUND")
+               "AST_CC_COMPOUND",
+               # 拒绝话术：engine._say_with_fallback 的后两级兜底。
+               # 曾经只存在于代码常量里、content 与语音包都没有，导致缺素材时静默。
+               "AST_REFUSE_CANT", "AST_REFUSE_HEARD")
 
     def test_msgids_exist_in_content(self):
         ids = [it.get("msgId") for it in self._items()]
@@ -39,6 +42,30 @@ class ContentEntryTests(unittest.TestCase):
             for text in item["variants"]:
                 self.assertNotIn("{", text)      # 不做模板替换，是固定话术
         self.assertEqual(found, set(self.NEW_IDS))
+
+
+class RefusalConstantTests(unittest.TestCase):
+    """代码里的拒绝类常量必须在 content 里有定义。
+
+    engine._say_with_fallback 的后两级兜底用的就是 REFUSE_CANT / REFUSE_HEARD。
+    这两个 msgId 曾经只写在代码里、content 与语音包都没有，结果素材缺失时
+    「降级」降到了空处，用户按完 PTT 什么都听不到。测试用假语音包发现不了，
+    所以这里直接比对代码常量与内容定义。
+    """
+
+    def test_refusal_constants_defined_in_content(self):
+        from src import engine
+
+        ids = {it.get("msgId") for it in ContentEntryTests()._items()}
+        for name in ("REFUSE_CANT", "REFUSE_HEARD", "REFUSE_LATER",
+                     "NO_CAR_CONTROL"):
+            with self.subTest(constant=name):
+                msg_id = getattr(engine, name, None)
+                if msg_id is None:
+                    continue
+                self.assertIn(msg_id, ids,
+                              f"{name}={msg_id} 在 content 里没有定义，"
+                              f"合成后语音包里也不会有，降级会落到空处")
 
 
 class PackAssetTests(unittest.TestCase):

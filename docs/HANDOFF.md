@@ -11,10 +11,16 @@ cd voice-assistant
 python -m unittest discover -s tests
 ```
 
-预期：453 项通过、2 项跳过。
+预期：**480 项通过**（2026-10-19 实测；此前写 453 项已过时）。
 
-若出现 2 个 `setUpClass` error 提到 `build/pack/.../spmsg.txt`：
-说明本地没有构建产物，先跑语音包构建（见第 3 节）。
+本机装了 `pyirsdk` 时，`test_car_control` 的「无 SDK」用例会被真实 SDK 顶替而误判。
+测试已用 `no_irsdk()` 上下文显式屏蔽 `sys.modules['irsdk']`，不再受环境影响。
+
+若出现 1 项跳过，是 `test_pack_audio_is_readable` 之类依赖运行时光碟素材的用例，
+本机没有 `build/` 时跳过属正常。
+
+若 `test_msgid_exists_in_pack` 失败：
+说明文案已加但音频未合成，按第 3 节重跑合成与打包。
 
 ## 2. 配置大模型
 
@@ -99,10 +105,17 @@ python tools/stress_test.py   # 90 条真实场景问句
 
 ## 8. 已知待办
 
-- 完整语音包重建（本机无 `build/` 目录，未跑全量）
-- `AST_REFUSE_HEARD` / `AST_REFUSE_CANT` 各补 3 条变体到 6 条
-  （见 `voice-assistant/CHANGELOG.md` 待办）
-- 真机端到端：改车、TTS 播放、WebView2 渲染
+已完成（2026-10-19）：
+- ✅ 完整语音包重建：615 条（v1.1 422 + v1.2 193）全部合成，0 失败
+- ✅ `AST_REFUSE_HEARD` / `AST_REFUSE_CANT` 各补 6 条变体，已合成入包
+      （此前这两个 msgId **只存在于代码常量里**，content 与语音包都没有，
+       导致 `_say_with_fallback` 的后两级兜底为空、缺素材时静默）
+- ✅ 全量测试 480 项通过；`ai_bench` 与 `stress_test` 复跑数字未变差
+
+仍未验证（需真机）：
+- 改车广播在真实游戏里的行为（指令码/参数/回读都只用假 SDK 测过）
+- WebView2 渲染的中文字体观感（macOS 无头 Chromium 只能验对比度与布局）
+- 豆包 TTS 返回音频的真机播放（`fix_streaming_wav()` 已修长度字段，未实听）
 
 ## 9. 架构速查
 
