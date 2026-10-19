@@ -16,9 +16,6 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
     <img src="assets/readme/drag-on-xtt.png" width="220" align="middle" alt="车队支持：Drag-On XTT racing team，维护者提供的新图，透明底">
   </picture>
 </p>
-
-**MoonDrop 五款标识**
-
 <p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/moondrop-dark.png">
@@ -45,7 +42,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
   </picture>
 </p>
 
-🤝 赞助支持：**IFP Wargame、MoonDrop**；车队：**Drag-On XTT**。感谢他们对项目的支持。
+🤝 赞助支持：**MoonDrop、IFP Wargame**；车队：**Drag-On XTT Racing**。感谢他们对项目的支持。
 
 ## 开车时，直接开口问
 
