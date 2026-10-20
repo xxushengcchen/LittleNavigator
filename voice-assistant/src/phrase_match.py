@@ -56,7 +56,20 @@ def normalize(text: str) -> str:
 
 
 def _syllables(text: str) -> list[str]:
-    return [s for s in lazy_pinyin(text, style=Style.NORMAL, errors="ignore") if s]
+    """中文转拼音；拉丁字母/数字原样保留为一个音节。
+
+    为什么不能直接丢弃非中文：pypinyin 的 errors="ignore" 会把「abs」整个删掉，
+    于是「现在几档」与「abs现在几档」得到完全相同的拼音串，短问法白拿 1.00。
+    把英文保留成音节后，两条串长度不同，拼音通道不再把两者当成同一句；
+    「油还購吗」这类同音字错误仍按原样工作。
+    """
+    out: list[str] = []
+    for chunk in re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", text):
+        if chunk.isascii():
+            out.append(chunk)                      # abs / tc / 3 等保留
+        else:
+            out.extend(s for s in lazy_pinyin(chunk, style=Style.NORMAL, errors="ignore") if s)
+    return out
 
 
 def _lev(a: list, b: list) -> int:
