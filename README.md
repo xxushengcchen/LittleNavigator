@@ -59,6 +59,8 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 
 当前正式版为 [v1.5.0](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.5.0)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.5.0.md)。
 
+> **2026-10-20：安装包已重建。** v1.5.0 首版安装包存在缺陷——装完后「知识库」页显示读不到数据，开发期跑服务却正常。原因是页面在运行期去读源码文件，而打包后源码不随程序发布。已修复并替换同名附件，早前下载的请重新下载，并用 `SHA256SUMS.txt` 核对。说明见[版本记录的修复小节](docs/releases/v1.5.0.md#修复安装版读不到知识库)。
+
 <details>
 <summary>不开游戏试用、升级与安装问题</summary>
 
