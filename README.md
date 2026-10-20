@@ -4,7 +4,7 @@
 
 Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码 MIT](LICENSE)
 
-[⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [快速开始](#三步开始使用) · [使用指南](docs/guide/v1.4.5-interface.md) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
+[⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [完整使用指南](docs/guide/user-guide.md) · [快速开始](#三步开始使用) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
 
 <p>
   <picture>
@@ -57,7 +57,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 2. 打开软件，在「语音输入」选择麦克风，采集键盘或方向盘上的说话键，然后开启监听。
 3. 进入 iRacing，按住绑定键说「还剩多少时间」，松开后等待回答。
 
-当前正式版为 [v1.4.5](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.5)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.4.5.md)。
+当前正式版为 [v1.5.0](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.5.0)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.5.0.md)。
 
 <details>
 <summary>不开游戏试用、升级与安装问题</summary>
@@ -89,11 +89,17 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 
 ## 实际软件界面
 
-![v1.4.5 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.4.5/dashboard.png)
+![v1.5.0 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.5.0/dashboard.png)
 
 上图来自真实软件，遥测使用明确标记的模拟数据。进站示意图只读显示游戏服务勾选；断线后会清空旧遥测。
 
-[查看完整界面指南](docs/guide/v1.4.5-interface.md)，了解麦克风、耳机路由、文字试问和问答记录的使用方法。
+## 看清软件怎么理解你
+
+v1.5.0 新增「知识库」页面：把「问法 → 意图 → 遥测字段 → 播报方式」画成连线图，也能切换成问法密度矩阵。点开一个意图，就能看到它由哪些问法支撑、读哪些字段、怎么播报。页面只读，不播报、不改车、不调模型。
+
+![知识库选中「燃油」后的链路高亮与详情，模拟遥测](docs/ui-preview/v1.5.0/knowledge-detail.png)
+
+它同时是排查工具：「可疑样本」列出能被两条以上意图同时接受的问法，「数据缺口」是游戏端本来读不到的值，单独计数、不算缺陷。用法见[使用指南的知识库一节](docs/guide/user-guide.md#知识库)，数据来源与判定规则见[知识库文档](docs/knowledge-base.md)。
 
 ## 按需开启 AI 与进站控制
 
@@ -163,6 +169,14 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 - 支持的字段与赛车有关。真实麦克风、方向盘、AI/TTS 接口和比赛场景仍需要在实际使用中验证。
 
 更多数据范围、操作边界与后续计划见 [能力与限制](docs/guide/capabilities-and-limits.md)。
+
+## 完整使用指南
+
+十一个页面逐页说明、常用问法、AI 与语音合成的申请步骤、语音改车、语音包安装、文件位置和排错，都在 [**使用指南**](docs/guide/user-guide.md)。
+
+- 入门：[安装与启动](docs/guide/user-guide.md#1-安装与启动) · [首次设置](docs/guide/user-guide.md#2-首次设置能说话能听见) · [十一个页面](docs/guide/user-guide.md#3-十一个页面) · [怎么问](docs/guide/user-guide.md#4-怎么问) · [排错](docs/guide/user-guide.md#9-排错)
+- 专题：[API 接入](docs/guide/api-setup.md) · [能力与限制](docs/guide/capabilities-and-limits.md) · [Spotter 安装](docs/guide/spotter-install.md) · [知识库说明](docs/knowledge-base.md)
+- 版本：[v1.5.0 更新说明](docs/releases/v1.5.0.md) · [旧版界面指南](docs/guide/v1.4.5-interface.md)
 
 ## 开发和参与
 
