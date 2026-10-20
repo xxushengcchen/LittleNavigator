@@ -95,3 +95,16 @@ v1.4.5 本次后端回归 539 项、浏览器回归 16 组通过。原生打包�
 降采样后用 `tools/audit_offline.py` 核对全部音频为 16 kHz/16-bit/单声道且无损坏。
 
 不要把密钥写进源码、命令行示例、Issue 或 PR。语音服务调用可能收费，普通玩家使用现成发行版不需要调用这些工具。
+
+### 提交前的密钥扫描
+
+仓库提供两层自动检查，防止把密钥带进公开历史：
+
+- CI：`.github/workflows/secret-scan.yml` 在每次 push / PR 时用 gitleaks 扫全历史，并运行 `scripts/secret_scan.py --all` 补充 DeepSeek / 豆包这类非标准格式。
+- 本地（可选）：`python -m pip install pre-commit` 后执行 `pre-commit install`；提交时自动扫描暂存区，并阻止 `dev/`、`reference/`、`release-records/`、`AGENTS.md` 等本地专用路径。
+
+手动全量检查：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\secret_scan.py --all
+```

@@ -1,0 +1,30 @@
+# Gitleaks 配置：默认规则 + 本项目需要的非标准密钥格式。
+#
+# 本地运行：
+#   gitleaks detect --source . --config .gitleaks.toml --redact --verbose
+# CI 运行：.github/workflows/secret-scan.yml
+# 另有一层项目自定义扫描：python scripts/secret_scan.py --all
+#
+# 为什么需要自定义规则：GitHub Secret Scanning 只识别它支持的 provider 格式，
+# DeepSeek（sk- + 32 位）与火山引擎/豆包语音（UUID 形）不一定在清单内。
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "deepseek-api-key"
+description = "DeepSeek / OpenAI 兼容接口的 sk- API Key"
+regex = '''\bsk-[A-Za-z0-9_-]{20,}\b'''
+
+[[rules]]
+id = "volcengine-doubao-api-key"
+description = "火山引擎/豆包语音 API Key（UUID 形，需在 api_key / 密钥 等标签之后出现）"
+regex = '''(?i)(?:x-api-key|api[_-]?key|api\s*key|密钥)\s*["']?\s*[:=：]\s*["']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'''
+
+# 项目文档里公开的占位值与测试夹具，不是真实密钥。
+[[allowlists]]
+description = "公开占位值与测试夹具"
+regexes = [
+  '''sk-SECRET-123''',
+  '''sk-\.\.\.''',
+]

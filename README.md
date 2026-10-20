@@ -72,6 +72,13 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 
 系统缺少 WebView2 时，安装包中的微软官方引导器需要联网补装。项目安装包未代码签名，下载页附 `SHA256SUMS.txt`，用于核对安装文件。
 
+下载后建议先核对哈希，再双击安装（安装包未代码签名，哈希是目前唯一的完整性验证方式）：
+
+```powershell
+Get-FileHash .\LittleNavigator-<版本>-Setup-x64.exe -Algorithm SHA256
+# 与发布页 SHA256SUMS.txt 中对应文件的那一行对比
+```
+
 升级前退出软件，使用与旧版相同的安装范围和目录。安装版配置、日志和状态位于 `%LOCALAPPDATA%\LittleNavigator`，升级和卸载都会保留。旧便携版可在首次启动安装版前，把 `config.local.yaml` 复制到这个目录。
 
 </details>

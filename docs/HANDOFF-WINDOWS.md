@@ -214,7 +214,7 @@ python tools\stress_test.py
 
 ## 9. 密钥提醒
 
-开发机上用过的豆包、DeepSeek 密钥曾出现在对话记录里，**发布时不要复用**。
+本文不包含任何真实密钥。**发布时不要复用任何历史密钥或示例值。**
 构建脚本和配置文件里不应出现任何真实密钥——`config.yaml` 会随安装包分发，
 密钥只能走 `config.local.yaml` 或环境变量 `LITTLE_NAVIGATOR_AI_KEY`。
 

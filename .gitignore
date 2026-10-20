@@ -18,3 +18,26 @@ tmp/
 
 # 会话导出与临时文件
 dsh-tui-export-*.md
+
+# 凭据类文件（比上一组更严格：覆盖 config.local 其他后缀与常见私钥/凭据格式）
+**/config.local.*
+**/config.local.yml
+*.pfx
+*.p12
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+*.sqlite
+*.sqlite3
+secrets.*
+.npmrc
+.pypirc
+.netrc
+
+# 本地工作区专用（dev 脚本、参考资料、发布记录、本机 AGENTS.md、设计工具缓存）
+/dev/
+/reference/
+/release-records/
+/AGENTS.md
+.taste-skill/

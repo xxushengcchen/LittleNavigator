@@ -1,0 +1,28 @@
+# 提交前钥匙扫描（可选，CI 是兜底）。
+#
+# 安装一次即可：
+#   .\.venv\Scripts\python.exe -m pip install pre-commit
+#   .\.venv\Scripts\pre-commit.exe install
+#
+# 手动全量检查：
+#   .\.venv\Scripts\python.exe scripts/secret_scan.py --all
+#
+# 注意：本配置只调用仓库内的扫描脚本（Python 标准库，无额外依赖），
+# 不依赖 Go / Docker，Windows 开发者也能直接用。
+
+repos:
+  - repo: local
+    hooks:
+      - id: secret-scan-staged
+        name: 密钥扫描（暂存区）
+        entry: python scripts/secret_scan.py --staged
+        language: python
+        pass_filenames: false
+        always_run: true
+
+      - id: block-local-only-paths
+        name: 阻止提交本地专用目录/文件
+        entry: python scripts/check_staged_paths.py
+        language: python
+        pass_filenames: false
+        always_run: true
