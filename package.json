@@ -1,6 +1,6 @@
 {
   "name": "little-navigator-ui-qa",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": true,
   "description": "Development-only browser regression checks; the desktop app has no Node runtime dependency.",
   "scripts": {

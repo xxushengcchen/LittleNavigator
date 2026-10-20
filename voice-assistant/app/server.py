@@ -471,6 +471,69 @@ class Service:
             result["applied"] = applied
         return result
 
+    def _overlay_rect_logical(self, controller) -> dict:
+        """把原生窗口矩形换算成配置用的逻辑坐标（DPI 已考虑）。"""
+        rect = controller.read_window_rect()
+        scale = getattr(controller, "_dpi_scale", lambda: 1.0)() or 1.0
+        return {
+            "x": int(round(rect["left"] / scale)),
+            "y": int(round(rect["top"] / scale)),
+            "width": int(round(rect["width"] / scale)),
+            "height": int(round(rect["height"] / scale)),
+        }
+
+    def drag_overlay(self, kind: str) -> dict:
+        """POST /api/overlay/drag：原生窗口拖动/缩放。
+
+        页面不再用 screenX 算几何（WebView2 的坐标在移动中不可靠，实测拖不动）；
+        直接走 Win32 的 WM_NCLBUTTONDOWN，松手后把实际矩形写回配置。
+        """
+        controller = getattr(self, "overlay_controller", None)
+        if controller is None:
+            return {"ok": False, "available": False,
+                    "error": "游戏内 Overlay 不可用（浏览器模式或 --no-window）"}
+        kind = str(kind or "move")
+        if kind not in ("move", "resize"):
+            raise ValueError("kind 必须是 move 或 resize")
+        begin = getattr(controller,
+                        "begin_resize" if kind == "resize" else "begin_move",
+                        None)
+        if not callable(begin):
+            return {"ok": False, "available": True,
+                    "error": "当前版本不支持原生拖动"}
+        begin()
+        rect = self._overlay_rect_logical(controller)
+        saved = self.configure({"overlay": rect})
+        rect["ok"] = True
+        rect["kind"] = kind
+        rect["saved"] = bool((saved or {}).get("saved"))
+        return rect
+
+    def fit_overlay(self, body: dict) -> dict:
+        """POST /api/overlay/fit：按内容高度自动撑高窗口，防止回答溢出。"""
+        controller = getattr(self, "overlay_controller", None)
+        if controller is None:
+            return {"ok": False, "available": False,
+                    "error": "游戏内 Overlay 不可用"}
+        if not isinstance(body, dict):
+            raise ValueError("适配请求必须为 JSON 对象")
+        try:
+            height = int(body.get("height"))
+        except (TypeError, ValueError):
+            raise ValueError("height 必须是整数")
+        fit = getattr(controller, "fit_height", None)
+        if not callable(fit):
+            return {"ok": False, "available": True,
+                    "error": "当前版本不支持自动适配"}
+        rect = self._overlay_rect_logical(controller)
+        rect["height"] = max(140, min(400, height))
+        fit(rect["height"])
+        actual = self._overlay_rect_logical(controller)
+        saved = self.configure({"overlay": actual})
+        actual["ok"] = True
+        actual["saved"] = bool((saved or {}).get("saved"))
+        return actual
+
     def toggle_overlay(self) -> dict:
         """POST /api/overlay/toggle：运行时显示/隐藏，不动配置。"""
         controller = getattr(self, "overlay_controller", None)
@@ -901,9 +964,19 @@ class Handler(BaseHTTPRequestHandler):
                 ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
                 ".png": "image/png"}.get(path.suffix, "application/octet-stream")
         data = path.read_bytes()
+        token_meta = (f'<meta name="assistant-token" '
+                      f'content="{self.service.api_token}">').encode()
         if path.suffix == ".html":
-            data = data.replace(b'<script src="/static/app.js">',
-                f'<meta name="assistant-token" content="{self.service.api_token}"><script src="/static/app.js">'.encode())
+            if b'<script src="/static/app.js">' in data:
+                data = data.replace(
+                    b'<script src="/static/app.js">',
+                    token_meta + b'<script src="/static/app.js">')
+            elif b'<script src="/static/overlay.js">' in data:
+                # Overlay 页面也要能调 POST /api/overlay/layout_mode、/drag、/fit；
+                # 之前这里不注入 token，页面内布局拖动请求全是 403（实测拖不动）。
+                data = data.replace(
+                    b'<script src="/static/overlay.js">',
+                    token_meta + b'<script src="/static/overlay.js">')
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
@@ -1005,6 +1078,10 @@ class Handler(BaseHTTPRequestHandler):
                     bool(body.get("enabled"))))
             elif u.path == "/api/overlay/layout":
                 self._json(self.service.set_overlay_layout(body))
+            elif u.path == "/api/overlay/drag":
+                self._json(self.service.drag_overlay(body.get("kind")))
+            elif u.path == "/api/overlay/fit":
+                self._json(self.service.fit_overlay(body))
             elif u.path == "/api/config":
                 self._json(self.service.configure(body.get("patch") or {}))
             elif u.path == "/api/ai/test":

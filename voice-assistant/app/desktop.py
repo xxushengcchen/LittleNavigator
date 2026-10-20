@@ -40,6 +40,16 @@ WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
 LWA_ALPHA = 0x00000002
+LWA_COLORKEY = 0x00000001
+# 色键透明：页面把整窗铺成 #010203，系统把该颜色抠成完全透明。
+# pywebview 的 WebView2 透明在个别 Windows/DPI 组合下仍会露白底，
+# 色键是最后一道保险（文字抗锯齿会留下深色描边，反而利于游戏内辨认）。
+OVERLAY_COLOR_KEY = 0x00030201  # COLORREF: R=1,G=2,B=3 (#010203)
+WM_NCLBUTTONDOWN = 0x00A1
+HTCAPTION = 2
+HTBOTTOMRIGHT = 17
+WS_THICKFRAME = 0x00040000
+GWL_STYLE = -16
 SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
@@ -53,10 +63,10 @@ VK_L = 0x4C
 OVERLAY_HOTKEY_POLL_S = 0.06
 # 运行时几何钳制：与 app/static/overlay.js 的 MIN/MAX 保持一致，
 # 也避免拖动/缩放把窗口推到不可见区域后用户找不回来。
-OVERLAY_MIN_WIDTH = 240
-OVERLAY_MAX_WIDTH = 4096
-OVERLAY_MIN_HEIGHT = 80
-OVERLAY_MAX_HEIGHT = 2160
+OVERLAY_MIN_WIDTH = 480
+OVERLAY_MAX_WIDTH = 1200
+OVERLAY_MIN_HEIGHT = 140
+OVERLAY_MAX_HEIGHT = 400
 OVERLAY_COORD_LIMIT = 10000
 # 关闭状态时把 Overlay 停在屏幕外：透明窗口在页面导航时会被 pywebview
 # 主动 Show() 一次（透明窗口的已知行为），停在屏幕外可避免启动闪一下。
@@ -314,6 +324,133 @@ class OverlayController:
     def _alpha(self) -> int:
         return max(0, min(255, int(round(float(self._settings["opacity"]) * 255))))
 
+    def _force_transparent(self) -> None:
+        """把 WinForms Form / WebView2 自身底色也设为透明。
+
+        pywebview 只处理了 WebView2 的 DefaultBackgroundColor；实际分层窗口
+        仍可能由 Form.BackColor 透出白底（实测 720x200 整块白）。WebView2
+        的控制器属性只能在 UI 线程改，所以这里通过 Form.Invoke 投递。
+        """
+        try:
+            import clr
+            clr.AddReference("System.Drawing")
+            clr.AddReference("System.Windows.Forms")
+            from System.Drawing import Color
+            from System.Windows.Forms import ControlStyles
+            from System import Action
+            native = getattr(self.window, "native", None)
+            if native is None:
+                return
+
+            def apply() -> None:
+                try:
+                    native.SetStyle(ControlStyles.SupportsTransparentBackColor, True)
+                except Exception:  # noqa: BLE001
+                    pass
+                key = Color.FromArgb(1, 2, 3)
+                try:
+                    native.AllowTransparency = True
+                    native.BackColor = key
+                    native.TransparencyKey = key
+                except Exception:  # noqa: BLE001
+                    native.BackColor = Color.Transparent
+                webview = getattr(native, "webview", None)
+                if webview is not None:
+                    webview.DefaultBackgroundColor = Color.Transparent
+
+            if getattr(native, "InvokeRequired", False):
+                native.Invoke(Action(apply))
+            else:
+                # after_start 不在 WinForms UI 线程；即使 InvokeRequired 返回 False，
+                # 直接改 WebView2 控制器仍会抛「only UI thread」。统一走 Invoke。
+                try:
+                    native.Invoke(Action(apply))
+                except Exception:  # noqa: BLE001 - 真 UI 线程时 Invoke 可能不可用
+                    apply()
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[overlay] 透明底设置失败：{type(exc).__name__}: {exc}")
+
+    def begin_move(self) -> bool:
+        """跟随鼠标手动移动窗口。
+
+        原来用 WM_NCLBUTTONDOWN/HTCAPTION 让系统进入拖动循环，但 Overlay
+        带 WS_EX_NOACTIVATE、页面又在 WebView2 里，实测消息进入不了拖动循环。
+        改成轮询鼠标位置 + SetWindowPos，最稳，也不依赖窗口激活。
+        """
+        hwnd = self.hwnd()
+        if not hwnd:
+            raise RuntimeError("Overlay 窗口尚未创建原生句柄")
+        api = _api()
+        user32 = api["user32"]
+        ctypes = api["ctypes"]
+        wintypes = api["wintypes"]
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        start_x, start_y = int(pt.x), int(pt.y)
+        rect = self.read_window_rect()
+        base_left, base_top = rect["left"], rect["top"]
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+                break
+            user32.GetCursorPos(ctypes.byref(pt))
+            user32.SetWindowPos(
+                hwnd, -1, base_left + int(pt.x) - start_x,
+                base_top + int(pt.y) - start_y, 0, 0,
+                SWP_NOSIZE | SWP_NOACTIVATE, )
+            time.sleep(0.012)
+        return True
+
+    def begin_resize(self) -> bool:
+        """跟随鼠标手动缩放右下角；逻辑与 begin_move 一致。"""
+        hwnd = self.hwnd()
+        if not hwnd:
+            raise RuntimeError("Overlay 窗口尚未创建原生句柄")
+        api = _api()
+        user32 = api["user32"]
+        ctypes = api["ctypes"]
+        wintypes = api["wintypes"]
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        start_x, start_y = int(pt.x), int(pt.y)
+        rect = self.read_window_rect()
+        base_left, base_top = rect["left"], rect["top"]
+        scale = self._dpi_scale()
+        base_w = max(OVERLAY_MIN_WIDTH,
+                     int(round(rect["width"] / scale))) if scale else rect["width"]
+        base_h = max(OVERLAY_MIN_HEIGHT,
+                     int(round(rect["height"] / scale))) if scale else rect["height"]
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+                break
+            user32.GetCursorPos(ctypes.byref(pt))
+            dx = int(round((int(pt.x) - start_x) / scale)) if scale else int(pt.x) - start_x
+            dy = int(round((int(pt.y) - start_y) / scale)) if scale else int(pt.y) - start_y
+            width = max(OVERLAY_MIN_WIDTH, min(OVERLAY_MAX_WIDTH, base_w + dx))
+            height = max(OVERLAY_MIN_HEIGHT, min(OVERLAY_MAX_HEIGHT, base_h + dy))
+            user32.SetWindowPos(
+                hwnd, -1, base_left, base_top,
+                int(round(width * scale)), int(round(height * scale)),
+                SWP_NOACTIVATE, )
+            time.sleep(0.012)
+        return True
+
+    def fit_height(self, height: int) -> dict:
+        """按内容高度缩放窗口，保持左上角不动；返回实际矩形。"""
+        hwnd = self.hwnd()
+        if not hwnd:
+            raise RuntimeError("Overlay 窗口尚未创建原生句柄")
+        rect = self.read_window_rect()
+        scale = self._dpi_scale()
+        width = int(round(rect["width"] / scale)) if scale else rect["width"]
+        x = int(round(rect["left"] / scale)) if scale else rect["left"]
+        y = int(round(rect["top"] / scale)) if scale else rect["top"]
+        new_h = max(OVERLAY_MIN_HEIGHT, min(OVERLAY_MAX_HEIGHT, int(height)))
+        self._settings["height"] = new_h
+        self._set_pos(x, y, width, new_h)
+        return self.read_window_rect()
+
     def apply_native_style(self) -> dict:
         """点击穿透 + 不抢焦点 + 不占任务栏 + 分层透明度。
 
@@ -338,6 +475,7 @@ class OverlayController:
         if style_after != style_before:
             user32.SetWindowLongW(hwnd, GWL_EXSTYLE, int(style_after))
         self._apply_alpha()
+        self._force_transparent()
         self._style_applied = True
         return {
             "hwnd": hwnd,
@@ -674,6 +812,12 @@ def _transparent_color(color) -> bool:
                                                 "rgba(0, 0, 0, 0)")
 
 
+def _is_overlay_key_color(color) -> bool:
+    """页面整窗铺 #010203；桌面端用同名色键把它抠掉。"""
+    text = str(color or "").strip().lower().replace(" ", "")
+    return text in ("#010203", "rgb(1,2,3)", "rgba(1,2,3,1)")
+
+
 def overlay_smoke_facts(controller: OverlayController, window) -> dict:
     """创建窗口并应用样式后的机械断言（--overlay-smoke-test 用）。
 
@@ -728,12 +872,12 @@ def overlay_smoke_facts(controller: OverlayController, window) -> dict:
             and abs(rect["top"] - int(round(expected_y * scale))) <= tolerance),
         "ex_style_appwindow_cleared": not bool(style & WS_EX_APPWINDOW),
         "renderer_loaded": page.get("title") == "游戏内 Overlay",
-        # ---- v1.5.2 透明 / 贴合内容 / 统一字号 ----
+        # ---- v1.5.3 透明 / 贴合内容 / 统一字号 ----
         "page_background_transparent": (
             _transparent_color(page.get("body_background"))
             and _transparent_color(page.get("html_background"))),
-        "card_paints_own_background": (
-            _css_alpha(page.get("card_background")) > 0.2),
+        "card_background_transparent": (
+            _css_alpha(page.get("card_background")) <= 0.001),
         "card_hugs_content": (
             card_w > 0 and viewport_w > 0 and card_w < viewport_w - 16),
         "card_inside_window": (
@@ -1146,6 +1290,14 @@ def main(argv: list[str] | None = None) -> int:
         if overlay is not None:
             overlay_controller = OverlayController(overlay, override, log=print)
             svc.overlay_controller = overlay_controller
+            # loaded 事件在 WinForms UI 线程触发；after_start 是后台线程，
+            # 直接改 WebView2 控制器会抛「only UI thread」。
+            def _overlay_loaded() -> None:
+                try:
+                    overlay_controller._force_transparent()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠ Overlay 透明底初始化失败：{exc}", flush=True)
+            overlay.events.loaded += _overlay_loaded
         else:
             print("⚠ Overlay 窗口创建返回空，游戏内 Overlay 不可用")
         if args.window_smoke_test:

@@ -16,7 +16,7 @@
   var FALLBACK = { idle: "等待提问", thinking: "AI 正在思考…" };
   var OFFLINE_IDLE_FALLBACK = "等待主程序";
   /* 与桌面端 OverlayController.set_bounds 的钳制保持一致，避免拖出负尺寸后窗口消失 */
-  var MIN_WIDTH = 240, MAX_WIDTH = 4096, MIN_HEIGHT = 80, MAX_HEIGHT = 2160;
+  var MIN_WIDTH = 480, MAX_WIDTH = 1200, MIN_HEIGHT = 140, MAX_HEIGHT = 400;
   var LAYOUT_SEND_MS = 70;
 
   var root = document.getElementById("ov-card");
@@ -64,16 +64,22 @@
     if (hintEl) hintEl.hidden = !layoutMode;
     if (handleEl) handleEl.hidden = !layoutMode;
     if (!layoutMode) stopDrag();
+    if (!layoutMode) requestAnimationFrame(fitToContent);
   }
 
   /* 桌面端热键线程通过 evaluate_js 调这个入口（保持与原生样式同步） */
   window.ovSetLayoutMode = applyLayoutMode;
 
   function postJSON(path, body) {
+    var tokenMeta = document.querySelector('meta[name="assistant-token"]');
+    var headers = { "Content-Type": "application/json" };
+    if (tokenMeta && tokenMeta.content) {
+      headers["X-Assistant-Token"] = tokenMeta.content;
+    }
     return fetch(path, {
       method: "POST",
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      headers: headers,
       body: JSON.stringify(body)
     }).then(function (response) {
       if (!response.ok) throw new Error("HTTP " + response.status);
@@ -99,6 +105,22 @@
 
   function toggleLayoutMode() {
     return requestLayoutMode(!layoutMode);
+  }
+
+  /* 原生拖动：交给 Win32 的 WM_NCLBUTTONDOWN，避免 WebView2 里 screenX 在
+     窗口移动过程中不准导致「拖不动」。接口 404 时退回页面内拖动，方便浏览器预览。 */
+  function nativeDrag(kind, event) {
+    event.preventDefault();
+    postJSON("/api/overlay/drag", { kind: kind })
+      .then(function (data) {
+        if (data && typeof data.x === "number" && typeof data.y === "number" &&
+            typeof data.width === "number" && typeof data.height === "number") {
+          geom = { x: data.x, y: data.y, width: data.width, height: data.height };
+        }
+      })
+      .catch(function () {
+        beginDrag(kind, event);
+      });
   }
 
   document.addEventListener("keydown", function (event) {
@@ -201,12 +223,43 @@
     if (pendingLayout) flushLayout();
   }
 
+  /* 文字变长时把窗口撑高，避免回答被窗口裁掉。只长不缩，用户手动调的
+     高度不会被下一次短回答改回去。 */
+  var fitTimer = 0;
+  var lastFitHeight = 0;
+  function fitToContent() {
+    if (layoutMode || drag || pendingLayout) return;
+    var card = root;
+    if (!card) return;
+    var height = Math.ceil(card.getBoundingClientRect().height + 20);
+    height = clamp(height, MIN_HEIGHT, MAX_HEIGHT);
+    if (height <= window.innerHeight + 2) return;
+    if (Math.abs(height - lastFitHeight) < 4) return;
+    lastFitHeight = height;
+    if (fitTimer) clearTimeout(fitTimer);
+    fitTimer = setTimeout(function () {
+      fitTimer = 0;
+      postJSON("/api/overlay/fit", { height: height })
+        .then(function (data) {
+          if (data && typeof data.height === "number") {
+            geom = {
+              x: typeof data.x === "number" ? data.x : (geom && geom.x),
+              y: typeof data.y === "number" ? data.y : (geom && geom.y),
+              width: typeof data.width === "number" ? data.width : window.innerWidth,
+              height: data.height
+            };
+          }
+        })
+        .catch(function () { /* 浏览器预览没有桌面窗口，忽略 */ });
+    }, 120);
+  }
+
   document.addEventListener("pointerdown", function (event) {
     if (!layoutMode) return;
     var onHandle = handleEl &&
       (event.target === handleEl ||
        (handleEl.contains && handleEl.contains(event.target)));
-    beginDrag(onHandle ? "resize" : "move", event);
+    nativeDrag(onHandle ? "resize" : "move", event);
   }, true);
   document.addEventListener("pointermove", function (event) {
     if (drag) moveDrag(event);
@@ -246,6 +299,7 @@
     setText(heardEl, available ? (heard || "等待语音输入") : OFFLINE_IDLE_FALLBACK);
     setText(answerEl, available ? answerTextFor(state, live) : "Overlay 未就绪");
     syncLayout(data);
+    requestAnimationFrame(fitToContent);
   }
 
   function signatureOf(data) {
