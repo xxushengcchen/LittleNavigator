@@ -97,12 +97,45 @@ ABS/TC 仍走设置、拉丁前缀会改变拼音串、同音错字仍可匹配�
 同一意图两处可能差几条，例如「燃油」是 156 条短语 / 158 条原始示例。为避免被误读成错误，
 矩阵列头写作「示例合计」，表下另有一行说明。早期列头只写「合计」，容易与图谱对不上。
 
+## 修复：安装版「读不到知识库」（v1.5.0 发布当天）
+
+首版 v1.5.0 装完之后，知识库页显示「读不到知识库」，开发期跑服务却一切正常。
+
+根因：`_output_modes()` 为了「改代码后页面自动跟着变」，直接读
+`telemetry_answers.py` 与 `router.py` 的**源码**。PyInstaller 只打包 `.pyc`，
+安装目录 `_internal/src/` 下根本没有 `.py`，于是
+
+```
+FileNotFoundError: ...\_internal\src\telemetry_answers.py
+```
+
+`/api/knowledge` 直接返回 500。开发机源码就在旁边，所以那套浏览器回归全部通过，
+只有装完才会暴露——测试环境与发布形态不一致，这类问题只能靠「在打包产物上跑」发现。
+
+两处都改了：
+
+- `_output_modes()` 改为声明式 `OUTPUT_MODES` 表，运行期只读这张表；不再触碰任何 `.py`。
+- 短语库路径改用 `phrase_match.default_library()`，和匹配器共用同一份解析规则
+  （打包后优先读 exe 旁边那份），不再用 `Path(__file__).parents[1]`。
+
+代价是「改路由代码要记得改表」，所以新增 `tests/test_knowledge_packaging.py`（6 项）：
+
+- `build()` 在运行期读任何 `.py` / `.pyc` 就失败（用 `Path.read_text` 探针拦截）；
+- 模拟安装版布局（`sys.frozen`、exe 旁有短语库、模块目录无源码）跑完整 `build()`；
+- 重新解析两个源码文件的 `if intent=='query_*':` 分支，与 `OUTPUT_MODES` 逐项比对，
+  漏改这张表测试就会失败；
+- 短语库解析在冻结/非冻结两种情形下都指向预期文件。
+
+修复后用打包产物实测：`/api/knowledge` 返回 200，数据与开发期完全一致
+（14 意图 / 1,772 短语 / 75 探针 / 1 可疑 / 16 数据缺口）；对着打包后的服务再跑
+一遍知识库专项，仍是 12 项全过。
+
 ## 验证
 
 ```
-# 后端（含新增的 8 项问法边界测试）
+# 后端（含 8 项问法边界 + 6 项打包回归）
 cd voice-assistant && python -m pytest tests -q
-# → 547 passed, 2157 subtests passed
+# → 553 passed, 2185 subtests passed
 
 # 启动服务
 python -m app.server --sim --no-listen --no-browser --port 8793
@@ -116,6 +149,12 @@ node voice-assistant/tools/test_knowledge_ui.cjs
 set LN_UI_OUT=tmp/ui-qa-v1.5.0
 node voice-assistant/tools/test_ui.cjs
 # → {"passed":true,"tests":16}
+
+# 打包产物实测（先启动 dist 里的 exe）
+.\小小领航员.exe --sim --no-listen --no-window --port 8796
+set LN_UI_URL=http://127.0.0.1:8796
+node voice-assistant/tools/test_knowledge_ui.cjs
+# → DONE 12 checks passed
 ```
 
 专项覆盖：导航与标题、统计来自接口、14/8/3 个节点、选中只高亮相关连线、切模式保留选择、
@@ -126,8 +165,10 @@ node voice-assistant/tools/test_ui.cjs
 
 ## 已知边界
 
-- 没有在 WebView2 真机窗口里目视验证，只在同版本 Edge 内核渲染。
+- 打包产物已验证接口与十二项交互（用同版本 Edge 内核驱动打包后的服务），但没有在
+  WebView2 原生窗口里逐页目视检查渲染细节。
 - 分类计数是关键词启发式，只用于看分布，不参与匹配。
 - 冲突检测只覆盖固定探针与规范问句，不代表全部 1,791 条问法都已检查。
 - 链路里的遥测来自模拟快照；真实连接时同样的问法可能有不同结果。
 - 「胎压多少」缺对象属于词库覆盖面，未改；补问法时说清左前/右前/左后/右后即可。
+- `OUTPUT_MODES` 是手工维护的表；漏改不会在运行期报错，只能在跑测试时发现。

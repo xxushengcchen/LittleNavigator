@@ -5,6 +5,8 @@
     页面里再抄一份常量，改词库时两边就会悄悄对不上。
   · 只读、不联网、不改配置；全部由 intents_examples.yaml、question_forms、
     PhraseMatcher、router 和 telemetry_answers 现算。
+  · 只用运行期拿得到的数据，不读 .py 源码：打包后源码不随程序发布，
+    读源码会让这个接口在安装版里直接 500（v1.5.0 首版正是这个原因坏掉）。
 
 返回结构（GET /api/knowledge）：
     totals   总数字
@@ -28,10 +30,17 @@ from pathlib import Path
 import yaml
 
 from . import question_forms
-from .phrase_match import PhraseMatcher, normalize
+from .phrase_match import PhraseMatcher, default_library, normalize
 from .telemetry import SimTelemetry, Snapshot
 
-LIBRARY = Path(__file__).resolve().parents[1] / "intents_examples.yaml"
+
+def _library_path() -> Path:
+    """短语库路径：和匹配器共用同一份解析规则。
+
+    不能写成 Path(__file__).parents[1]：打包后本模块在 _internal 里，
+    而短语库既随包内置一份，也允许用户把改过的版本放在 exe 旁边。
+    """
+    return default_library()
 
 # 界面标题用；顺序即页面顺序（与 intents_examples.yaml 的分节顺序无关）。
 INTENT_LABELS: dict[str, str] = {
@@ -107,7 +116,7 @@ def _category(text: str) -> str:
 
 
 def _load_library() -> dict:
-    data = yaml.safe_load(LIBRARY.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(_library_path().read_text(encoding="utf-8")) or {}
     return {k: v for k, v in data.items()
             if isinstance(v, dict) and v.get("route") == "state_layer"}
 
@@ -143,53 +152,32 @@ def _fields_for(intent: str, spec: dict) -> list[str]:
     return out or ["car"]
 
 
+# 每个意图可能产出的播报方式（顺序即界面顺序）。
+#
+# 运行期只用这份表，不再读 telemetry_answers.py / router.py 的源码：
+# 打包后源码不随程序发布，读 .py 会直接抛 FileNotFoundError，整个接口 500。
+# 代价是「改代码要记得改表」，因此 tests/test_knowledge_packaging.py 会
+# 重新解析两个源码文件的分支，与这张表逐项比对，漏改就测试失败。
+OUTPUT_MODES: dict[str, tuple[str, ...]] = {
+    "query_fuel": ("整句", "数值", "时间"),
+    "query_laptime": ("整句", "数值"),
+    "query_laps": ("整句", "数值", "时间"),
+    "query_position": ("整句", "数值"),
+    "query_gap": ("整句", "数值"),
+    "query_opponent": ("整句", "数值"),
+    "query_pit": ("整句", "数值", "时间"),
+    "query_weather": ("整句", "数值"),
+    "query_tyre": ("数值",),
+    "query_damage": ("整句", "数值"),
+    "query_flags": ("整句",),
+    "query_engine": ("整句", "数值"),
+    "query_car_settings": ("数值",),
+    "query_speed": ("数值",),
+}
+
+
 def _output_modes() -> dict[str, list[str]]:
-    """从 telemetry_answers / router 的源码里读每个意图会产出哪几种播报。
-
-    直接读源码是刻意的：改代码后页面自动跟着变，不需要再维护第二份清单。
-    """
-    root = Path(__file__).resolve().parent
-    modes: dict[str, set[str]] = {}
-
-    def add(intent: str, kind: str) -> None:
-        modes.setdefault(intent, set()).add(kind)
-
-    for filename in ("telemetry_answers.py", "router.py"):
-        text = (root / filename).read_text(encoding="utf-8")
-        blocks = re.split(r"if intent=='(query_[a-z_]+)':", text)
-        for i in range(1, len(blocks), 2):
-            intent, body = blocks[i], blocks[i + 1]
-            if "numeric(" in body:
-                add(intent, "数值")
-            if "timed(" in body or "duration(" in body:
-                add(intent, "时间")
-            if "state(" in body or "Decision([" in body:
-                add(intent, "整句")
-            if "refuse(" in body:
-                add(intent, "拒绝")
-    # router._ROUTES 里每个意图至少能播一条整句或数值
-    fallback = {
-        "query_fuel": ["整句", "数值"],
-        "query_laptime": ["数值"],
-        "query_laps": ["整句", "数值", "时间"],
-        "query_position": ["整句", "数值"],
-        "query_gap": ["整句", "数值"],
-        "query_opponent": ["数值"],
-        "query_pit": ["整句", "数值", "时间"],
-        "query_weather": ["整句", "数值"],
-        "query_tyre": ["数值"],
-        "query_damage": ["整句"],
-        "query_flags": ["整句"],
-        "query_engine": ["整句", "数值"],
-        "query_car_settings": ["数值"],
-        "query_speed": ["数值"],
-    }
-    out: dict[str, list[str]] = {}
-    for intent, kinds in fallback.items():
-        found = modes.get(intent) or set()
-        merged = [k for k in ("整句", "数值", "时间") if k in found or k in kinds]
-        out[intent] = merged or kinds
-    return out
+    return {intent: list(kinds) for intent, kinds in OUTPUT_MODES.items()}
 
 
 def _trace(matcher: PhraseMatcher, snap: Snapshot, query: str, router) -> dict:
@@ -271,7 +259,7 @@ def _intent_accepts(intent: str, query: str) -> bool:
 
 def build(force: bool = False) -> dict:
     """组装整份知识库数据；结果缓存 30 秒，避免每次切页都重算。"""
-    key = (LIBRARY.stat().st_mtime, time.time() // _CACHE_SECONDS)
+    key = (_library_path().stat().st_mtime, time.time() // _CACHE_SECONDS)
     if not force and _CACHE["key"] == key and _CACHE["value"] is not None:
         return _CACHE["value"]
 
