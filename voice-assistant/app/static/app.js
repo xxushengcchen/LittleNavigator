@@ -77,6 +77,7 @@
     $('#ira-main').scrollTop = 0;
     if (id === "log") loadLog();
     if (id === "stats") loadStats();
+    if (id === "knowledge") loadKnowledge();
     if (id === "model" || id === "asr" || id === "pack" || id === "route" || id === "ai" || id === "pit") loadSettings();
   }
   tabs.forEach(function (b) {
@@ -1009,6 +1010,428 @@
       if(window.__state){var stale=Object.assign({},window.__state,{telemetry:{connected:false},last:window.__state.last});renderState(stale);$('#connection-lost').hidden=false;setText('.ira-session','服务连接已断开');['link','mic','ai','car'].forEach(function(k){busSet(k,'off','状态未知');});$('#dashboard-listen').disabled=true;$('#dashboard-listen').dataset.networkFailed='1';}
     }
   }
+  /* ---------- 知识库 ----------
+     第十一个页面：图谱 / 矩阵两种看法，共用右侧详情与选中状态。
+     数据只读，来自 GET /api/knowledge；不播报、不改车、不调模型。 */
+  var KB = {data: null, mode: "graph", selected: null, category: null, filter: ""};
+  var KB_CATEGORIES = ["对象/目标", "时间/圈数", "趋势/预测", "比较/差值", "状态/是否", "基础读数"];
+  var KB_COL = {intent: 8, field: 286, out: 552};
+  var KB_IW = 208, KB_FW = 232, KB_OW = 112;
+  var KB_TOP = 44, KB_IH = 28, KB_IGAP = 6, KB_FH = 54, KB_FGAP = 8, KB_OY = 50, KB_OGAP = 86;
+
+  function kbField(key) {
+    return (KB.data.fields || []).filter(function (f) { return f.key === key; })[0];
+  }
+  function kbIntent(key) {
+    return (KB.data.intents || []).filter(function (i) { return i.key === key; })[0];
+  }
+  function kbVisible() {
+    var q = KB.filter.toLowerCase();
+    if (!q) return KB.data.intents;
+    return KB.data.intents.filter(function (i) {
+      if (i.label.toLowerCase().indexOf(q) >= 0 || i.key.toLowerCase().indexOf(q) >= 0) return true;
+      if ((i.samples || []).some(function (s) { return s.toLowerCase().indexOf(q) >= 0; })) return true;
+      return i.fields.some(function (k) {
+        var f = kbField(k);
+        if (!f) return false;
+        return f.label.toLowerCase().indexOf(q) >= 0 ||
+          f.items.some(function (x) { return x.toLowerCase().indexOf(q) >= 0; });
+      });
+    });
+  }
+  function kbSelectedKind() {
+    if (!KB.selected) return null;
+    return KB.selected.split(":")[0];
+  }
+  function kbSelectedKey() {
+    if (!KB.selected) return null;
+    return KB.selected.split(":")[1];
+  }
+
+  function kbEl(tag, attrs, parent) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  function renderKbGraph() {
+    var host = $("[data-kb-graph]");
+    if (!host) return;
+    var intents = kbVisible();
+    host.innerHTML = "";
+    if (!intents.length) {
+      host.innerHTML = '<p class="ira-empty">没有匹配的意图，清空过滤再试。</p>';
+      return;
+    }
+    var kind = kbSelectedKind(), key = kbSelectedKey();
+    var fields = KB.data.fields.filter(function (f) {
+      return !KB.filter || intents.some(function (i) { return i.fields.indexOf(f.key) >= 0; }) ||
+        f.label.toLowerCase().indexOf(KB.filter.toLowerCase()) >= 0;
+    });
+    var outputs = KB.data.outputs.filter(function (o) {
+      return !KB.filter || intents.some(function (i) { return i.outputs.indexOf(o) >= 0; });
+    });
+
+    var iy = {}, fy = {}, oy = {};
+    intents.forEach(function (n, i) { iy[n.key] = KB_TOP + i * (KB_IH + KB_IGAP); });
+    fields.forEach(function (n, i) { fy[n.key] = KB_TOP + i * (KB_FH + KB_FGAP); });
+    outputs.forEach(function (n, i) { oy[n] = KB_OY + i * KB_OGAP; });
+    // 三列各自按内容高度排布，画布取最高的一列，避免把节点挤在一起。
+    var H = Math.max(KB_TOP + intents.length * (KB_IH + KB_IGAP) + 14,
+                     KB_TOP + fields.length * (KB_FH + KB_FGAP) + 14,
+                     KB_OY + outputs.length * KB_OGAP + 14,
+                     320);
+
+    var svg = kbEl("svg", { viewBox: "0 0 672 " + H, role: "img",
+      "aria-label": "意图、遥测字段与播报方式的连线图" }, host);
+    var gE = kbEl("g", {}, svg), gN = kbEl("g", {}, svg);
+    var focus = !!KB.selected;
+    // 选中意图时，和它直接相连的字段/播报要保留可读，而不是一起压暗。
+    var relatedFields = {}, relatedOuts = {};
+    if (focus && kind === "intent") {
+      var sel = kbIntent(key);
+      if (sel) {
+        (sel.fields || []).forEach(function (f) { relatedFields[f] = true; });
+        (sel.outputs || []).forEach(function (o) { relatedOuts[o] = true; });
+      }
+    }
+
+    intents.forEach(function (n) {
+      var y = iy[n.key] + KB_IH / 2;
+      // 选中某个意图时，无论从它出发的哪条边都算「相关」，让链路能一眼读出来。
+      var selIntent = focus && kind === "intent" && key === n.key;
+      n.fields.forEach(function (fk) {
+        if (fy[fk] === undefined) return;
+        var y2 = fy[fk] + KB_FH / 2;
+        var x1 = KB_COL.intent + KB_IW, x2 = KB_COL.field, mx = (x1 + x2) / 2;
+        var on = !focus || selIntent || (kind === "field" && key === fk);
+        kbEl("path", { d: "M" + x1 + " " + y + " C " + mx + " " + y + ", " + mx + " " + y2 + ", " + x2 + " " + y2,
+          class: "kb-edge" + (on ? " on" : " off"),
+          stroke: on && focus ? "#7f9dc4" : "#3d4c60" }, gE);
+      });
+      (n.outputs || []).forEach(function (ok) {
+        if (oy[ok] === undefined) return;
+        var y2 = oy[ok] + 16;
+        var x1 = KB_COL.intent + KB_IW, x2 = KB_COL.out, mx = (x1 + x2) / 2;
+        var on = !focus || selIntent || (kind === "out" && key === ok);
+        kbEl("path", { d: "M" + x1 + " " + y + " C " + mx + " " + y + ", " + mx + " " + y2 + ", " + x2 + " " + y2,
+          class: "kb-edge" + (on ? " on" : " off"),
+          stroke: on && focus ? "#c9a86a" : "#7d6038", "stroke-dasharray": "3 4" }, gE);
+      });
+    });
+
+    function node(cls, x, y, w, h, label, sub, sub2, nodeKey, aria, oneLine) {
+      var g = kbEl("g", { class: "kb-node" + cls, tabindex: "0", role: "button", "aria-label": aria }, gN);
+      g.dataset.key = nodeKey;
+      kbEl("rect", { x: x, y: y, width: w, height: h, rx: 4, class: "kb-box" }, g);
+      var t = kbEl("text", { x: x + 10, y: y + (oneLine ? 18 : 15), class: "kb-name" }, g);
+      t.textContent = label;
+      if (oneLine) {
+        // 单行：名称在左、条数在右。窗口被详情栏挤压时，两行文本会缩到不足 10px。
+        var r = kbEl("text", { x: x + w - 10, y: y + 18, class: "kb-num", "text-anchor": "end" }, g);
+        r.textContent = sub || "";
+      } else if (sub) {
+        var s1 = kbEl("text", { x: x + 10, y: y + 28, class: "kb-num" }, g); s1.textContent = sub;
+      }
+      if (!oneLine && sub2) {
+        var s2 = kbEl("text", { x: x + 10, y: y + 40, class: "kb-lbl" }, g); s2.textContent = sub2;
+      }
+      g.addEventListener("click", function () { kbSelect(nodeKey); });
+      g.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); kbSelect(nodeKey); }
+      });
+    }
+
+    intents.forEach(function (n) {
+      var on = kind === "intent" && key === n.key;
+      node(on ? " on" : (focus ? " off" : ""), KB_COL.intent, iy[n.key], KB_IW, KB_IH, n.label,
+        n.phrases + " 条", null, "intent:" + n.key,
+        n.label + "，" + n.phrases + " 条短语", true);
+    });
+    fields.forEach(function (n) {
+      var on = kind === "field" && key === n.key;
+      var linked = relatedFields[n.key] ? " linked" : "";
+      node(on ? " on" : (focus ? " off" + linked : ""), KB_COL.field, fy[n.key], KB_FW, KB_FH, n.label,
+        n.items.slice(0, 2).join(" · "), n.items.length + " 个字段", "field:" + n.key,
+        n.label + "，" + n.items.length + " 个字段", false);
+    });
+    outputs.forEach(function (n) {
+      var on = kind === "out" && key === n;
+      var linked = relatedOuts[n] ? " linked" : "";
+      node(on ? " on" : (focus ? " off" + linked : ""), KB_COL.out, oy[n], KB_OW, 32, n, null, null, "out:" + n,
+        n + " 播报方式", false);
+    });
+
+    [["意图 · " + intents.length, KB_COL.intent],
+     ["遥测字段 · " + fields.length + " 组", KB_COL.field],
+     ["播报方式", KB_COL.out]].forEach(function (pair) {
+      var h = kbEl("text", { x: pair[1], y: 26, class: "kb-head" }, gN);
+      h.textContent = pair[0];
+    });
+  }
+
+  function renderKbMatrix() {
+    var host = $("[data-kb-matrix]");
+    if (!host) return;
+    var intents = kbVisible();
+    if (!intents.length) {
+      host.innerHTML = '<p class="ira-empty">没有匹配的意图，清空过滤再试。</p>';
+      return;
+    }
+    var kind = kbSelectedKind(), key = kbSelectedKey();
+    var maxCell = 1;
+    intents.forEach(function (n) {
+      KB_CATEGORIES.forEach(function (c) { maxCell = Math.max(maxCell, n.buckets[c] || 0); });
+    });
+    function color(v) {
+      if (!v) return "var(--raised)";
+      var t = v / maxCell;
+      if (t < 0.05) return "#2f4a66";
+      if (t < 0.2) return "#3f7cbe";
+      if (t < 0.6) return "#5b95dc";
+      return "#6ba8ed";
+    }
+    var html = '<table aria-label="意图与问法语义类别的数量矩阵"><thead><tr>' +
+      '<th class="kb-rowhead" scope="col">意图 / 类别</th>';
+    KB_CATEGORIES.forEach(function (c) { html += '<th scope="col">' + esc(c) + "</th>"; });
+    html += '<th scope="col">示例合计</th></tr></thead><tbody>';
+    intents.forEach(function (n) {
+      var on = kind === "intent" && key === n.key;
+      html += '<tr><th scope="row" class="kb-rowhead"><button type="button" data-kb-row="' + esc(n.key) + '"' +
+        (on ? ' class="on"' : "") + "><span>" + esc(n.label) + "</span><b>" + n.examples +
+        "</b></button></th>";
+      KB_CATEGORIES.forEach(function (c) {
+        var v = n.buckets[c] || 0;
+        var sel = KB.category === c && on;
+        html += '<td><button type="button" class="kb-cell' + (v ? "" : " dim") + (sel ? " sel" : "") +
+          '" data-kb-cell="' + esc(n.key) + "|" + esc(c) + '" style="background:' + color(v) +
+          ";color:" + (v ? "var(--ink)" : "var(--faint)") + '" aria-label="' + esc(n.label) + "，" +
+          esc(c) + "，" + v + ' 条问法">' + v + "</button></td>";
+      });
+      html += '<td class="kb-total">' + n.examples + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    host.innerHTML = html;
+    $$("[data-kb-row]", host).forEach(function (b) {
+      b.onclick = function () { kbSelect("intent:" + b.getAttribute("data-kb-row")); };
+    });
+    $$("[data-kb-cell]", host).forEach(function (b) {
+      b.onclick = function () {
+        var parts = b.getAttribute("data-kb-cell").split("|");
+        var already = KB.selected === "intent:" + parts[0] && KB.category === parts[1];
+        KB.selected = "intent:" + parts[0];
+        KB.category = already ? null : parts[1];
+        kbRenderAll();
+      };
+    });
+  }
+
+  function kbStatCard(label, value, meta) {
+    return '<div class="ira-stat"><span class="ira-label">' + esc(label) + '</span><div class="ira-num">' +
+      value + "</div><span class=\"ira-meta\">" + esc(meta) + "</span></div>";
+  }
+
+  function renderKbStats() {
+    var box = $("[data-kb-stats]");
+    if (!box || !KB.data) return;
+    var t = KB.data.totals;
+    box.innerHTML = kbStatCard("意图", t.intents, "全部可直接回答") +
+      kbStatCard("已载入短语", t.phrases.toLocaleString(), "另有 " + t.negatives + " 条拒绝清单") +
+      kbStatCard("原始示例", t.examples.toLocaleString(), "intents_examples.yaml") +
+      kbStatCard("规范问句", t.canonical, t.aliases.toLocaleString() + " 条别名") +
+      kbStatCard("规范候选", t.candidates, "去重合并后") +
+      kbStatCard("遥测字段组", t.fields, "按用途归并");
+    var stamp = $("#kb-stamp");
+    if (stamp) stamp.textContent = "v" + (KB.data.app_version || "—") + " · " + KB.data.generated;
+  }
+
+  function renderKbChips() {
+    var box = $("#kb-chips");
+    if (!box || !KB.data) return;
+    var conflicts = KB.data.conflicts || [];
+    var chips = [
+      { label: "全部", run: function () { KB.selected = null; KB.category = null; KB.filter = ""; $("#kb-filter").value = ""; } },
+      { label: "问法最多", run: function () {
+          var top = KB.data.intents.slice().sort(function (a, b) { return b.phrases - a.phrases; })[0];
+          KB.selected = "intent:" + top.key; KB.category = null;
+        } },
+      { label: "可疑样本", run: function () {
+          var wrap = $("#kb-detail");
+          wrap.innerHTML = '<div class="kb-eyebrow"><span>可疑样本</span><span>' + conflicts.length +
+            " 条</span></div><h2>规则问题</h2><p class=\"kb-sub\">这些问法的规则层结果可疑，不是数据缺失。</p>" +
+            '<div class="kb-rows">' + (conflicts.length ? conflicts.map(function (c) {
+              return '<div class="kb-row" title="' + esc(c.note) + '"><span>' + esc(c.q) + "</span><b>" +
+                esc(c.kind) + "</b></div>";
+            }).join("") : '<div class="kb-row"><span>没有发现规则问题</span><b>—</b></div>') + "</div>" +
+            '<div class="kb-note">数据缺失类拒绝（模拟快照没有 RPM、进站检测等）共 ' +
+            (KB.data.data_gaps || 0) + " 条，已单独计数，不列为规则问题。</div>";
+        } },
+      { label: "缺口", run: function () {
+          var worst = KB.data.intents.slice().sort(function (a, b) {
+            var za = KB_CATEGORIES.filter(function (c) { return !a.buckets[c]; }).length;
+            var zb = KB_CATEGORIES.filter(function (c) { return !b.buckets[c]; }).length;
+            return zb - za;
+          })[0];
+          KB.selected = worst ? "intent:" + worst.key : null;
+          KB.category = null;
+        } }
+    ];
+    box.innerHTML = chips.map(function (c, i) {
+      return '<button type="button" class="ira-btn kb-chip" aria-pressed="' + (!KB.selected && i === 0) +
+        '">' + esc(c.label) + "</button>";
+    }).join("");
+    $$(".kb-chip", box).forEach(function (b, i) {
+      b.onclick = function () {
+        $$(".kb-chip", box).forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+        b.setAttribute("aria-pressed", "true");
+        chips[i].run();
+        if (chips[i].label !== "可疑样本") kbRenderAll();
+      };
+    });
+  }
+
+  function renderKbDetail() {
+    var box = $("#kb-detail");
+    if (!box) return;
+    if (!KB.data) { box.innerHTML = '<p class="ira-meta">正在读取知识库…</p>'; return; }
+    if (!KB.selected) {
+      var conflicts = KB.data.conflicts || [];
+      box.innerHTML = '<div class="kb-eyebrow"><span>未选择</span><span>' +
+        (KB.mode === "graph" ? "点节点" : "点行或格子") + "</span></div>" +
+        "<h2>先选一个意图</h2>" +
+        '<p class="kb-sub">图谱看链路，矩阵看密度；两种视图共用这份详情，选中状态会保留。</p>' +
+        '<div class="kb-block"><h3>库内可疑样本 <span>' + conflicts.length + " 条</span></h3>" +
+        '<div class="kb-rows">' + (conflicts.length ? conflicts.map(function (c) {
+          return '<div class="kb-row" title="' + esc(c.note) + '"><span>' + esc(c.q) + "</span><b>" +
+            esc(c.kind) + "</b></div>";
+        }).join("") : '<div class="kb-row"><span>没有发现规则问题</span><b>—</b></div>') + "</div></div>" +
+        '<div class="kb-note">数据缺失类拒绝 ' + (KB.data.data_gaps || 0) +
+        " 条已单独计数：模拟快照没有 RPM、进站检测等实时值，不代表词库出错。</div>";
+      return;
+    }
+    var kind = kbSelectedKind(), key = kbSelectedKey();
+    if (kind === "field") {
+      var f = kbField(key);
+      box.innerHTML = '<div class="kb-eyebrow"><span>字段组</span><span>' + f.items.length + " 个</span></div>" +
+        "<h2>" + esc(f.label) + "</h2><p class=\"kb-sub\">" + esc(f.items.join(" · ")) + "</p>" +
+        '<div class="kb-block"><h3>使用它的意图 <span>' + f.users.length + "</span></h3>" +
+        '<div class="kb-rows">' + f.users.map(function (k) {
+          var i = kbIntent(k);
+          return '<div class="kb-row"><span>' + esc(i.label) + "</span><b>" + i.phrases + " 条</b></div>";
+        }).join("") + "</div></div>" +
+        '<div class="kb-note">字段名逐条对照 Snapshot；实际读取由路由层决定。</div>';
+      return;
+    }
+    if (kind === "out") {
+      var users = KB.data.intents.filter(function (i) { return i.outputs.indexOf(key) >= 0; });
+      box.innerHTML = '<div class="kb-eyebrow"><span>播报方式</span><span>' + users.length + " 个意图</span></div>" +
+        "<h2>" + esc(key) + "</h2>" +
+        '<div class="kb-block"><h3>使用它的意图</h3><div class="kb-rows">' + users.map(function (u) {
+          return '<div class="kb-row"><span>' + esc(u.label) + "</span><b>" + u.phrases + " 条</b></div>";
+        }).join("") + "</div></div>";
+      return;
+    }
+    var n = kbIntent(key);
+    if (!n) return;
+    var maxCat = 1;
+    KB_CATEGORIES.forEach(function (c) { maxCat = Math.max(maxCat, n.buckets[c] || 0); });
+    var cat = KB.category;
+    box.innerHTML = '<div class="kb-eyebrow"><span>意图</span><span>' + esc(n.key) + "</span></div>" +
+      "<h2>" + esc(n.label) + (cat ? ' <span class="ira-meta">· ' + esc(cat) + "</span>" : "") + "</h2>" +
+      '<p class="kb-sub">' + n.phrases + " 条短语 · " + n.canonical + " 个规范问句 · " + n.examples +
+      " 条原始示例</p>" +
+      '<div class="kb-kv"><div><b>' + n.fields.length + "</b><span>字段组</span></div>" +
+      "<div><b>" + (n.outputs || []).length + "</b><span>播报方式</span></div></div>" +
+      (cat ? '<div class="kb-block"><h3>' + esc(cat) + " <span>" + (n.buckets[cat] || 0) + " 条</span></h3>" +
+        '<p class="ira-meta">' + (n.buckets[cat]
+          ? "该意图在这一类下有问法；切回图谱可看它连到哪些字段。"
+          : "该意图在这一类下没有问法，属于可补的空白。") + "</p></div>" : "") +
+      '<div class="kb-block"><h3>示例问法</h3><div class="kb-rows">' +
+      (n.samples || []).map(function (s) {
+        return '<div class="kb-row"><span>' + esc(s) + "</span><b>→ " + esc(n.label) + "</b></div>";
+      }).join("") + "</div></div>" +
+      '<div class="kb-block"><h3>问法分布</h3><div class="kb-catbars">' +
+      KB_CATEGORIES.map(function (c) {
+        var v = n.buckets[c] || 0;
+        return '<div class="kb-catbar"><span>' + esc(c) + '</span><span class="t"><i style="width:' +
+          (v / maxCat * 100) + "%" + (cat === c ? ";background:var(--ink)" : "") + '"></i></span><b>' + v + "</b></div>";
+      }).join("") + "</div></div>" +
+      '<div class="kb-block"><h3>读取字段</h3><div class="kb-tags">' + n.fields.map(function (k) {
+        return "<span>" + esc(kbField(k).label) + "</span>";
+      }).join("") + "</div></div>" +
+      '<div class="kb-block"><h3>播报方式</h3><div class="kb-tags">' + (n.outputs || []).map(function (o) {
+        return '<span class="' + (o === "整句" ? "good" : "") + '">' + esc(o) + "</span>";
+      }).join("") + "</div></div>";
+  }
+
+  function kbSelect(key) {
+    KB.selected = KB.selected === key ? null : key;
+    if (kbSelectedKind() === "intent") KB.category = null;
+    kbRenderAll();
+  }
+
+  function kbRenderAll() {
+    if (!KB.data) return;
+    renderKbStats();
+    if (KB.mode === "graph") renderKbGraph(); else renderKbMatrix();
+    renderKbDetail();
+  }
+
+  function kbSetMode(mode) {
+    KB.mode = mode;
+    $("#kb-view-graph").hidden = mode !== "graph";
+    $("#kb-view-matrix").hidden = mode !== "matrix";
+    $("#kb-mode-graph").classList.toggle("is-active", mode === "graph");
+    $("#kb-mode-matrix").classList.toggle("is-active", mode === "matrix");
+    $("#kb-mode-graph").setAttribute("aria-selected", mode === "graph" ? "true" : "false");
+    $("#kb-mode-matrix").setAttribute("aria-selected", mode === "matrix" ? "true" : "false");
+    var grid = $(".kb-grid");
+    if (grid) grid.setAttribute("data-kb-mode", mode);
+    if (mode === "matrix" && KB.selected && kbSelectedKind() !== "intent") {
+      KB.selected = null; KB.category = null;
+    }
+    kbRenderAll();
+  }
+
+  async function loadKnowledge(force) {
+    var panel = $('[data-view-panel="knowledge"]');
+    if (!panel) return;
+    if (KB.data && !force) { kbRenderAll(); return; }
+    try {
+      KB.data = await api("/api/knowledge");
+    } catch (e) {
+      $("[data-kb-stats]").innerHTML = '<p class="ira-empty">读不到知识库：' + esc(e.message) + "</p>";
+      $("#kb-detail").innerHTML = '<p class="ira-meta">接口 /api/knowledge 不可用。</p>';
+      return;
+    }
+    renderKbChips();
+    kbSetMode(KB.mode);
+  }
+
+  function bindKnowledge() {
+    $("#kb-mode-graph").onclick = function () { kbSetMode("graph"); };
+    $("#kb-mode-matrix").onclick = function () { kbSetMode("matrix"); };
+    $("#kb-refresh").onclick = function () { loadKnowledge(true); };
+    $("#kb-filter").addEventListener("input", function () {
+      KB.filter = this.value.trim();
+      kbRenderAll();
+    });
+    $('[data-view-panel="knowledge"]').addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && KB.selected) {
+        KB.selected = null; KB.category = null; kbRenderAll();
+      }
+    });
+    // 焦点可能停在任意按钮上（点的行、格子或节点），所以 Esc 也挂在 document；
+    // 只在知识库页可见时生效，不影响其它页面的 Esc 行为。
+    document.addEventListener("keydown", function (e) {
+      var panel = $('[data-view-panel="knowledge"]');
+      if (e.key !== "Escape" || !panel || panel.hidden || !KB.selected) return;
+      KB.selected = null; KB.category = null; kbRenderAll();
+    });
+  }
+  bindKnowledge();
+
   // 首屏把图标画出来（否则顶栏左上角是个空白方块）
   paintIcons(document);
 

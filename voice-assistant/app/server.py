@@ -10,6 +10,7 @@
     GET  /api/state                 状态快照（连接/PTT/语音包/遥测/最近问答）
     GET  /api/log?limit=50          问答记录 + 未识别清单
     GET  /api/stats                 本场统计
+    GET  /api/knowledge             知识库：意图 / 问法分布 / 字段 / 链路 / 可疑样本
     GET  /api/devices               音频设备清单
     POST /api/ask   {text, play}    解析一句（可选真播）
     POST /api/play  {msgId}         试听某条消息
@@ -455,6 +456,18 @@ class Service:
             "top_miss": miss_counter.most_common(12),
         }
 
+    def knowledge(self) -> dict:
+        """知识库页面数据：问法库、意图路由与遥测字段的只读视图。
+
+        全部由 src/knowledge.py 现算，不读日志、不调模型、不改配置。
+        结果在 knowledge 内部缓存 30 秒；词库文件改动后自动失效。
+        """
+        from src import knowledge as kb
+
+        data = kb.build()
+        data["app_version"] = app_version()
+        return data
+
     # ---------------------------------------------------------------- 设定
     def devices(self) -> dict:
         import sounddevice as sd
@@ -639,6 +652,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.service.ai_review())
             elif u.path == "/api/stats":
                 self._json(self.service.stats())
+            elif u.path == "/api/knowledge":
+                self._json(self.service.knowledge())
             elif u.path == "/api/devices":
                 self._json(self.service.devices())
             elif u.path == '/api/wheels':
