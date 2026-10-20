@@ -37,13 +37,13 @@ git log --oneline -3
 3. **语音包不在 Git 里**。`build/` 被 `.gitignore` 排除，需要自己重建或
    从已有素材导入。三件套都要齐：
    - `build/pack/Mandarin-CNTW-Xusheng_Chen/` —— 主包，2496 条
-   - `build/assistant-extra/` —— 拼接件，30 条
+   - `build/assistant-extra/` —— 拼接件与 AI 等待语音，25 个 msgId / 70 条（其中 40 条等待语音）
    - `build/assistant-telemetry/` —— 助手话术，627 条
 
    重建方法见 `HANDOFF-MACOS.md` 第 4 节。**注意坑**：
-   `synthesize_telemetry.py` 的输出目录硬编码成 `assistant-telemetry`，
-   用它建 extra 包会覆盖 telemetry 的 `spmsg.txt`。正确做法是先合成 mp3 缓存，
-   再用 `build_pack.py --out/--name` 分别打包。
+   `synthesize_telemetry.py` 自 v1.5.1 起支持 `--name` / `--out` / `--audio`；
+   两个包共用 mp3 缓存后，再用 `--name` 与 `--out` 分别打包，不要覆盖
+   telemetry 的 `spmsg.txt`。
 
 ## 环境
 

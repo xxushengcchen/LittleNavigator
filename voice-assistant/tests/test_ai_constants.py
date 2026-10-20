@@ -12,13 +12,19 @@ class ClampTests(unittest.TestCase):
         self.assertEqual(c.clamp_int(200, 60, "max_answer_chars"), 60)
 
     def test_hard_constants_match_spec(self):
-        self.assertEqual(c.LLM_DEADLINE_HARD_MAX, 2.0)
-        self.assertEqual(c.TTS_DEADLINE_HARD_MAX, 1.5)
-        self.assertEqual(c.AI_TOTAL_DEADLINE_HARD_MAX, 3.5)
+        # v1.5.1 放宽：旧值 2.0/1.5/3.5 下「全部交给 AI」档几乎必然超时降级。
+        self.assertEqual(c.LLM_DEADLINE_HARD_MAX, 3.0)
+        self.assertEqual(c.TTS_DEADLINE_HARD_MAX, 2.5)
+        self.assertEqual(c.AI_TOTAL_DEADLINE_HARD_MAX, 6.0)
         self.assertEqual(c.MAX_INPUT_TOKENS_HARD, 1500)
         self.assertEqual(c.MAX_OUTPUT_TOKENS_HARD, 300)
         self.assertEqual(c.MAX_ANSWER_CHARS_HARD, 60)
         self.assertTrue(c.SINGLE_INFLIGHT)
+
+    def test_total_deadline_covers_llm_plus_tts(self):
+        # 总预算必须容得下两道子预算，否则后改一道常量就会让另一道永远用不上。
+        self.assertGreaterEqual(c.AI_TOTAL_DEADLINE_HARD_MAX,
+                                c.LLM_DEADLINE_HARD_MAX + c.TTS_DEADLINE_HARD_MAX)
 
     def test_clamp_logs_a_warning(self):
         with self.assertLogs("src.ai_constants", level="WARNING"):

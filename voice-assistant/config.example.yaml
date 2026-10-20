@@ -112,3 +112,33 @@ logging:
   dir: "./logs"
   # 每次问答都记录：问法 / 命中意图 / 命中路径 / msgId / 变体 / 延迟
   qa_log: "./logs/qa.jsonl"
+
+# ---------------------------------------------------------------------------
+#  AI 比赛工程师（可选，默认关闭）
+# ---------------------------------------------------------------------------
+#  密钥不要写在这里（本文件随安装包分发）：写 config.local.yaml，
+#  或设环境变量 LITTLE_NAVIGATOR_AI_KEY。
+#  timeout_s 硬上限 3.0、tts.timeout_s 硬上限 2.5，调大无效。
+ai:
+  enabled: false
+  base_url: ""                 # OpenAI 兼容接口，如 https://api.deepseek.com
+  model: ""
+  timeout_s: 3.0
+  # 等待语音：请求模型前先播一句「稍等我一下」（素材缺失时自动跳过）
+  ack:
+    enabled: true
+  tts:
+    adapter: "off"             # off | doubao | openai
+    timeout_s: 2.5
+
+# ---------------------------------------------------------------------------
+#  Overlay 第二窗口（可选，默认关闭）
+# ---------------------------------------------------------------------------
+overlay:
+  enabled: false
+  opacity: 0.85                # 0.2–1.0
+  corner: "top-right"          # top-left | top-right | bottom-left | bottom-right
+  margin: 24                   # 0–400 像素
+  width: 720                   # 480–1200
+  height: 200                  # 140–400
+  toggle_key: "Ctrl+Alt+O"

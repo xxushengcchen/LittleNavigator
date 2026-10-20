@@ -135,16 +135,19 @@ DEFAULTS: dict[str, Any] = {
     # config.local.yaml 或环境变量 LITTLE_NAVIGATOR_AI_KEY。
     "ai": {
         "enabled": False,
-        "mode": "whitelist",           # whitelist | analysis_key | full
+        "mode": "whitelist",           # whitelist | analysis_key | full | all
         "provider": "custom",          # 仅用于界面预填，不参与运行时逻辑
         "base_url": "",
         "api_key": "",
         "model": "",
-        "timeout_s": 2.0,
+        "timeout_s": 3.0,
         "max_tokens": 300,
         "max_answer_chars": 60,
         "rate_limit_per_min": 6,
         "analysis_key": None,          # {vk: int, binding: dict} 或 None
+        # 等待语音：真正请求模型前先播一句「稍等我一下」，填补空场。
+        # 素材缺失或播放失败都静默跳过，绝不挡住主流程。
+        "ack": {"enabled": True},
         "whitelist_intents": [
             "query_laptime", "query_pit", "query_fuel", "query_gap",
             "query_opponent", "query_weather", "query_damage",
@@ -159,8 +162,19 @@ DEFAULTS: dict[str, Any] = {
             "resource_id": "seed-tts-2.0",
             "format": "wav",
             "sample_rate": 16000,
-            "timeout_s": 1.5,
+            "timeout_s": 2.5,
         },
+    },
+    # 桌面 Overlay 第二窗口。默认关闭——多一个置顶窗口会挡住游戏画面，
+    # 只有用户明确打开才出现。窗口由 app/ 侧消费这些值，src 只负责校验与默认值。
+    "overlay": {
+        "enabled": False,
+        "opacity": 0.85,               # 0.2–1.0
+        "corner": "top-right",         # top-left | top-right | bottom-left | bottom-right
+        "margin": 24,                  # 0–400（与屏幕边缘的距离，像素）
+        "width": 720,                  # 480–1200
+        "height": 200,                 # 140–400
+        "toggle_key": "Ctrl+Alt+O",    # 显示/隐藏快捷键
     },
 }
 
@@ -324,6 +338,7 @@ def validate(cfg: dict) -> None:
         if value is not None and (isinstance(value, bool) or not isinstance(value,(int,str)) or isinstance(value,int) and value<0):
             raise ValueError(f"{section}.{key} 必须为设备名、非负序号或 null")
     _validate_car_control(cfg)
+    _validate_overlay(cfg)
     _validate_ai(cfg)
 
 
@@ -336,7 +351,40 @@ def _validate_car_control(cfg: dict) -> None:
             raise ValueError(f"car_control.{key} 必须为布尔值")
 
 
-_AI_MODES = ("whitelist", "analysis_key", "full")
+# Overlay 窗口四个角：写错会静默跑到屏幕外，用户以为窗口没出来，所以必须在校验期拒绝。
+_OVERLAY_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+
+
+def _validate_overlay(cfg: dict) -> None:
+    """Overlay 段校验。范围与默认值都对应桌面端窗口约束，越界直接拒绝。"""
+    ov = cfg.get("overlay")
+    if not isinstance(ov, dict):
+        raise ValueError("overlay 必须是配置对象")
+    if not isinstance(ov.get("enabled"), bool):
+        raise ValueError("overlay.enabled 必须为布尔值")
+    opacity = ov.get("opacity")
+    if isinstance(opacity, bool) or not isinstance(opacity, (int, float)):
+        raise ValueError("overlay.opacity 必须在 0.2–1.0 范围内")
+    # 先只对 float 调 isfinite：超大 int 传给 math.isfinite 会先转 float 抛
+    # OverflowError，那是一个畸形配置，应该走 ValueError 而不是崩在别处。
+    if isinstance(opacity, float) and not math.isfinite(opacity):
+        raise ValueError("overlay.opacity 必须在 0.2–1.0 范围内")
+    if not 0.2 <= opacity <= 1.0:
+        raise ValueError("overlay.opacity 必须在 0.2–1.0 范围内")
+    if ov.get("corner") not in _OVERLAY_CORNERS:
+        raise ValueError(f"overlay.corner 必须是 {_OVERLAY_CORNERS} 之一")
+    for key, lo, hi in (("margin", 0, 400), ("width", 480, 1200),
+                        ("height", 140, 400)):
+        value = ov.get(key)
+        # 宽高/边距是像素整数：像素没有小数，浮点值是配置写错而不是要四舍五入。
+        if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+            raise ValueError(f"overlay.{key} 必须为 {lo}–{hi} 的整数")
+    toggle = ov.get("toggle_key")
+    if not isinstance(toggle, str) or not toggle.strip():
+        raise ValueError("overlay.toggle_key 必须为非空字符串")
+
+
+_AI_MODES = ("whitelist", "analysis_key", "full", "all")
 _TTS_ADAPTERS = ("off", "doubao", "openai")
 
 
@@ -373,6 +421,12 @@ def _validate_ai(cfg: dict) -> None:
     tts = ai.get("tts")
     if not isinstance(tts, dict):
         raise ValueError("ai.tts 必须为配置对象")
+
+    ack = ai.get("ack")
+    if not isinstance(ack, dict):
+        raise ValueError("ai.ack 必须为配置对象")
+    if not isinstance(ack.get("enabled"), bool):
+        raise ValueError("ai.ack.enabled 必须为布尔值")
     if tts.get("adapter") not in _TTS_ADAPTERS:
         raise ValueError(f"ai.tts.adapter 必须是 {_TTS_ADAPTERS} 之一")
     for key in ("base_url", "api_key", "model", "voice", "speaker",

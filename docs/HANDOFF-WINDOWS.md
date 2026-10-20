@@ -47,13 +47,13 @@ build/assistant-telemetry/spmsg.txt
 
 | 包 | msgId | 音频 | 说明 |
 |---|---|---|---|
-| `assistant-extra` | 5 | 30 | 拼接连接件（还剩/圈/上一圈/前车距离） |
+| `assistant-extra` | 25 | 70 | 拼接连接件（还剩/圈/上一圈/前车距离）+ 20 条 AI 等待语音（各 2 变体） |
 | `assistant-telemetry` | 117 | 627 | 回答话术、拒绝提示、改车确认 |
 
 **如果这两个包还没重建**，按 [`HANDOFF-MACOS.md`](HANDOFF-MACOS.md) 第 4 节的
-「路线 B 补充：三个包要分开建」做。注意 `synthesize_telemetry.py` 的输出目录
-硬编码成 `assistant-telemetry`，用它建 `assistant-extra` 会覆盖 telemetry 的
-`spmsg.txt`——必须先合成 mp3 缓存，再用 `build_pack.py --out/--name` 分别打包。
+「路线 B 补充：三个包要分开建」做。`synthesize_telemetry.py` 自 v1.5.1 起支持
+`--name` / `--out` / `--audio`：两个包共用 mp3 缓存（`--audio`），再分别指定
+`--name` 与 `--out`，避免覆盖 telemetry 的 `spmsg.txt`。
 
 ### 2.2 依赖
 

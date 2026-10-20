@@ -158,20 +158,26 @@ car_control:
 #  LITTLE_NAVIGATOR_AI_KEY（优先级最高）。
 #
 #  下面的数值是**硬上限**，可以调小，调大无效（代码会钳制并留日志）：
-#      timeout_s <= 2.0   max_tokens <= 300   max_answer_chars <= 60
+#      timeout_s <= 3.0   tts.timeout_s <= 2.5
+#      max_tokens <= 300   max_answer_chars <= 60
 ai:
   enabled: false
   # 档位：whitelist 只对白名单意图与所有分析型问题接管（默认、最省）
   #       analysis_key 按住专用键提问时才走 AI
   #       full 规则答不上就交给模型（最智能、最慢、最贵）
+  #       all 全部交给模型：规则层答得上也走 AI，只有安全/操作两类留在本地
   mode: "whitelist"
   provider: "custom"          # 仅用于界面预填
   base_url: ""
   model: ""
-  timeout_s: 2.0
+  timeout_s: 3.0
   max_tokens: 300
   max_answer_chars: 60
   rate_limit_per_min: 6
+  # 等待语音：真正请求模型前先播一句「稍等我一下」，避免干等无声。
+  # 素材来自 assistant-extra 包的 AST_ACK_01..20；缺失时自动跳过。
+  ack:
+    enabled: true
   # 分析键：默认不绑。首次启用 AI 时界面会引导采集一次，
   # 避免与游戏内按键冲突。vk 是 Windows 虚拟键码。
   analysis_key: null
@@ -196,4 +202,19 @@ ai:
     resource_id: "seed-tts-2.0"
     format: "wav"
     sample_rate: 16000
-    timeout_s: 1.5
+    timeout_s: 2.5
+
+# ---------------------------------------------------------------------------
+#  Overlay 第二窗口（可选，默认关闭）
+# ---------------------------------------------------------------------------
+#  置顶小窗实时显示「听到什么 / 思考中 / 答案 / 错误」，供比赛时瞟一眼。
+#  默认关闭：它会挡住游戏画面，只有用户主动打开才出现。
+#  toggle_key 是显示/隐藏快捷键；数值范围见 src/config.py 的 validate。
+overlay:
+  enabled: false
+  opacity: 0.85              # 0.2–1.0
+  corner: "top-right"        # top-left | top-right | bottom-left | bottom-right
+  margin: 24                 # 与屏幕边缘距离（像素，0–400）
+  width: 720                 # 480–1200
+  height: 200                # 140–400
+  toggle_key: "Ctrl+Alt+O"

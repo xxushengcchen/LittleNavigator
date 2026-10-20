@@ -41,9 +41,11 @@ class BreakerTests(unittest.TestCase):
 
 class ClampTests(unittest.TestCase):
     def test_timeout_is_clamped(self):
+        from src import ai_constants as const
         c = LlmClient("http://x", "k", "m", timeout_s=99, max_tokens=9999)
-        self.assertLessEqual(c.timeout_s, 2.0)
-        self.assertLessEqual(c.max_tokens, 300)
+        # 用常量断言：v1.5.1 把 LLM 硬上限从 2.0s 放宽到 3.0s。
+        self.assertEqual(c.timeout_s, const.LLM_DEADLINE_HARD_MAX)
+        self.assertEqual(c.max_tokens, const.MAX_OUTPUT_TOKENS_HARD)
 
     def test_smaller_timeout_is_kept(self):
         c = LlmClient("http://x", "k", "m", timeout_s=0.8, max_tokens=50)

@@ -22,8 +22,10 @@ class AdapterSelectTests(unittest.TestCase):
             e.synth("测试")
 
     def test_deadline_is_clamped(self):
+        from src import ai_constants as const
         e = TtsEngine("openai", {"timeout_s": 99})
-        self.assertLessEqual(e.timeout_s, 1.5)
+        # 用常量断言：v1.5.1 把 TTS 硬上限从 1.5s 放宽到 2.5s。
+        self.assertEqual(e.timeout_s, const.TTS_DEADLINE_HARD_MAX)
 
     def test_smaller_deadline_kept(self):
         e = TtsEngine("openai", {"timeout_s": 0.9})

@@ -1,6 +1,7 @@
 import json
 import pathlib
 import tempfile
+import threading
 import unittest
 import unittest.mock
 
@@ -77,6 +78,95 @@ class ReviewShapeTests(unittest.TestCase):
         import inspect
         source = inspect.getsource(Service.ai_review)
         self.assertIn('"id"', source)
+
+
+class ConfigureAckTests(unittest.TestCase):
+    """v1.5.1 补丁：等待语音开关 ai.ack.enabled 的保存路径。
+
+    用轻量 Service（跳过 Assistant 初始化）验证 configure() 的 allowed /
+    嵌套子键校验；真正的落盘与 validate 由既有配置测试覆盖。
+    """
+
+    def _service(self):
+        from app.server import Service
+        svc = object.__new__(Service)
+        svc.cfg = config.load()
+        svc.listener_lock = threading.RLock()
+        svc._configure = unittest.mock.MagicMock(
+            return_value={"ok": True, "saved": "x", "restart_hint": [],
+                          "applied": {}})
+        return svc
+
+    def test_configure_accepts_ack_enabled(self):
+        svc = self._service()
+        result = svc.configure({"ai": {"ack": {"enabled": False}}})
+        self.assertTrue(result["ok"])
+        svc._configure.assert_called_once()
+        self.assertEqual(svc._configure.call_args.args[0],
+                         {"ai": {"ack": {"enabled": False}}})
+
+    def test_configure_rejects_unknown_ack_key(self):
+        svc = self._service()
+        with self.assertRaises(ValueError):
+            svc.configure({"ai": {"ack": {"play_sound": True}}})
+        svc._configure.assert_not_called()
+
+    def test_configure_rejects_ack_not_object(self):
+        svc = self._service()
+        with self.assertRaises(ValueError):
+            svc.configure({"ai": {"ack": False}})
+        svc._configure.assert_not_called()
+
+    def test_configure_accepts_20_percent_opacity(self):
+        """透明度口径已统一为 20%（0.2–1.0），保存 0.2 不能再被旧下限拒绝。"""
+        from app.server import Service
+        svc = object.__new__(Service)
+        svc.cfg = config.load()
+        svc.listener_lock = threading.RLock()
+        svc.overlay_controller = None
+        svc._configure = unittest.mock.MagicMock(
+            return_value={"ok": True, "saved": "x", "restart_hint": [],
+                          "applied": {}})
+        result = svc.configure({"overlay": {"opacity": 0.2}})
+        self.assertTrue(result["ok"])
+        svc._configure.assert_called_once()
+
+    def test_configure_rejects_19_percent_opacity(self):
+        from app.server import Service
+        svc = object.__new__(Service)
+        svc.cfg = config.load()
+        svc.listener_lock = threading.RLock()
+        svc.overlay_controller = None
+        svc._configure = unittest.mock.MagicMock(return_value={"ok": True})
+        with self.assertRaises(ValueError):
+            svc.configure({"overlay": {"opacity": 0.19}})
+        svc._configure.assert_not_called()
+
+
+class OverlayAndModeShapeTests(unittest.TestCase):
+    """v1.5.1：AI 接管模式 all + 游戏内 Overlay 的既有接口面不能漏。
+
+    真实行为在 tests/test_overlay_api.py 里用假 controller 测；
+    这里只守住 Service 这类「配置允许字段 / 状态摘要」的结构性契约。
+    """
+
+    def test_ai_mode_all_is_supported(self):
+        from src import config as cfg_mod
+        self.assertIn("all", cfg_mod._AI_MODES)
+
+    def test_configure_allows_overlay_section(self):
+        from app.server import Service
+        import inspect
+        source = inspect.getsource(Service.configure)
+        for key in ('"overlay"', '"enabled"', '"opacity"', '"corner"',
+                    '"margin"', '"width"', '"height"', '"toggle_key"'):
+            self.assertIn(key, source)
+
+    def test_state_exposes_overlay_summary(self):
+        from app.server import Service
+        import inspect
+        source = inspect.getsource(Service.state)
+        self.assertIn('"overlay"', source)
 
 
 if __name__ == '__main__':

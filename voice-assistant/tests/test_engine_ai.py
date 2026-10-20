@@ -260,3 +260,322 @@ class RefusalMessageTests(unittest.TestCase):
         rec, played = self._ask_with_pack("设置成软胎", set())
         self.assertEqual(played, [])
         self.assertFalse(rec["ok"])       # 仍然返回记录，不抛异常
+
+
+# ---------------------------------------------------------------- v1.5.1 新增
+def make_assistant(root, ai_enabled=True, **ai):
+    """构造一个不播真声的引擎；VoicePack 用最小替身。"""
+    with patch("src.engine.VoicePack.load_many", return_value=fake_pack()):
+        return Assistant(make_cfg(root, ai_enabled, **ai), no_play=True,
+                         out=io.StringIO())
+
+
+def hit(intent="query_fuel"):
+    """短语库命中的替身：intent 非空 → classify 判 KNOWN。"""
+    return MagicMock(intent=intent, score=0.9, phrase="油还够吗",
+                     margin=0.2, reason="命中短语", ranked=[])
+
+
+class AckPickerTests(unittest.TestCase):
+    """洗牌袋抽取：一轮内不重复，抽完自动跨轮重置。"""
+
+    def test_msg_ids_are_ast_ack_01_to_20(self):
+        from src.ack_phrases import ACK_MSG_IDS
+        self.assertEqual(len(ACK_MSG_IDS), 20)
+        self.assertEqual(ACK_MSG_IDS[0], "AST_ACK_01")
+        self.assertEqual(ACK_MSG_IDS[-1], "AST_ACK_20")
+
+    def test_one_round_has_no_duplicates(self):
+        import random as _random
+        from src.ack_phrases import ACK_MSG_IDS, AckPicker
+        p = AckPicker(rng=_random.Random(7))
+        got = [p.pick() for _ in range(20)]
+        self.assertEqual(len(set(got)), 20)
+        self.assertEqual(set(got), set(ACK_MSG_IDS))
+
+    def test_reset_starts_a_fresh_round(self):
+        import random as _random
+        from src.ack_phrases import ACK_MSG_IDS, AckPicker
+        p = AckPicker(rng=_random.Random(7))
+        p.pick()
+        p.pick()
+        p.reset()                       # 跨轮重置：袋子清空重新洗
+        got = [p.pick() for _ in range(20)]
+        self.assertEqual(set(got), set(ACK_MSG_IDS))
+
+    def test_available_filter_limits_pool_and_refills(self):
+        import random as _random
+        from src.ack_phrases import AckPicker
+        p = AckPicker(rng=_random.Random(1))
+        avail = {"AST_ACK_01", "AST_ACK_02"}
+        got = [p.pick(lambda m: m in avail) for _ in range(4)]
+        self.assertEqual(set(got), avail)      # 只有两条就循环洗这两条，不卡死
+
+    def test_no_available_assets_returns_none(self):
+        from src.ack_phrases import AckPicker
+        p = AckPicker()
+        self.assertIsNone(p.pick(lambda m: False))
+
+
+class LiveStateTests(unittest.TestCase):
+    """Overlay 数据源：heard / state / answer / error 的迁移。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name).resolve()
+
+    def test_live_starts_idle(self):
+        a = make_assistant(self.root, ai_enabled=False)
+        self.assertEqual(a.live, {"heard": "", "state": "idle",
+                                  "answer": "", "error": ""})
+
+    def test_set_heard_trims_and_records(self):
+        a = make_assistant(self.root, ai_enabled=False)
+        a.set_heard("  油还够吗 ")
+        self.assertEqual(a.live["heard"], "油还够吗")
+
+    def test_ask_ai_entry_is_thinking(self):
+        a = make_assistant(self.root)
+        seen = {}
+        from src.ai_pipeline import AiResult
+
+        def fake_handle(*args, **kwargs):
+            seen["state"] = a.live["state"]
+            return AiResult(ok=True, text="油够", source="model")
+
+        with patch.object(a.ai, "handle", side_effect=fake_handle):
+            a.ask_ai("油还够吗", QueryKind.KNOWN, "query_fuel", False)
+        self.assertEqual(seen["state"], "thinking")
+
+    def test_ask_ai_success_sets_answer(self):
+        a = make_assistant(self.root)
+        from src.ai_pipeline import AiResult
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=True, text="油够跑六圈",
+                                                source="model")):
+            a.ask_ai("油还够吗", QueryKind.KNOWN, "query_fuel", False)
+        self.assertEqual(a.live["state"], "answer")
+        self.assertEqual(a.live["answer"], "油够跑六圈")
+        self.assertEqual(a.live["error"], "")
+
+    def test_ask_ai_failure_sets_error(self):
+        a = make_assistant(self.root)
+        from src.ai_pipeline import AiResult
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=False, reason="超时")):
+            rec = a.ask_ai("为什么慢", QueryKind.ANALYSIS, None, False)
+        self.assertFalse(rec["ok"])
+        self.assertEqual(a.live["state"], "error")
+        self.assertEqual(a.live["error"], "超时")
+
+    def test_ask_sets_thinking_when_question_goes_to_ai(self):
+        # mode=full、识别不到的句子会转交 AI：ask() 入口就该是 thinking。
+        a = make_assistant(self.root, mode="full")
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = MagicMock(intent=None, score=0.2,
+                                                 phrase="", margin=0.0,
+                                                 reason="未命中", ranked=[])
+        rec = a.ask("今天天气不错", source="keyboard")
+        self.assertTrue(rec["ai_eligible"])
+        self.assertEqual(a.live["state"], "thinking")
+
+    def test_rule_answer_sets_answer_before_playback(self):
+        a = make_assistant(self.root, ai_enabled=False)
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = hit()
+        a.pack.has.return_value = True
+        a.pack.path_of.return_value = self.root / "x.wav"
+        a._pick_existing = MagicMock(return_value=MagicMock(text="油量十八升"))
+        live_at_play = {}
+
+        def fake_play_many(paths, gap_ms=60, on_start=None):
+            live_at_play.update(a.live)
+            if on_start:
+                on_start()
+            return 0.0
+
+        a.player.play_many = MagicMock(side_effect=fake_play_many)
+        from src import router
+        with patch("src.engine.router.route",
+                   return_value=router.Decision(["AST_FUEL"], "油量 18.4L")):
+            rec = a.ask("油还够吗", source="keyboard")
+        self.assertTrue(rec["ok"])
+        self.assertEqual(live_at_play["state"], "answer")
+        self.assertEqual(live_at_play["answer"], "油量十八升")
+
+
+class AllModeRoutingTests(unittest.TestCase):
+    """all 档：规则答得上也不播，转交上层走 AI；AI 不可用退回规则路径。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name).resolve()
+
+    def _engine(self, mode="all", available=True):
+        a = make_assistant(self.root, mode=mode)
+        if not available:
+            for _ in range(3):
+                a.ai.breaker.record(2000, timed_out=True)
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = hit()
+        return a
+
+    def _decision(self):
+        from src import router
+        return router.Decision(["AST_FUEL", "AST_LITRE"], "油量 18.4L")
+
+    def test_all_mode_holds_rule_answer_for_ai(self):
+        a = self._engine()
+        with patch("src.engine.router.route", return_value=self._decision()), \
+             patch.object(a, "play_decision") as play:
+            rec = a.ask("油还够吗", source="keyboard")
+        play.assert_not_called()
+        self.assertTrue(rec["ai_eligible"])
+        self.assertEqual(rec["fallback_plan"], ["AST_FUEL", "AST_LITRE"])
+        self.assertEqual(rec["fallback_text"], "油量 18.4L")
+        self.assertEqual(a.live["state"], "thinking")
+
+    def test_all_mode_falls_back_to_rule_when_ai_unavailable(self):
+        a = self._engine(available=False)
+        with patch("src.engine.router.route", return_value=self._decision()), \
+             patch.object(a, "play_decision", return_value=True) as play:
+            rec = a.ask("油还够吗", source="keyboard")
+        play.assert_called_once()
+        self.assertNotIn("ai_eligible", rec)
+
+    def test_other_modes_still_play_rule_answer(self):
+        a = self._engine(mode="full")
+        with patch("src.engine.router.route", return_value=self._decision()), \
+             patch.object(a, "play_decision", return_value=True) as play:
+            a.ask("油还够吗", source="keyboard")
+        play.assert_called_once()
+
+    def test_all_mode_keeps_safety_and_operation_local(self):
+        # SAFETY/OPERATION 永远留在本地：全量接管档也不能把红线交出去。
+        a = self._engine()
+        self.assertFalse(a._ai_should_engage(QueryKind.SAFETY, "为什么被罚"))
+        self.assertFalse(a._ai_should_engage(QueryKind.OPERATION, "设置成软胎"))
+
+
+class AiFallbackPlaybackTests(unittest.TestCase):
+    """AI 失败时回退播规则答案：不能静默失败。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name).resolve()
+
+    def _engine(self):
+        a = make_assistant(self.root)
+        a.pack.has.return_value = True
+        a.pack.path_of.return_value = self.root / "x.wav"
+        a._pick_existing = MagicMock(return_value=MagicMock(text="油量十八升"))
+        self.played = []
+
+        def fake_play_many(paths, gap_ms=60, on_start=None):
+            self.played.append(list(paths))
+            if on_start:
+                on_start()
+            return 0.0
+
+        a.player.play_many = MagicMock(side_effect=fake_play_many)
+        return a
+
+    def test_ai_failure_plays_fallback_and_marks_record(self):
+        from src.ai_pipeline import AiResult
+        a = self._engine()
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=False, reason="超时")):
+            rec = a.ask_ai("油还够吗", QueryKind.KNOWN, "query_fuel", True,
+                           extra={"fallback_plan": ["AST_FUEL"],
+                                  "fallback_text": "油量 18.4L"})
+        self.assertTrue(rec["ok"])
+        self.assertTrue(rec["ai_fallback"])
+        self.assertEqual(rec["ai_reason"], "超时")
+        self.assertEqual(rec["plan"], ["AST_FUEL"])
+        self.assertEqual(rec["text"], "油量十八升")
+        self.assertEqual(self.played, [[self.root / "x.wav"]])
+        self.assertEqual(a.live["state"], "answer")
+        self.assertEqual(a.live["answer"], "油量十八升")
+
+    def test_ai_failure_without_fallback_stays_failed(self):
+        from src.ai_pipeline import AiResult
+        a = self._engine()
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=False, reason="超时")):
+            rec = a.ask_ai("为什么慢", QueryKind.ANALYSIS, None, False)
+        self.assertFalse(rec["ok"])
+        self.assertNotIn("ai_fallback", rec)
+        self.assertEqual(self.played, [])
+        self.assertEqual(a.live["state"], "error")
+
+    def test_fallback_playback_failure_is_not_reported_as_success(self):
+        from src.ai_pipeline import AiResult
+        a = self._engine()
+        a.pack.has.return_value = False       # 兜底素材也缺
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=False, reason="超时")):
+            rec = a.ask_ai("油还够吗", QueryKind.KNOWN, "query_fuel", True,
+                           extra={"fallback_plan": ["AST_MISSING"],
+                                  "fallback_text": "x"})
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["reason"], "超时")
+
+
+class AckPlaybackTests(unittest.TestCase):
+    """等待语音：请求模型前先播一句，失败静默、不挡主流程。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name).resolve()
+
+    def _engine(self):
+        a = make_assistant(self.root)
+        a.pack.has.side_effect = lambda m: m.startswith("AST_ACK_")
+        a.pack.path_of.return_value = self.root / "ack.wav"
+        a._pick_existing = MagicMock(return_value=MagicMock(text="稍等喔"))
+        return a
+
+    def _run(self, a, events):
+        from src.ai_pipeline import AiResult
+
+        def fake_handle(*args, **kwargs):
+            events.append("handle")
+            return AiResult(ok=True, text="油够", source="model")
+
+        with patch.object(a.ai, "handle", side_effect=fake_handle):
+            return a.ask_ai("油还够吗", QueryKind.KNOWN, "query_fuel", False)
+
+    def test_ack_is_played_before_model_call(self):
+        a = self._engine()
+        events = []
+        a.player.play = MagicMock(side_effect=lambda path: events.append("ack"))
+        self._run(a, events)
+        self.assertEqual(events, ["ack", "handle"])
+
+    def test_ack_can_be_disabled(self):
+        a = self._engine()
+        a.cfg["ai"]["ack"] = {"enabled": False}
+        events = []
+        a.player.play = MagicMock(side_effect=lambda path: events.append("ack"))
+        self._run(a, events)
+        self.assertEqual(events, ["handle"])
+
+    def test_ack_skips_when_assets_missing(self):
+        a = self._engine()
+        a.pack.has.side_effect = None
+        a.pack.has.return_value = False
+        events = []
+        a.player.play = MagicMock(side_effect=lambda path: events.append("ack"))
+        self._run(a, events)
+        self.assertEqual(events, ["handle"])
+
+    def test_ack_playback_failure_does_not_block_ai(self):
+        a = self._engine()
+        a.player.play = MagicMock(side_effect=RuntimeError("device gone"))
+        events = []
+        self._run(a, events)
+        self.assertEqual(events, ["handle"])

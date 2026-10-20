@@ -1,4 +1,8 @@
-"""同音色批量合成，凭据仅在环境或不回显输入中使用；完整后再打包。"""
+"""同音色批量合成，凭据仅在环境或不回显输入中使用；完整后再打包。
+
+输出包名/输出根目录可用 --name / --out 指定（默认 assistant-telemetry / build，
+与旧行为一致）。多个包共用同一个 mp3 缓存目录 --audio，按 msgId 前缀天然隔离。
+"""
 import argparse,concurrent.futures,getpass,json,os,pathlib,subprocess,sys,threading,time
 from tts_doubao import synthesize,DEFAULT_SPEAKER,DEFAULT_RESOURCE,TtsError
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
@@ -10,11 +14,16 @@ def main():
     ap.add_argument('--content',nargs='+',default=['content/assistant-telemetry-v1.1.json'],
                     help='文案檔（可多個；預設只讀 v1.1）')
     ap.add_argument('--version',default='1.1.0',help='寫進語音包頭部註解的版本號')
+    ap.add_argument('--name',default='assistant-telemetry',
+                    help='語音包資料夾名稱（輸出到 --out 之下；預設 assistant-telemetry）')
+    ap.add_argument('--out',default='build',help='語音包輸出根目錄（預設 build）')
+    ap.add_argument('--audio',default='build/telemetry-tts',
+                    help='合成 mp3 快取目錄（預設 build/telemetry-tts，可跨包共用）')
     args=ap.parse_args();os.chdir(ROOT)
     items,instructs=load_items(ROOT,patterns=args.content)
     key=os.getenv('DOUBAO_API_KEY') or getpass.getpass('豆包语音 API Key（不回显）：').strip()
     if not key:raise SystemExit('未收到凭据，未调用 API')
-    raw=ROOT/'build/telemetry-tts';raw.mkdir(exist_ok=True)
+    raw=ROOT/args.audio;raw.mkdir(parents=True,exist_ok=True)
     jobs=[(item,i,text) for item in items for i,text in enumerate(item['variants'],1)]
     def synth(job,force=False):
         item,i,text=job;stem=f"{item['msgId']}__{i:02d}";path=raw/(stem+'.mp3')
@@ -43,12 +52,12 @@ def main():
     key=''
     if failed:raise SystemExit(f'有 {len(failed)} 条未完成；保留已完成音频，请重新运行补齐')
     subprocess.run([sys.executable,'-X','utf8',str(ROOT/'scripts/build_pack.py'),
-        '--content',*args.content,'--audio','build/telemetry-tts',
-        '--out','build','--name','assistant-telemetry','--rate','24000','--display','simplified',
+        '--content',*args.content,'--audio',args.audio,
+        '--out',args.out,'--name',args.name,'--rate','24000','--display','simplified',
         '--no-null','--version',args.version],check=True)
-    expected=len(jobs);actual=len(list((ROOT/'build/assistant-telemetry').glob('*.WAV')))
-    if actual!=expected:raise SystemExit(f'打包未完整：{actual}/{expected}')
-    print(f'完成：{actual} 条 WAV，24 kHz/16-bit/单声道，原裁剪与 -17 dBFS RMS 流程',flush=True)
+    expected=len(jobs);actual=len(list((ROOT/args.out/args.name).glob('*.WAV')))
+    if actual!=expected:raise SystemExit(f'打包未完整（{args.out}/{args.name}）：{actual}/{expected}')
+    print(f'完成：{actual} 条 WAV（{args.out}/{args.name}），24 kHz/16-bit/单声道，原裁剪与 -17 dBFS RMS 流程',flush=True)
     return 0
 
 if __name__=='__main__':raise SystemExit(main())

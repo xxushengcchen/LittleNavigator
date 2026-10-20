@@ -524,7 +524,7 @@
 
   async function save(patch, hintEl, note) {
     var r = await api("/api/config", { patch: patch });
-    var ids=patch.car_control?['ira-cc-on','ira-cc-verify']:patch.ai && patch.ai.tts?['ira-tts-adapter','ira-tts-url','ira-tts-speaker','ira-tts-key']:patch.ai && !patch.ai.analysis_key?['ira-ai-on','ira-ai-mode','ira-ai-preset','ira-ai-url','ira-ai-model','ira-ai-key']:[];
+    var ids=patch.car_control?['ira-cc-on','ira-cc-verify']:patch.ai && patch.ai.tts?['ira-tts-adapter','ira-tts-url','ira-tts-speaker','ira-tts-key','ira-ack-on']:patch.ai && !patch.ai.analysis_key?['ira-ai-on','ira-ai-mode','ira-ai-preset','ira-ai-url','ira-ai-model','ira-ai-key']:[];
     ids.forEach(function(id){delete pendingDrafts[id];});
     if (hintEl) {
       hintEl.textContent = "已保存" + (r.restart_hint && r.restart_hint.length
@@ -680,34 +680,107 @@
     var a = (st.config && st.config.ai) || {};
     var tts = a.tts || {};
     var s = st.ai || {};
+    var ov = st.overlay || {};
     var hint = $("[data-savehint]", panel);
     var card = $(".ira-card", panel);
     if (!card) return;
 
     var statusText = !a.enabled ? "未启用"
       : (s.configured ? (s.available ? "就绪" : "已暂停（连续超时）") : "未配置 API");
+    var ovOpacity = Math.round((ov.opacity == null ? 0.85 : ov.opacity) * 100);
+    var ovCorner = ov.corner || "top-right";
+    var ovHotkey = ov.toggle_key || "Ctrl+Alt+O";
+    var ovCorners = [["top-right", "右上角"], ["top-left", "左上角"],
+                     ["bottom-right", "右下角"], ["bottom-left", "左下角"]];
+    var ackEnabled = a.ack_enabled === undefined ? true : !!a.ack_enabled;
 
     card.innerHTML='<h2>模型接入</h2><div class="ira-form ai-form-grid">'+
       field('启用 AI 分析','<select class="ira-select" id="ira-ai-on"><option value="0"'+(!a.enabled?' selected':'')+'>关闭</option><option value="1"'+(a.enabled?' selected':'')+'>开启</option></select>','当前状态：'+statusText)+
-      field('响应方式','<select class="ira-select" id="ira-ai-mode"><option value="whitelist"'+(a.mode==='whitelist'?' selected':'')+'>白名单 · 推荐</option><option value="analysis_key"'+(a.mode==='analysis_key'?' selected':'')+'>分析键触发</option><option value="full"'+(a.mode==='full'?' selected':'')+'>规则答不上就接管</option></select>','分析问题交给模型，日常事实查询优先使用本地规则。')+
+      field('响应方式','<select class="ira-select" id="ira-ai-mode"><option value="whitelist"'+(a.mode==='whitelist'?' selected':'')+'>白名单 · 推荐</option><option value="analysis_key"'+(a.mode==='analysis_key'?' selected':'')+'>分析键触发</option><option value="full"'+(a.mode==='full'?' selected':'')+'>规则答不上就接管</option><option value="all"'+(a.mode==='all'?' selected':'')+'>全部交给 AI · 最像真人</option></select>','「全部交给 AI」连规则答得上的也交给模型；安全、处罚、改车仍走本地规则；需配好语音合成才听得到回答。')+
       field('服务预设','<select class="ira-select" id="ira-ai-preset">'+aiPresetOptions(a.provider)+'</select>','选择服务商后可继续修改地址和模型名。')+
       field('模型名','<input class="ira-input" id="ira-ai-model" value="'+esc(a.model || '')+'" placeholder="服务商提供的模型名">','与接口服务中开放的名称一致。')+
       field('接口地址','<input class="ira-input" id="ira-ai-url" value="'+esc(a.base_url || '')+'" placeholder="https://api.deepseek.com">','使用兼容 Chat Completions 的接口。')+
       field('API Key','<input class="ira-input" id="ira-ai-key" type="password" autocomplete="off" placeholder="'+(a.api_key_set?'已配置，留空不修改':'粘贴你的密钥')+'">','密钥仅保存在本机，不随安装包发布。')+
       '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" id="ira-ai-save" type="button">保存模型设置</button><button class="ira-btn" id="ira-ai-test" type="button">测试连接</button><span class="ira-savehint" id="ira-ai-testout" role="status"></span></div>'+
-      '<details class="settings-disclosure"'+(tts.adapter && tts.adapter!=='off'?' open':'')+'><summary>语音合成<span>让 AI 回答通过耳机播放</span></summary><div class="ira-form ai-form-grid">'+
+      '<details class="settings-disclosure"'+(tts.adapter && tts.adapter!=='off'?' open':'')+'><summary>语音合成<span>让 AI 回答与等待语音通过耳机播放</span></summary><div class="ira-form ai-form-grid">'+
       field('合成服务','<select class="ira-select" id="ira-tts-adapter"><option value="off"'+(tts.adapter==='off'?' selected':'')+'>关闭 · 仅文字</option><option value="doubao"'+(tts.adapter==='doubao'?' selected':'')+'>豆包</option><option value="openai"'+(tts.adapter==='openai'?' selected':'')+'>OpenAI 兼容</option></select>','本地规则的语音包播报不受此开关影响。')+
       field('音色','<input class="ira-input" id="ira-tts-speaker" value="'+esc(tts.speaker || tts.voice || '')+'" placeholder="speaker 或 voice">','填写语音服务支持的音色名称。')+
       field('服务地址','<input class="ira-input" id="ira-tts-url" value="'+esc(tts.base_url || '')+'" placeholder="OpenAI 兼容服务才需要">','豆包使用内置服务地址。')+
       field('语音 API Key','<input class="ira-input" id="ira-tts-key" type="password" autocomplete="off" placeholder="'+(tts.api_key_set?'已配置，留空不修改':'粘贴语音服务密钥')+'">','与模型密钥分别保存。')+
-      '</div><div class="ira-row settings-actions"><button class="ira-btn" id="ira-tts-save" type="button">保存语音合成</button><button class="ira-btn" id="ira-tts-test" type="button">试听</button><span class="ira-savehint" id="ira-tts-out" role="status"></span></div></details>'+
+      '</div><div class="ira-form">'+
+      field('等待语音','<select class="ira-select" id="ira-ack-on"><option value="1"'+(ackEnabled?' selected':'')+'>开启 · 先播一句等待语</option><option value="0"'+(ackEnabled?'':' selected')+'>关闭 · 思考时保持安静</option></select>','AI 思考时先播一句等待语音（约 1 秒），关闭可缩短等待。')+
+      '</div><div class="ira-row settings-actions"><button class="ira-btn" id="ira-tts-save" type="button">保存语音合成与等待语音</button><button class="ira-btn" id="ira-tts-test" type="button">试听</button><span class="ira-savehint" id="ira-tts-out" role="status"></span></div></details>'+
       '<details class="settings-disclosure"><summary>分析键绑定<span>仅按键触发模式需要</span></summary><div class="ira-form">'+
       field('当前绑定','<input class="ira-input" id="ira-ai-keyname" readonly value="'+(a.analysis_key_bound?'已绑定':'未绑定')+'">','独立于普通 PTT。按住分析键提问时直接请求 AI。')+
       '</div><div class="ira-row settings-actions"><button class="ira-btn" id="ira-ai-keycap" type="button">采集分析键</button><span class="ira-savehint" id="ira-ai-keyout" role="status"></span></div></details>'+
-      '<details class="settings-disclosure"><summary>学习库维护<span>删除已保存的问答</span></summary><p class="ira-hint">清空后会失去已确认的知识和条件模板。此操作不会删除模型配置。</p><div class="ira-row settings-actions"><button class="ira-btn danger-button" id="ira-learn-clear" type="button">清空学习库</button><span class="ira-savehint" id="ira-learn-out" role="status"></span></div></details>';
+      '<details class="settings-disclosure"><summary>学习库维护<span>删除已保存的问答</span></summary><p class="ira-hint">清空后会失去已确认的知识和条件模板。此操作不会删除模型配置。</p><div class="ira-row settings-actions"><button class="ira-btn danger-button" id="ira-learn-clear" type="button">清空学习库</button><span class="ira-savehint" id="ira-learn-out" role="status"></span></div></details>'+
+      '<details class="settings-disclosure" id="ira-overlay-settings"><summary>游戏内 Overlay<span>在游戏画面上显示实时识别与回答</span></summary><div class="ira-form ai-form-grid">'+
+      field('启用 Overlay','<select class="ira-select" id="ira-ov-on"><option value="0"'+(ov.enabled?'':' selected')+'>关闭</option><option value="1"'+(ov.enabled?' selected':'')+'>开启</option></select>','游戏上方浮层：无边框、置顶、点击穿透，不影响操作。')+
+      field('透明度','<input class="ira-range" type="range" id="ira-ov-opacity" min="20" max="100" step="5" value="'+ovOpacity+'"><span class="ira-rangeval"><span class="ira-num" id="ira-ov-opacityval">'+ovOpacity+'</span> %</span>','越低越不挡视线；最低 20%。')+
+      field('显示位置','<select class="ira-select" id="ira-ov-corner">'+ovCorners.map(function(c){return '<option value="'+c[0]+'"'+(ovCorner===c[0]?' selected':'')+'>'+c[1]+'</option>';}).join('')+'</select>','多屏时以主屏为准。')+
+      field('切换热键','<input class="ira-input ira-num" value="'+esc(ovHotkey)+'" readonly>','游戏中按 '+esc(ovHotkey)+' 临时显示/隐藏，不会写入配置。')+
+      '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" type="button" id="ira-ov-save">保存 Overlay 设置</button><button class="ira-btn" type="button" id="ira-ov-toggle">立即显示/隐藏</button><span class="ira-savehint" id="ira-ov-out" role="status"></span></div></details>';
 
     bindAiPanel(panel, hint);
+    bindOverlaySettings(panel, ov);
     renderAiReview();
+  }
+
+  // 游戏内 Overlay 设置（v1.5.1）：写入 config.local.yaml 的 overlay 段。
+  // 透明度滑杆与配置下限统一为 20%（0.2–1.0）。
+  function bindOverlaySettings(panel, ov) {
+    var hint = $("[data-savehint]", panel);
+    var range = $("#ira-ov-opacity", panel);
+    var rangeVal = $("#ira-ov-opacityval", panel);
+    if (range && rangeVal) {
+      range.oninput = function () { rangeVal.textContent = this.value; };
+    }
+    var saveBtn = $("#ira-ov-save", panel);
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async function () {
+        var out = $("#ira-ov-out", panel);
+        var raw = parseInt(range && range.value, 10);
+        if (!raw) raw = 85;
+        var opacity = Math.round(Math.max(0.2, Math.min(1, raw / 100)) * 100) / 100;
+        var patch = { overlay: {
+          enabled: ($("#ira-ov-on", panel) || {}).value === "1",
+          opacity: opacity,
+          corner: ($("#ira-ov-corner", panel) || {}).value || "top-right"
+        } };
+        saveBtn.disabled = true;
+        try {
+          await save(patch, hint, "游戏内 Overlay 设置");
+          ["ira-ov-on", "ira-ov-opacity", "ira-ov-corner"].forEach(function (id) {
+            delete pendingDrafts[id];
+          });
+          if (raw < 20 && out) out.textContent = "透明度最低 20%，已按 20% 保存";
+          await loadSettings();
+        } catch (e) {
+          reportError(e);
+          if (out) out.textContent = "保存失败：" + e.message;
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    }
+    var toggleBtn = $("#ira-ov-toggle", panel);
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", async function () {
+        var out = $("#ira-ov-out", panel);
+        toggleBtn.disabled = true;
+        try {
+          var r = await api("/api/overlay/toggle", {});
+          if (out) {
+            out.textContent = r.ok ? (r.visible ? "已显示（运行时切换）" : "已隐藏（运行时切换）")
+              : (r.error || "切换失败");
+          }
+        } catch (e) {
+          if (out) out.textContent = "切换失败：" + e.message;
+        } finally {
+          toggleBtn.disabled = false;
+        }
+      });
+    }
   }
 
   function renderCarPanel(st) {
@@ -742,7 +815,9 @@
     };
     var key = $("#ira-tts-key", panel).value.trim();
     if (key) t.api_key = key;
-    return { ai: { tts: t } };
+    var ackEl = $("#ira-ack-on", panel);
+    var ackOn = ackEl ? ackEl.value === "1" : true;
+    return { ai: { tts: t, ack: { enabled: ackOn } } };
   }
 
   function bindAiPanel(panel, hint) {

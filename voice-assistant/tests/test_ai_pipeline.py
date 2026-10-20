@@ -2,7 +2,7 @@ import io
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.ai_pipeline import AiPipeline, AiResult, should_engage
 from src.query_class import QueryKind
@@ -10,12 +10,12 @@ from src.query_class import QueryKind
 
 class EngageMatrixTests(unittest.TestCase):
     def test_safety_never_engages_in_any_mode(self):
-        for mode in ("full", "analysis_key", "whitelist"):
+        for mode in ("full", "analysis_key", "whitelist", "all"):
             with self.subTest(mode=mode):
                 self.assertFalse(should_engage(QueryKind.SAFETY, mode, rule_ok=False))
 
     def test_analysis_engages_in_all_modes(self):
-        for mode in ("full", "analysis_key", "whitelist"):
+        for mode in ("full", "analysis_key", "whitelist", "all"):
             with self.subTest(mode=mode):
                 self.assertTrue(should_engage(QueryKind.ANALYSIS, mode, rule_ok=False))
 
@@ -29,10 +29,36 @@ class EngageMatrixTests(unittest.TestCase):
         # 没听懂就照实说没听懂，比花 3 秒猜更好
         self.assertFalse(should_engage(QueryKind.UNKNOWN, "analysis_key", rule_ok=False))
 
-    def test_known_with_rule_ok_never_engages(self):
+    def test_known_with_rule_ok_not_engaged_except_all_mode(self):
         for mode in ("full", "analysis_key", "whitelist"):
             with self.subTest(mode=mode):
                 self.assertFalse(should_engage(QueryKind.KNOWN, mode, rule_ok=True))
+
+    def test_all_mode_engages_known_even_with_rule_answer(self):
+        # 「全部交给 AI」的核心区别：规则层答得上的 KNOWN 也要交出去，
+        # 否则用户听到的仍是旧规则答案，档位等于没生效。
+        self.assertTrue(should_engage(QueryKind.KNOWN, "all", rule_ok=True))
+        self.assertTrue(should_engage(QueryKind.KNOWN, "all", rule_ok=False))
+
+    def test_all_mode_engages_unknown(self):
+        self.assertTrue(should_engage(QueryKind.UNKNOWN, "all", rule_ok=False))
+
+    def test_all_mode_keeps_safety_and_operation_local(self):
+        # 两条红线在任何档位都不放行；all 档也不例外。
+        for kind in (QueryKind.SAFETY, QueryKind.OPERATION):
+            with self.subTest(kind=kind.value):
+                self.assertFalse(should_engage(kind, "all", rule_ok=False))
+
+    def test_all_mode_matrix_is_exhaustive(self):
+        """all 档完整矩阵：除 SAFETY/OPERATION 外全放行。"""
+        expected = {QueryKind.SAFETY: False, QueryKind.OPERATION: False,
+                    QueryKind.ANALYSIS: True, QueryKind.KNOWN: True,
+                    QueryKind.UNKNOWN: True}
+        for kind, want in expected.items():
+            for rule_ok in (False, True):
+                with self.subTest(kind=kind.value, rule_ok=rule_ok):
+                    self.assertEqual(
+                        should_engage(kind, "all", rule_ok=rule_ok), want)
 
     def test_known_without_rule_answer_full_engages(self):
         self.assertTrue(should_engage(QueryKind.KNOWN, "full", rule_ok=False))
@@ -200,7 +226,7 @@ class OperationEngageTests(unittest.TestCase):
     """
 
     def test_operation_never_engages_in_any_mode(self):
-        for mode in ("full", "analysis_key", "whitelist"):
+        for mode in ("full", "analysis_key", "whitelist", "all"):
             with self.subTest(mode=mode):
                 self.assertFalse(
                     should_engage(QueryKind.OPERATION, mode, rule_ok=False))
@@ -241,3 +267,64 @@ class MalformedPayloadTests(unittest.TestCase):
                                  QueryKind.ANALYSIS, [])
                 self.assertFalse(r.ok)
                 self.assertIn("格式异常", r.reason)
+
+
+class LiveNotifyTests(unittest.TestCase):
+    """Overlay 时序：答案必须在 TTS 之前写进 live。
+
+    真实链路里 TTS 是同步阻塞的（播完才返回），晚写等于 Overlay 落后
+    一整句的时长，「实时状态」就名不副实。
+    """
+
+    def _pipeline(self, events):
+        from src.ai_pipeline import AiPipeline
+        c = {"ai": {"enabled": True, "mode": "full",
+                    "base_url": "http://x", "api_key": "k", "model": "m",
+                    "timeout_s": 3.0, "max_tokens": 300,
+                    "max_answer_chars": 60, "whitelist_intents": [],
+                    "tts": {"adapter": "openai", "base_url": "http://t",
+                            "api_key": "k"}}}
+        player = MagicMock()
+        player.enabled = True
+        player.play_bytes.side_effect = lambda blob: events.append(("player", blob))
+        p = AiPipeline(c, out=io.StringIO(), player=player,
+                       on_live=lambda text: events.append(("live", text)))
+        return p
+
+    def test_live_is_written_before_tts_playback(self):
+        events = []
+        p = self._pipeline(events)
+        reply = {"answer": "油够跑 6.2 圈", "data_used": ["laps_of_fuel"]}
+        with patch.object(p.client, "ask", return_value=reply), \
+             patch.object(p.tts, "synth", side_effect=lambda text: text.encode()):
+            r = p.handle("油还够吗", snap(), QueryKind.ANALYSIS, [])
+        self.assertTrue(r.ok)
+        self.assertEqual([e[0] for e in events], ["live", "player"])
+        self.assertEqual(events[0][1], "油够跑 6.2 圈")
+
+    def test_live_not_written_when_answer_fails(self):
+        from src.llm_engine import LlmError
+        events = []
+        p = self._pipeline(events)
+        with patch.object(p.client, "ask", side_effect=LlmError("timeout")):
+            r = p.handle("油还够吗", snap(), QueryKind.ANALYSIS, [])
+        self.assertFalse(r.ok)
+        # 失败态由 engine 写 error；流水线只负责成功出声前的 answer。
+        self.assertEqual(events, [])
+
+    def test_live_callback_exception_does_not_lose_answer(self):
+        # Overlay 是装饰层：回调里抛异常，答案也不能丢。
+        from src.ai_pipeline import AiPipeline
+        c = {"ai": {"enabled": True, "mode": "full",
+                    "base_url": "http://x", "api_key": "k", "model": "m",
+                    "timeout_s": 3.0, "max_tokens": 300,
+                    "max_answer_chars": 60, "whitelist_intents": []}}
+        def broken_ui(text):
+            raise RuntimeError("ui")
+
+        p = AiPipeline(c, out=io.StringIO(), on_live=broken_ui)
+        reply = {"answer": "油够跑 6.2 圈", "data_used": ["laps_of_fuel"]}
+        with patch.object(p.client, "ask", return_value=reply):
+            r = p.handle("油还够吗", snap(), QueryKind.ANALYSIS, [])
+        self.assertTrue(r.ok)
+        self.assertEqual(r.text, "油够跑 6.2 圈")

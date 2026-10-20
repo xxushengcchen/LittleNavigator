@@ -33,7 +33,7 @@ class AiConfigTests(unittest.TestCase):
     def test_timeout_is_clamped_to_hard_max(self):
         (self.root / "config.local.yaml").write_text(
             yaml.safe_dump({"ai": {"timeout_s": 10}}), encoding="utf-8")
-        self.assertEqual(self.load()["ai"]["timeout_s"], 2.0)
+        self.assertEqual(self.load()["ai"]["timeout_s"], 3.0)
 
     def test_max_answer_chars_is_clamped(self):
         (self.root / "config.local.yaml").write_text(
@@ -48,7 +48,12 @@ class AiConfigTests(unittest.TestCase):
     def test_tts_timeout_is_clamped(self):
         (self.root / "config.local.yaml").write_text(
             yaml.safe_dump({"ai": {"tts": {"timeout_s": 99}}}), encoding="utf-8")
-        self.assertEqual(self.load()["ai"]["tts"]["timeout_s"], 1.5)
+        self.assertEqual(self.load()["ai"]["tts"]["timeout_s"], 2.5)
+
+    def test_default_timeouts_match_v151(self):
+        cfg = self.load()
+        self.assertEqual(cfg["ai"]["timeout_s"], 3.0)
+        self.assertEqual(cfg["ai"]["tts"]["timeout_s"], 2.5)
 
     def test_smaller_values_are_kept(self):
         (self.root / "config.local.yaml").write_text(
@@ -109,6 +114,85 @@ class AiConfigTests(unittest.TestCase):
         (self.root / "config.local.yaml").write_text(
             yaml.safe_dump({"ai": {"whitelist_intents": "query_fuel"}}),
             encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.load()
+
+    # ---- v1.5.1：all 档 / 等待语音 / Overlay 配置 ----
+    def test_all_mode_is_accepted(self):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump({"ai": {"mode": "all"}}), encoding="utf-8")
+        self.assertEqual(self.load()["ai"]["mode"], "all")
+
+    def test_ack_defaults_to_enabled(self):
+        # 默认开：等待语音就是为了填补等模型的空场，用户不配也该有。
+        self.assertTrue(self.load()["ai"]["ack"]["enabled"])
+
+    def test_ack_can_be_disabled(self):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump({"ai": {"ack": {"enabled": False}}}), encoding="utf-8")
+        self.assertFalse(self.load()["ai"]["ack"]["enabled"])
+
+    def test_ack_enabled_must_be_bool(self):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump({"ai": {"ack": {"enabled": "yes"}}}), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.load()
+
+    def test_ack_must_be_object(self):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump({"ai": {"ack": True}}), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.load()
+
+    def test_overlay_defaults(self):
+        ov = self.load()["overlay"]
+        self.assertFalse(ov["enabled"])
+        self.assertEqual(ov["opacity"], 0.85)
+        self.assertEqual(ov["corner"], "top-right")
+        self.assertEqual(ov["margin"], 24)
+        self.assertEqual(ov["width"], 720)
+        self.assertEqual(ov["height"], 200)
+        self.assertEqual(ov["toggle_key"], "Ctrl+Alt+O")
+
+    def test_overlay_accepts_custom_values(self):
+        (self.root / "config.local.yaml").write_text(yaml.safe_dump({"overlay": {
+            "enabled": True, "opacity": 0.5, "corner": "bottom-left",
+            "margin": 0, "width": 480, "height": 400,
+            "toggle_key": "F9"}}), encoding="utf-8")
+        ov = self.load()["overlay"]
+        self.assertTrue(ov["enabled"])
+        self.assertEqual(ov["opacity"], 0.5)
+        self.assertEqual(ov["corner"], "bottom-left")
+        self.assertEqual(ov["width"], 480)
+        self.assertEqual(ov["height"], 400)
+
+    def test_overlay_bad_corner_is_rejected(self):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump({"overlay": {"corner": "center"}}), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.load()
+
+    def test_overlay_opacity_range_is_enforced(self):
+        for bad in (0.19, 1.5, float("nan")):
+            with self.subTest(opacity=bad):
+                (self.root / "config.local.yaml").write_text(
+                    yaml.safe_dump({"overlay": {"opacity": bad}}),
+                    encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_overlay_size_must_be_integer_in_range(self):
+        for key, bad in (("width", 100), ("height", 100), ("margin", 401),
+                         ("width", 720.5)):
+            with self.subTest(key=key, value=bad):
+                (self.root / "config.local.yaml").write_text(
+                    yaml.safe_dump({"overlay": {key: bad}}), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_overlay_toggle_key_must_be_nonempty_string(self):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump({"overlay": {"toggle_key": "  "}}), encoding="utf-8")
         with self.assertRaises(ValueError):
             self.load()
 

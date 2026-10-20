@@ -105,7 +105,7 @@ class TtsEngine:
             raise ValueError(f"未知的 TTS 适配器：{adapter}")
         self.adapter = adapter
         self.config = dict(config or {})
-        # 合成预算比 LLM 短：它在 LLM 之后跑，总预算 3.5s 里只剩 1.5s
+        # 合成预算比 LLM 短：它在 LLM 之后跑，总预算 6.0s 里只剩 2.5s
         self.timeout_s = const.clamp(
             self.config.get("timeout_s", const.TTS_DEADLINE_HARD_MAX),
             const.TTS_DEADLINE_HARD_MAX, "ai.tts.timeout_s")

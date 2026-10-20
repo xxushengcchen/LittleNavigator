@@ -24,6 +24,7 @@ from .phrase_match import PhraseMatcher
 from .player import Player
 from .voicepack import VariantPicker, VoicePack
 from .ai_pipeline import AiPipeline
+from .ack_phrases import AckPicker
 from .query_class import QueryKind, classify
 from . import car_control, command_match
 
@@ -62,6 +63,11 @@ class Assistant:
         self.gap_ms = gap_ms
         self.out = out
         self.busy = False                      # 播报中 / 处理中，语音入口据此忽略 PTT
+        # Overlay 数据源：听到什么、在做什么、答了什么。写入只做整项赋值，
+        # 读取方（app 侧）取 dict 副本即可，不需要额外锁。
+        self.live: dict[str, str] = {"heard": "", "state": "idle",
+                                     "answer": "", "error": ""}
+        self.ack_picker = AckPicker()
         self._operation_lock = threading.RLock()
         vp = cfg["voice_pack"]
         roots = [cfg_mod.resolve(cfg, pack_dir or vp["dir"])]
@@ -123,10 +129,40 @@ class Assistant:
                 store = None       # 学习库坏了不该拖垮主流程
         try:
             return AiPipeline(cfg, store=store, out=self.out, player=self.player,
-                              snapshot_provider=lambda: self.snapshot())
+                              snapshot_provider=lambda: self.snapshot(),
+                              on_live=self._on_ai_answer)
         except Exception as exc:   # noqa: BLE001
             print(f"  ⚠ AI 初始化失败：{exc}", file=self.out)
             return None
+
+    # ------------------------------------------------------------------ live
+    def _live(self, **fields: str) -> None:
+        """更新 Overlay 数据源。
+
+        只做 dict 整项赋值：Python 里 dict 单个键赋值是原子的，读方
+        （app 侧）复制一份再渲染，就不需要为这个展示层加锁。
+        """
+        live = getattr(self, "live", None)
+        if isinstance(live, dict):
+            live.update(fields)
+
+    def set_heard(self, text: str) -> None:
+        """记下最近一次听到的问题（Overlay 第一行）。"""
+        self._live(heard=(text or "").strip())
+
+    def _on_ai_answer(self, text: str) -> None:
+        """AI 文案已生成、TTS 之前：先把答案写进 live。
+
+        由 AiPipeline 在真正出声前回调——TTS 是同步阻塞的，等播完再写
+        等于晚一整句的时长，Overlay 就看不到「正在说这句」了。
+        """
+        self._live(state="answer", answer=text or "", error="")
+
+    @property
+    def _ai_all_mode(self) -> bool:
+        """「全部交给 AI」档是否生效：AI 存在、未熔断、mode=all。"""
+        return (self.ai is not None and self.ai.available
+                and getattr(self.ai, "mode", None) == "all")
 
     @property
     def ai_enabled(self) -> bool:
@@ -216,10 +252,17 @@ class Assistant:
         """
         p = lambda s: print(s, file=self.out)  # noqa: E731
         extra = dict(extra or {})
+        # 入口先记「听到什么」：后面无论走规则还是 AI，Overlay 第一行都要有。
+        self.set_heard(text)
         tr = self._resolve(text, strict=self._strict_for(source))
         snap = self.snapshot()
         rec: dict = {"q": text, "source": source, **extra}
         kind = classify(text, tr["intent"])
+
+        # 会走 AI 的问题立刻进「思考中」：规则层这一段（尤其改车指令）
+        # 可能还要几十毫秒，但用户松键后马上的视觉反馈应当是思考中。
+        if self._ai_should_engage(kind, text, tr["intent"], False):
+            self._live(state="thinking", answer="", error="")
 
         # 分析问题即使命中某个事实意图，也不能只播一个油量数字就结束。
         # 上层会立即接续 ask_ai；此处不先播一遍「没听清/答不了」。
@@ -265,6 +308,18 @@ class Assistant:
             self._log(self.miss_log, rec)
             return rec
         p(f"  依据：{dec.reason}")
+        # all 档全量接管：规则层答得上也不播——答案只当 AI 失败时的兜底
+        # 转交给上层 Service._maybe_ai；否则「全部交给 AI」听到的仍是旧行为。
+        if self._ai_all_mode and kind not in (QueryKind.SAFETY,
+                                              QueryKind.OPERATION):
+            rec.update({"ok": False, "ai_eligible": True,
+                        "fallback_plan": list(dec.plan),
+                        "fallback_text": dec.reason,
+                        "reason": "全量 AI 档：规则答案留作兜底"})
+            p("  ↪ 全量 AI 档：规则答案不播，转给模型")
+            self._live(state="thinking", answer="", error="")
+            self._log(self.miss_log, rec)
+            return rec
         return self._play_plan(text, snap, dec, rec, source, extra)
 
 
@@ -429,30 +484,56 @@ class Assistant:
 
     def _play_plan(self, text: str, snap, dec, rec: dict, source: str,
                    extra: dict) -> dict:
-        """把路由给出的 msgId 序列播出来。规则层的老路径，逻辑保持原样。"""
+        """把路由给出的 msgId 序列播出来。规则层的老路径，记录/日志保持原样。"""
         p = lambda s: print(s, file=self.out)  # noqa: E731
+        if not self.play_decision(dec, rec):
+            p(f"  ✗ 规则答案播放失败：{rec.get('reason')}")
+            self._log(self.miss_log, rec)
+            return rec
+        self._log(self.qa_log, rec)
+        return rec
+
+    def play_decision(self, dec, rec: dict) -> bool:
+        """播一个路由决策（``plan`` 的薄包装）。
+
+        抽出来是为了让「规则答案」与「AI 失败回退」共用同一条播放实现：
+        两处各写一遍，迟早会在拼装检查或 live 更新上分叉。
+        """
+        return self.play_plan(getattr(dec, "plan", None) or [], rec)
+
+    def play_plan(self, plan, rec: dict) -> bool:
+        """按 msgId 序列播报，返回是否播成功；失败原因写进 ``rec['reason']``。
+
+        调用方决定记哪本账（规则路径记 miss、AI 回退记 qa），这里只负责
+        拼装、抽变体、播报和 live 更新。
+        """
+        p = lambda s: print(s, file=self.out)  # noqa: E731
+        if not plan:
+            # 空计划不是「播了一句空话」，是调用方逻辑出错；明确判失败。
+            rec.update({"ok": False, "reason": "没有可播的片段"})
+            return False
         chosen: list[tuple[str, object]] = []
-        for mid in dec.plan:
+        for mid in plan:
             if not self.pack.has(mid):
                 p(f"  ✗ 拼装失败：语音包里没有 {mid}")
                 rec.update({"ok": False, "reason": f"拼装缺件 {mid}"})
-                self._log(self.miss_log, rec)
-                return rec
+                return False
             try:
                 chosen.append((mid, self._pick_existing(mid)))
             except FileNotFoundError as exc:
                 p(f"  ✗ 拼装失败：{exc}")
                 rec.update({"ok": False, "reason": f"拼装缺件 {mid}"})
-                self._log(self.miss_log, rec)
-                return rec
+                return False
         try:
             self.picker.save()
         except OSError as exc:
             p(f"  ⚠ 冷却记录保存失败：{exc}")
 
         assembled = "".join(v.text for _, v in chosen)  # type: ignore[attr-defined]
-        rec.update({"plan": dec.plan, "text": assembled,
+        rec.update({"plan": list(plan), "text": assembled,
                     "segments": len(chosen), "ok": True})
+        # 播报前先写 live：与 AI 路径同一时序约定（答案先出现，声音随其后）。
+        self._live(state="answer", answer=assembled, error="")
         try:
             played = 0.0
             first_ms: float | None = None
@@ -468,8 +549,7 @@ class Assistant:
         except Exception as exc:  # noqa: BLE001
             p(f"  ✗ 播放失败：{exc}")
             rec.update({"ok": False, "reason": f"播放失败：{exc}"})
-        self._log(self.qa_log, rec)
-        return rec
+        return bool(rec.get("ok"))
 
     def ask_ai(self, text: str, kind: QueryKind, intent: str | None,
                rule_ok: bool, *, source: str = "voice",
@@ -492,9 +572,15 @@ class Assistant:
             p("  ✗ 识别文本为空，不请求模型")
             rec.update({"ok": False, "reason": "没听到内容，请按住 PTT 重说一次"})
             self._say_with_fallback(REFUSE_HEARD)
+            self._live(state="error", answer="",
+                       error="没听到内容，请按住 PTT 重说一次")
             self._log(self.miss_log, rec)
             return rec
 
+        # Overlay：等模型的全程都是「思考中」，等待语音播放期间也一样。
+        self._live(state="thinking", answer="", error="")
+        # 先播等待语音再请求：等待语音不计入 AI 总预算（预算从 handle 内部计时）。
+        self._play_ack()
         self.busy = False          # 让 PTT 能进来（关键：不占用麦克风）
         try:
             snap = self.snapshot()
@@ -504,6 +590,8 @@ class Assistant:
         except Exception as exc:   # noqa: BLE001
             p(f"  ✗ AI 处理异常：{exc}")
             rec.update({"ok": False, "reason": f"AI 处理异常：{exc}"})
+            self._live(state="error", answer="",
+                       error=f"AI 处理异常：{exc}")
             self._log(self.miss_log, rec)
             return rec
 
@@ -516,18 +604,62 @@ class Assistant:
                     "ai_evidence": result.evidence,
                     "review_id": uuid.uuid4().hex[:12]})
         if not result.ok:
+            # 规则答得上却被转交给 AI 的那条路径：AI 失败不能静默，
+            # 回退播规则答案（fallback_plan 由 engine.ask 在 all 档写入）。
+            fallback = rec.get("fallback_plan")
+            if fallback:
+                p(f"  ↪ AI 未答上来（{result.reason}），回退规则答案")
+                if self.play_plan(fallback, rec):
+                    rec.update({"ok": True, "ai_fallback": True,
+                                "ai_reason": result.reason,
+                                "reason": "AI 失败，已回退规则答案"})
+                    self._log(self.qa_log, rec)
+                    return rec
             rec["reason"] = result.reason
+            self._live(state="error", answer="", error=result.reason)
             p(f"  ✗ AI 未给出可用回答：{result.reason}")
             # 素材可能还没合成（Task 17）。有就播，没有就只留文字。
             if result.checks.get('tts') != 'ok' and self.pack.has(AI_SEE_SCREEN):
                 self._say(AI_SEE_SCREEN)
             self._log(self.miss_log, rec)
             return rec
+        # 真实链路上流水线已在 TTS 前回调 _on_ai_answer；这里再写一次是幂等的，
+        # 也让「直接替换 handle 返回文字」的调用方拿到一致的 live 状态。
+        self._live(state="answer", answer=result.text or "", error="")
         p(f"  ✎ AI（{result.source}）{result.latency_ms}ms：{result.text}")
         if result.checks.get("tts") != "ok" and self.pack.has(AI_SEE_SCREEN):
             self._say(AI_SEE_SCREEN)
         self._log(self.qa_log, rec)
         return rec
+
+    def _play_ack(self) -> str | None:
+        """真正请求模型前同步播一句等待语音，返回播出的 msgId（没播为 None）。
+
+        等待语音是装饰层：未启用、素材缺失、播放失败都静默跳过，
+        绝不能让主流程因为「没播出一句等待」而失败。
+        """
+        if self.ai is None or not self.ai.available:
+            return None
+        ack_cfg = (self.cfg.get("ai") or {}).get("ack") or {}
+        if not ack_cfg.get("enabled", True):
+            return None
+        # 只在语音包真有的素材里抽：T3 可能还没重建包，抽到缺失的等于没播。
+        mid = self.ack_picker.pick(self.pack.has)
+        if mid is None:
+            return None
+        try:
+            v = self._pick_existing(mid)
+        except Exception as exc:      # noqa: BLE001
+            print(f"  ⚠ 等待语音素材不可用：{exc}", file=self.out)
+            return None
+        print(f"  ⏳ 等待语音 {mid}「{v.text}」", file=self.out)
+        self._live(state="thinking")
+        try:
+            self.player.play(self.pack.path_of(v))
+        except Exception as exc:      # noqa: BLE001
+            print(f"  ⚠ 等待语音播放失败：{exc}", file=self.out)
+            return None
+        return mid
 
     # ------------------------------------------------------------------
     def pack_info(self) -> dict:
@@ -562,6 +694,8 @@ class Assistant:
             # 「关/未启用」，用户再保存一次就把正确的 true 覆盖成 false。
             # 这里回的是**运行态**（self.car），配置与实际不一致时以实际为准。
             "car_control": self.car_config_view(),
+            # Overlay 配置由 src 层负责默认值/校验，app 侧只消费这份值。
+            "overlay": dict(c.get("overlay") or {}),
         }
 
     def car_config_view(self) -> dict:
@@ -597,6 +731,8 @@ class Assistant:
             "max_answer_chars": ai.get("max_answer_chars"),
             "whitelist_intents": list(ai.get("whitelist_intents") or []),
             "analysis_key_bound": bool(ai.get("analysis_key")),
+            # 等待语音开关（Overlay/设置页读取；默认开）。
+            "ack_enabled": bool((ai.get("ack") or {}).get("enabled", True)),
             "tts": {
                 "adapter": tts.get("adapter") or "off",
                 "base_url": tts.get("base_url") or "",

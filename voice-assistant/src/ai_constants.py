@@ -16,9 +16,12 @@ import math
 logger = logging.getLogger(__name__)
 
 # 三道延迟是同一笔预算的拆分：LLM 规划 + TTS 出声 必须落在总上限之内。
-LLM_DEADLINE_HARD_MAX = 2.0
-TTS_DEADLINE_HARD_MAX = 1.5
-AI_TOTAL_DEADLINE_HARD_MAX = 3.5
+# v1.5.1 放宽（2.0 / 1.5 / 3.5 → 3.0 / 2.5 / 6.0）：实测多数大模型首包就超过 2s，
+# 旧上限下「全部交给 AI」档几乎必然降级成「答不了」，等于功能不可用。
+# 放宽后仍然有上限——弯里等待超过 6s 的回答已经没有时效价值。
+LLM_DEADLINE_HARD_MAX = 3.0
+TTS_DEADLINE_HARD_MAX = 2.5
+AI_TOTAL_DEADLINE_HARD_MAX = 6.0
 
 # token 与字符数上限共同压制「模型开始长篇大论」的成本与延迟。
 MAX_INPUT_TOKENS_HARD = 1500

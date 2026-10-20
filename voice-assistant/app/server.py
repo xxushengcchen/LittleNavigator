@@ -8,6 +8,9 @@
 
 接口一览（全部 JSON，UTF-8）：
     GET  /api/state                 状态快照（连接/PTT/语音包/遥测/最近问答）
+    GET  /api/overlay               游戏内 Overlay：配置摘要 + 实时识别/回答
+    POST /api/overlay/toggle        运行时显示/隐藏 Overlay（不改配置）
+    GET  /overlay                   游戏内 Overlay 页面（无边框透明窗口用）
     GET  /api/log?limit=50          问答记录 + 未识别清单
     GET  /api/stats                 本场统计
     GET  /api/knowledge             知识库：意图 / 问法分布 / 字段 / 链路 / 可疑样本
@@ -45,6 +48,52 @@ from src.listener import PttListener, check_input_device, resolve_vk  # noqa: E4
 from src.query_class import classify        # noqa: E402
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
+
+# ====================================================================== Overlay
+# 游戏内 Overlay 是 v1.5.1 新增的第二窗口（app/desktop.py 创建）。
+# 配置项由 src/config.py 的 overlay 段提供；这里再做一层防御式默认值：
+# 配置层还没升级（或用户 config.local.yaml 只写了半段）时，
+# 接口和窗口都不能因为缺字段而崩。
+OVERLAY_DEFAULTS: dict = {
+    "enabled": False,
+    "opacity": 0.85,          # 0.3–1.0
+    "corner": "top-right",    # top-left | top-right | bottom-left | bottom-right
+    "margin": 24,
+    "width": 720,
+    "height": 200,
+    "toggle_key": "Ctrl+Alt+O",
+}
+OVERLAY_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+OVERLAY_LIVE_STATES = ("idle", "thinking", "answer", "error")
+
+
+def overlay_settings(cfg: dict | None) -> dict:
+    """把配置里的 overlay 段补齐并做类型收敛。"""
+    raw = cfg.get("overlay") if isinstance(cfg, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    out = dict(OVERLAY_DEFAULTS)
+    for key, default in OVERLAY_DEFAULTS.items():
+        if key not in raw:
+            continue
+        value = raw[key]
+        if isinstance(default, bool):
+            if isinstance(value, bool):
+                out[key] = value
+        elif isinstance(default, (int, float)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            out[key] = float(value) if isinstance(default, float) else int(value)
+        elif isinstance(default, str):
+            if isinstance(value, str) and value:
+                out[key] = value
+    if out["corner"] not in OVERLAY_CORNERS:
+        out["corner"] = OVERLAY_DEFAULTS["corner"]
+    # 只做防崩护栏，真正的取值范围由 src/config.py 的 validate() 负责。
+    out["opacity"] = min(1.0, max(0.05, float(out["opacity"])))
+    out["margin"] = max(0, min(int(out["margin"]), 512))
+    out["width"] = max(240, min(int(out["width"]), 4096))
+    out["height"] = max(80, min(int(out["height"]), 2160))
+    return out
 
 
 def _version_file() -> pathlib.Path:
@@ -115,6 +164,7 @@ class Service:
         self.last_ask: dict | None = None
         self.quit_requested = False
         self.desktop_mode = False        # 原生窗口模式（app.desktop 里置 True）
+        self.overlay_controller = None   # app.desktop 注入的游戏内 Overlay 窗口控制器
         self.qa_log = self.asst.qa_log
         self.miss_log = self.asst.miss_log
 
@@ -285,8 +335,91 @@ class Service:
                    "analysis_key_bound": bool(
                        (self.cfg.get("ai", {}) or {}).get("analysis_key"))},
             "last": self.last_ask or (self.asst.history[-1] if self.asst.history else None),
+            "overlay": self.overlay_state(),
             "config": self.asst.config_view(),
         }
+
+    # ---------------------------------------------------------------- Overlay
+    def overlay_live(self) -> dict:
+        """实时识别/回答状态。T1 的 Assistant.live 未就绪时回落到 idle。"""
+        live = getattr(self.asst, "live", None)
+        live = live if isinstance(live, dict) else {}
+        state = live.get("state")
+        if state not in OVERLAY_LIVE_STATES:
+            state = "idle"
+
+        def text(key: str) -> str:
+            value = live.get(key)
+            return "" if value is None else str(value)
+
+        return {"heard": text("heard"), "state": state,
+                "answer": text("answer"), "error": text("error")}
+
+    def overlay_state(self) -> dict:
+        """GET /api/overlay：配置摘要 + 控制器可用性 + 实时状态。"""
+        settings = overlay_settings(getattr(self, "cfg", {}))
+        controller = getattr(self, "overlay_controller", None)
+        summary = {
+            "available": controller is not None,
+            "enabled": settings["enabled"],
+            "opacity": settings["opacity"],
+            "corner": settings["corner"],
+            "margin": settings["margin"],
+            "width": settings["width"],
+            "height": settings["height"],
+            "toggle_key": settings["toggle_key"],
+            "visible": None,
+            "live": self.overlay_live(),
+        }
+        if controller is not None:
+            try:
+                summary["visible"] = bool(getattr(controller, "visible", False))
+            except Exception:  # noqa: BLE001 - 控制器异常不能拖垮状态接口
+                summary["visible"] = None
+        return summary
+
+    def toggle_overlay(self) -> dict:
+        """POST /api/overlay/toggle：运行时显示/隐藏，不动配置。"""
+        controller = getattr(self, "overlay_controller", None)
+        if controller is None:
+            return {"ok": False, "available": False,
+                    "error": "游戏内 Overlay 不可用（浏览器模式或 --no-window）"}
+        try:
+            visible = controller.toggle()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "available": True,
+                    "error": f"{type(exc).__name__}: {exc}"}
+        if visible is None:
+            visible = bool(getattr(controller, "visible", False))
+        return {"ok": True, "available": True, "visible": bool(visible)}
+
+    def _apply_overlay_live(self, values) -> dict:
+        """配置保存后把 Overlay 变更立即推给窗口。"""
+        controller = getattr(self, "overlay_controller", None)
+        if controller is None or not isinstance(values, dict):
+            return {}
+        settings = overlay_settings(getattr(self, "cfg", {}))
+        applied: dict = {}
+        try:
+            if "enabled" in values:
+                controller.set_enabled(bool(settings["enabled"]))
+                applied["enabled"] = settings["enabled"]
+            if "opacity" in values:
+                controller.set_opacity(settings["opacity"])
+                applied["opacity"] = settings["opacity"]
+            if "corner" in values:
+                controller.set_corner(settings["corner"])
+                applied["corner"] = settings["corner"]
+            if any(key in values for key in ("width", "height", "margin")):
+                set_geometry = getattr(controller, "set_geometry", None)
+                if callable(set_geometry):
+                    set_geometry(settings["width"], settings["height"],
+                                 settings["margin"])
+                    applied["geometry"] = [settings["width"], settings["height"],
+                                           settings["margin"]]
+        except Exception as exc:  # noqa: BLE001
+            applied["error"] = f"{type(exc).__name__}: {exc}"
+        return applied
 
     # ---------------------------------------------------------------- 问答
     def ask(self, text: str, play: bool = False) -> dict:
@@ -492,9 +625,11 @@ class Service:
                    "ai": {"enabled", "mode", "provider", "base_url", "model",
                           "api_key", "timeout_s", "max_tokens",
                           "max_answer_chars", "rate_limit_per_min",
-                          "analysis_key", "whitelist_intents", "tts"},
+                          "analysis_key", "whitelist_intents", "tts", "ack"},
                    "ptt": {"vk", "binding", "min_hold_ms", "max_hold_s", "poll_ms", "input_device"},
                    "playback": {"enabled", "volume", "device", "ducking"},
+                   "overlay": {"enabled", "opacity", "corner", "margin",
+                               "width", "height", "toggle_key"},
                    "voice_pack": {"cooldown"}}
         if not isinstance(patch, dict):
             raise ValueError("patch 必须为配置对象")
@@ -503,6 +638,7 @@ class Service:
                 raise ValueError(f"不支持的配置项：{section}")
         for section, key, keys in [("intent", "l1_keyword", {"enabled"}),
                                    ("playback", "ducking", {"enabled", "amount_db", "processes"}),
+                                   ("ai", "ack", {"enabled"}),
                                    ("ai", "tts", {"adapter", "base_url", "api_key",
                                                   "model", "voice", "speaker",
                                                   "resource_id", "format",
@@ -523,7 +659,13 @@ class Service:
             if any(not (directory/name).is_file() for name in names):
                 raise ValueError(f"该模型尚未安装：{directory}")
         with self.listener_lock:
-            return self._configure(patch)
+            result = self._configure(patch)
+        # Overlay 是纯界面开关：保存成功后立即推给窗口，无需重启。
+        if isinstance(result, dict) and result.get("ok") and "overlay" in patch:
+            applied_overlay = self._apply_overlay_live(patch["overlay"])
+            if applied_overlay:
+                result = {**result, "applied_overlay": applied_overlay}
+        return result
 
     def _configure(self, patch):
         local = pathlib.Path(self.cfg['_local_path'])
@@ -635,6 +777,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path in ("/", "/index.html"):
                 self._file(STATIC_DIR / "index.html")
+            elif u.path in ("/overlay", "/overlay/"):
+                # 游戏内 Overlay 页面：给桌面端第二个透明窗口用。
+                # 纯 GET、只读接口，不注入/不要求 token。
+                self._file(STATIC_DIR / "overlay.html")
             elif u.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
@@ -646,6 +792,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._file(target)
             elif u.path == "/api/state":
                 self._json(self.service.state())
+            elif u.path == "/api/overlay":
+                self._json(self.service.overlay_state())
             elif u.path == "/api/log":
                 self._json(self.service.log_data(int(q.get("limit", ["80"])[0])))
             elif u.path == "/api/ai/review":
@@ -705,6 +853,8 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/quit":
                 self.service.quit_requested = True
                 self._json({"ok": True, "hint": "窗口即将关闭"})
+            elif u.path == "/api/overlay/toggle":
+                self._json(self.service.toggle_overlay())
             elif u.path == "/api/config":
                 self._json(self.service.configure(body.get("patch") or {}))
             elif u.path == "/api/ai/test":

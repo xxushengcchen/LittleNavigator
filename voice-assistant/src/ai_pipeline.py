@@ -58,23 +58,31 @@ def should_engage(kind: QueryKind, mode: str, rule_ok: bool,
     两者的**用户可见结果一样**（不调模型、给固定话术），
     但话术不同——见 engine.ask() 按 kind 选 msgId。
 
-    | 分类      | full | analysis_key | whitelist |
-    |-----------|------|--------------|-----------|
-    | SAFETY    |  否  |      否      |    否     |
-    | OPERATION |  否  |      否      |    否     |
-    | ANALYSIS  |  是  |      是      |    是     |
-    | KNOWN(ok) |  否  |      否      |    否     |
-    | KNOWN(x)  |  是  |      否      | 仅白名单  |
-    | UNKNOWN   |  是  |      否      |    否     |
+    | 分类      | full | analysis_key | whitelist | all |
+    |-----------|------|--------------|-----------|-----|
+    | SAFETY    |  否  |      否      |    否     | 否  |
+    | OPERATION |  否  |      否      |    否     | 否  |
+    | ANALYSIS  |  是  |      是      |    是     | 是  |
+    | KNOWN(ok) |  否  |      否      |    否     | 是  |
+    | KNOWN(x)  |  是  |      否      | 仅白名单  | 是  |
+    | UNKNOWN   |  是  |      否      |    否     | 是  |
 
     analysis_key 档位下「按住分析键」是用户显式动作，此时 ANALYSIS 仍放行；
     KNOWN/UNKNOWN 不放行——没听懂就照实说没听懂，比花 3 秒猜更好。
+
+    all 档是 v1.5.1 的「全部交给 AI」：规则层答得上也交给模型（引擎在
+    播放规则答案之前就转交，见 engine.ask），只把 SAFETY/OPERATION 两条
+    红线留在本地。KNOWN(ok) 也要放行——这正是「全量接管」与 full 的区别。
 
     OPERATION 尤其不能放给模型：软件不执行只是没帮上忙，
     模型给出「前翼调软两格」这种建议，在 200km/h 的弯里照做是要出事的。
     """
     if kind is QueryKind.SAFETY or kind is QueryKind.OPERATION:
         return False
+
+    # 全量接管档：除上面两条红线外一律交给模型，规则层答案只当兜底素材。
+    if mode == "all":
+        return True
 
     if kind is QueryKind.ANALYSIS:
         return True
@@ -102,7 +110,7 @@ class AiPipeline:
     """
 
     def __init__(self, cfg: dict, store: LearnStore | None = None, out=None,
-                 player=None, snapshot_provider=None):
+                 player=None, snapshot_provider=None, on_live=None):
         import sys
 
         self.cfg = cfg
@@ -137,6 +145,9 @@ class AiPipeline:
         # 结果「TTS 成功」却什么都没播出来（实测确认）。
         self.player = player
         self.snapshot_provider = snapshot_provider
+        # 文案生成后、TTS 出声前通知引擎（Overlay 要在这时就能读到答案）。
+        # 刻意做成回调而不是让流水线直接改引擎状态：这一层不认识 Overlay。
+        self.on_live = on_live
 
     # ------------------------------------------------------------------
     @property
@@ -193,6 +204,9 @@ class AiPipeline:
             if stale:
                 self._expire(result, stale)
             else:
+                # 先让 Overlay 看到答案，再合成/播报：TTS 是同步阻塞的，
+                # 等播完再写等于晚一整句的时长，Overlay 就失去「实时」意义了。
+                self._notify_live(result.text)
                 self._maybe_speak(result.text, result, before_play=freshness)
             return done(result)
 
@@ -274,6 +288,18 @@ class AiPipeline:
         result.checks = {**result.checks, 'freshness': 'expired'}
         # 固定提示不引用遥测数值，不把过期回答或模板留给播放/学习路径。
         self._maybe_speak(result.text, result)
+
+    def _notify_live(self, text: str) -> None:
+        """把「答案已生成、即将出声」告诉引擎（Overlay 数据源）。
+
+        回调异常一律吞掉：Overlay 是装饰层，不该有让答案丢失的能力。
+        """
+        if self.on_live is None:
+            return
+        try:
+            self.on_live(text)
+        except Exception:      # noqa: BLE001
+            pass
 
     def _maybe_speak(self, text: str, result: AiResult, before_play=None) -> None:
         """有 TTS 就合成并**播放**；失败只记一笔，文字照常返回。

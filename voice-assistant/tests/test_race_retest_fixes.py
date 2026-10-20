@@ -169,11 +169,14 @@ class FreshnessTests(unittest.TestCase):
         p.player.play_bytes.assert_called_once_with('当前油量41.7升'.encode('utf-8'))
 
     def test_expired_time_budget_without_real_sleep(self):
+        from src import ai_constants as const
         clock = [0.0]
         p = self.pipe(Snapshot(connected=True, fuel_level=41.7))
         reply = p.client.ask.return_value
         def slow(*_):
-            clock[0] = 4.0
+            # 越过总预算即可，用常量而不是写死秒数：v1.5.1 把 3.5s 放宽到 6.0s，
+            # 写死 4.0 的旧断言会变成「没超时」，契约再调整时也会假红。
+            clock[0] = const.AI_TOTAL_DEADLINE_HARD_MAX + 0.5
             return reply
         p.client.ask.side_effect = slow
         with patch('src.ai_pipeline.time.monotonic', side_effect=lambda: clock[0]):

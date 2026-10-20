@@ -116,7 +116,7 @@ python -m unittest discover -s tests
 `test_regressions.ServiceTests` 的 `setUpClass` 失败，合计 26 个用例跑不起来：
 
 - `build/pack/Mandarin-CNTW-Xusheng_Chen/` — 主包（`SPCC_*`）
-- `build/assistant-extra/` — 拼接连接件（5 个 msgId × 6 变体 = 30 条）
+- `build/assistant-extra/` — 拼接连接件与 AI 等待语音（25 个 msgId、70 条：5 个 × 6 变体 + 20 条等待语音 × 2 变体）
 - `build/assistant-telemetry/` — 助手话术（117 个 msgId × 627 条）
 
 没有 `build/` 时会有 1–2 项跳过（依赖运行时光盘素材的用例），属正常。

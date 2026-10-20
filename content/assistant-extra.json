@@ -1,7 +1,7 @@
 {
   "meta": {
-    "version": "2.0.0",
-    "note": "助手拼接连接件：与数字片段组合成完整句子。历史上是独立包，源文件一度不在仓库里。"
+    "version": "2.1.0",
+    "note": "助手拼接连接件 + 等待应答短句：与数字片段组合成完整句子；AST_ACK_* 在等待 AI 回复时播放。历史上是独立包，源文件一度不在仓库里。"
   },
   "items": [
     {
@@ -78,6 +78,226 @@
         "后面落后你"
       ],
       "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_01",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "稍等我一下喔",
+        "稍等喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_02",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "我正在检查喔",
+        "让我检查一下"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_03",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "等我一下喔",
+        "你等我一下喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_04",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "好的收到喔",
+        "收到啦"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_05",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "让我想想喔",
+        "我想一下喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_06",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "我在看数据喔",
+        "我先看数据"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_07",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "马上就好喔",
+        "快好了喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_08",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "别急喔",
+        "你先别急喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_09",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "这就来喔",
+        "我马上来喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_10",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "正在确认喔",
+        "我确认一下"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_11",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "我看一下喔",
+        "让我看一下"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_12",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "马上处理喔",
+        "我这就处理"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_13",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "好的哟",
+        "好喔没问题"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_14",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "收到了喔",
+        "我已经收到啦"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_15",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "正在核对喔",
+        "我核对一下"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_16",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "再等一下下喔",
+        "等一下下就好"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_17",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "让我看看数据",
+        "数据我看看喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_18",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "稍等片刻喔",
+        "再稍等一下喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_19",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "马上告诉你喔",
+        "查好就告诉你喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_ACK_20",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "这就查喔",
+        "马上查喔"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
     }
   ]
 }
