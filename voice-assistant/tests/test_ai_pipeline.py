@@ -328,3 +328,125 @@ class LiveNotifyTests(unittest.TestCase):
             r = p.handle("油还够吗", snap(), QueryKind.ANALYSIS, [])
         self.assertTrue(r.ok)
         self.assertEqual(r.text, "油够跑 6.2 圈")
+
+
+class SpokenDurationRewriteTests(unittest.TestCase):
+    """v1.5.2：AI 答案里 >=60 秒的时长要变成「X分Y.Z秒」。
+
+    时序是硬约束：三道闸（尤其数字闸）必须先按原始数值校验，
+    通过之后才改写。反过来做等于自己造一个对不上的数字。
+    """
+
+    def _pipeline(self, player=None, live=None):
+        c = cfg(mode="full")
+        c["ai"]["tts"] = {"adapter": "openai", "base_url": "http://t",
+                          "api_key": "k"}
+        return AiPipeline(c, out=io.StringIO(), player=player,
+                          on_live=live)
+
+    def test_long_lap_time_is_rewritten(self):
+        p = self._pipeline()
+        reply = {"answer": "上一圈 83.5 秒", "data_used": ["lap_last"]}
+        with patch("src.ai_pipeline.LlmClient.ask", return_value=reply):
+            r = p.handle("上一圈多少", snap(), QueryKind.ANALYSIS, [])
+        self.assertTrue(r.ok)
+        self.assertEqual(r.text, "上一圈 1分23.5秒")
+        self.assertNotIn("83.5", r.text)
+
+    def test_short_durations_are_left_alone(self):
+        p = self._pipeline()
+        reply = {"answer": "还剩 12 秒，油够 6.2 圈", "data_used": ["lap", "laps_of_fuel"]}
+        with patch("src.ai_pipeline.LlmClient.ask", return_value=reply):
+            r = p.handle("还剩多久", snap(), QueryKind.ANALYSIS, [])
+        self.assertTrue(r.ok)
+        self.assertEqual(r.text, "还剩 12 秒，油够 6.2 圈")
+
+    def test_already_spoken_format_is_not_double_converted(self):
+        from src.ai_pipeline import rewrite_spoken_durations
+        self.assertEqual(rewrite_spoken_durations("已经 1分23.5秒"),
+                         "已经 1分23.5秒")
+
+    def test_rewrite_happens_before_live_and_tts(self):
+        events = []
+        p = self._pipeline(player=MagicMock(enabled=True),
+                           live=lambda text: events.append(("live", text)))
+        p.player.play_bytes.side_effect = lambda blob: events.append(("player", blob))
+        reply = {"answer": "上一圈 83.5 秒", "data_used": ["lap_last"]}
+        with patch("src.ai_pipeline.LlmClient.ask", return_value=reply), \
+             patch.object(p.tts, "synth", side_effect=lambda text: text.encode()):
+            r = p.handle("上一圈多少", snap(), QueryKind.ANALYSIS, [])
+        self.assertTrue(r.ok)
+        self.assertEqual([e[0] for e in events], ["live", "player"])
+        self.assertEqual(events[0][1], "上一圈 1分23.5秒")
+        self.assertEqual(events[1][1].decode(), "上一圈 1分23.5秒")
+
+    def test_failed_checks_do_not_get_rewritten(self):
+        # 校验失败时文字根本不往外走，改写也不该发生。
+        p = self._pipeline()
+        reply = {"answer": "上一圈 99.9 秒", "data_used": ["lap_last"]}
+        with patch("src.ai_pipeline.LlmClient.ask", return_value=reply):
+            r = p.handle("上一圈多少", snap(), QueryKind.ANALYSIS, [])
+        self.assertFalse(r.ok)
+        self.assertEqual(r.text, "")
+
+    def test_uses_t1_helper_when_available(self):
+        p = self._pipeline()
+        reply = {"answer": "上一圈 83.5 秒", "data_used": ["lap_last"]}
+        with patch("src.ai_pipeline.LlmClient.ask", return_value=reply), \
+             patch("src.numbers.seconds_to_spoken",
+                   return_value="一分二十三秒五") as helper:
+            r = p.handle("上一圈多少", snap(), QueryKind.ANALYSIS, [])
+        self.assertTrue(r.ok)
+        self.assertEqual(r.text, "上一圈 一分二十三秒五")
+        helper.assert_called()
+
+    def test_falls_back_when_helper_missing(self):
+        from src.ai_pipeline import rewrite_spoken_durations
+        with patch("src.numbers.seconds_to_spoken", new=None):
+            self.assertEqual(rewrite_spoken_durations("83.5秒"), "1分23.5秒")
+
+    def test_minutes_roll_over_on_rounding(self):
+        from src.ai_pipeline import rewrite_spoken_durations
+        # 119.96 秒按一位小数取整进位到 120.0 → 不能出现「1分60.0秒」
+        self.assertEqual(rewrite_spoken_durations("119.96秒"), "2分0.0秒")
+
+    def test_number_checks_run_before_rewrite(self):
+        """数字闸仍然按原始秒数核对：篡改过的 99.9 必须被拒绝。"""
+        p = self._pipeline()
+        reply = {"answer": "上一圈 99.9 秒", "data_used": ["lap_last"]}
+        with patch("src.ai_pipeline.LlmClient.ask", return_value=reply):
+            r = p.handle("上一圈多少", snap(), QueryKind.ANALYSIS, [])
+        self.assertFalse(r.ok)
+        self.assertIn("校验", r.reason)
+
+
+class ThinkingModeWiringTests(unittest.TestCase):
+    """v1.5.2：思考模式配置要真的传到请求体里（契约 §3）。"""
+
+    def test_pipeline_passes_low_to_deepseek_client(self):
+        p = AiPipeline({"ai": {"enabled": True, "mode": "full",
+                               "base_url": "https://api.deepseek.com",
+                               "api_key": "k", "model": "deepseek-chat",
+                               "thinking_mode": "low"}}, out=io.StringIO())
+        self.assertEqual(p.client.thinking_mode, "low")
+        body = p.client._payload({"now": {"lap": 1}}, "问题")
+        self.assertEqual(body["thinking"], {"type": "enabled"})
+        self.assertEqual(body["reasoning_effort"], "low")
+
+    def test_default_thinking_mode_is_off(self):
+        p = AiPipeline({"ai": {"enabled": True, "mode": "full",
+                               "base_url": "https://api.deepseek.com",
+                               "api_key": "k", "model": "deepseek-chat"}},
+                       out=io.StringIO())
+        body = p.client._payload({"now": {}}, "问题")
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_unknown_provider_gets_no_thinking_params(self):
+        p = AiPipeline({"ai": {"enabled": True, "mode": "full",
+                               "base_url": "http://127.0.0.1:11434/v1",
+                               "api_key": "k", "model": "qwen2.5:7b",
+                               "thinking_mode": "low"}}, out=io.StringIO())
+        body = p.client._payload({"now": {}}, "问题")
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("reasoning_effort", body)

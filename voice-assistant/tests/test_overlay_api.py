@@ -28,6 +28,7 @@ class FakeOverlayController:
 
     def __init__(self):
         self.visible = False
+        self.layout_mode = False
         self.calls = []
 
     def set_enabled(self, enabled):
@@ -42,6 +43,14 @@ class FakeOverlayController:
 
     def set_geometry(self, width, height, margin=None):
         self.calls.append(("geometry", (width, height, margin)))
+
+    def set_layout_mode(self, enabled):
+        self.calls.append(("layout_mode", bool(enabled)))
+        self.layout_mode = bool(enabled)
+        return self.layout_mode
+
+    def set_bounds(self, x, y, width, height):
+        self.calls.append(("bounds", (x, y, width, height)))
 
     def toggle(self):
         self.visible = not self.visible
@@ -92,6 +101,27 @@ class OverlaySettingsTests(unittest.TestCase):
         self.assertIsInstance(overlay_settings(None), dict)
         self.assertIsInstance(overlay_settings({}), dict)
 
+    def test_xy_default_to_null(self):
+        settings = overlay_settings({})
+        self.assertIsNone(settings["x"])
+        self.assertIsNone(settings["y"])
+
+    def test_xy_accept_integers(self):
+        settings = overlay_settings({"overlay": {"x": -40, "y": 300}})
+        self.assertEqual(settings["x"], -40)
+        self.assertEqual(settings["y"], 300)
+
+    def test_bad_xy_falls_back_to_null(self):
+        settings = overlay_settings({"overlay": {"x": "100", "y": 12.5}})
+        self.assertIsNone(settings["x"])
+        self.assertIsNone(settings["y"])
+
+    def test_xy_clamped_to_safe_range(self):
+        settings = overlay_settings({"overlay": {"x": 999999,
+                                                 "y": -999999}})
+        self.assertEqual(settings["x"], 10000)
+        self.assertEqual(settings["y"], -10000)
+
 
 class OverlayStateTests(unittest.TestCase):
     def test_state_shape_and_live_passthrough(self):
@@ -106,8 +136,12 @@ class OverlayStateTests(unittest.TestCase):
         self.assertEqual(state["corner"], OVERLAY_DEFAULTS["corner"])
         self.assertEqual(state["live"], live)
         # 契约内的附加字段（前端滑杆/热键说明用），保持存在。
-        for key in ("margin", "width", "height", "toggle_key", "visible"):
+        for key in ("margin", "width", "height", "toggle_key", "visible",
+                    "layout_mode", "x", "y"):
             self.assertIn(key, state, key)
+        self.assertFalse(state["layout_mode"])
+        self.assertIsNone(state["x"])
+        self.assertIsNone(state["y"])
 
     def test_live_missing_is_idle(self):
         svc = make_service(overlay_controller=FakeOverlayController())
@@ -409,6 +443,239 @@ class AiPanelFrontendContractTests(unittest.TestCase):
         self.assertIn("Math.max(0.2,", js)
         self.assertIn("最低 20%", js)
         self.assertNotIn("Math.max(0.3,", js)
+
+
+class OverlayLayoutModeTests(unittest.TestCase):
+    """v1.5.2：布局模式开关（POST /api/overlay/layout_mode）。"""
+
+    def test_without_controller_is_graceful(self):
+        result = make_service().set_overlay_layout_mode(True)
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["available"])
+        self.assertIn("error", result)
+        self.assertTrue(result["layout_mode"])
+
+    def test_with_controller_enters_and_leaves(self):
+        controller = FakeOverlayController()
+        svc = make_service(overlay_controller=controller)
+        entered = svc.set_overlay_layout_mode(True)
+        self.assertEqual(entered, {"ok": True, "available": True,
+                                   "layout_mode": True})
+        self.assertTrue(controller.layout_mode)
+        self.assertEqual(controller.calls, [("layout_mode", True)])
+        left = svc.set_overlay_layout_mode(False)
+        self.assertTrue(left["ok"])
+        self.assertFalse(left["layout_mode"])
+        self.assertFalse(svc.overlay_layout_mode())
+
+    def test_old_controller_without_setter_is_reported(self):
+        class Old:
+            visible = False
+            layout_mode = False
+
+            def toggle(self):
+                return True
+
+        result = make_service(overlay_controller=Old()).set_overlay_layout_mode(True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["available"])
+        self.assertIn("不支持", result["error"])
+
+    def test_controller_exception_is_reported_not_raised(self):
+        class Broken:
+            visible = False
+            layout_mode = False
+
+            def set_layout_mode(self, enabled):
+                raise RuntimeError("窗口已经销毁")
+
+        result = make_service(overlay_controller=Broken()).set_overlay_layout_mode(True)
+        self.assertFalse(result["ok"])
+        self.assertIn("RuntimeError", result["error"])
+
+    def test_state_reflects_layout_mode(self):
+        controller = FakeOverlayController()
+        svc = make_service(overlay_controller=controller)
+        svc.set_overlay_layout_mode(True)
+        self.assertTrue(svc.overlay_state()["layout_mode"])
+
+
+class OverlayLayoutSaveTests(unittest.TestCase):
+    """v1.5.2：POST /api/overlay/layout 要落盘 + 调 set_bounds。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = pathlib.Path(self.tmp.name)
+        base = config.load()
+        (root / "config.yaml").write_text(
+            yaml.safe_dump(base, allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
+        self.cfg = config.load(root / "config.yaml")
+        self.root = root
+
+    def _service(self):
+        controller = FakeOverlayController()
+        svc = make_service(overlay_controller=controller, cfg=self.cfg,
+                           cfg_path=str(self.root / "config.yaml"),
+                           listener_lock=threading.RLock())
+        svc.api_token = TOKEN
+
+        def fake_configure(patch):
+            merged = dict(svc.cfg)
+            if isinstance(patch.get("overlay"), dict):
+                overlay = dict(merged.get("overlay") or {})
+                overlay.update(patch["overlay"])
+                merged["overlay"] = overlay
+            svc.cfg = merged
+            return {"ok": True, "saved": "x", "restart_hint": [], "applied": {}}
+
+        svc._configure = MagicMock(side_effect=fake_configure)
+        return svc, controller
+
+    def test_layout_is_saved_and_applied(self):
+        svc, controller = self._service()
+        result = svc.set_overlay_layout({"x": 100, "y": 50,
+                                         "width": 800, "height": 220})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["saved"])
+        self.assertEqual((result["x"], result["y"],
+                          result["width"], result["height"]),
+                         (100, 50, 800, 220))
+        self.assertIn(("bounds", (100, 50, 800, 220)), controller.calls)
+        svc._configure.assert_called_once_with(
+            {"overlay": {"x": 100, "y": 50, "width": 800, "height": 220}})
+
+    def test_null_xy_resets_to_corner_layout(self):
+        svc, controller = self._service()
+        result = svc.set_overlay_layout({"x": None, "y": None})
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["x"])
+        self.assertIsNone(result["y"])
+        # 没有绝对坐标就退回 corner+margin 的几何路径，不把 None 交给窗口。
+        self.assertNotIn("bounds", [c[0] for c in controller.calls])
+        self.assertIn(("geometry", (720, 200, 24)), controller.calls)
+
+    def test_missing_fields_raise(self):
+        svc, _ = self._service()
+        with self.assertRaises(ValueError):
+            svc.set_overlay_layout({})
+
+    def test_save_failure_is_reported(self):
+        svc, controller = self._service()
+        svc._configure = MagicMock(return_value={"ok": False, "error": "监听尚未结束"})
+        result = svc.set_overlay_layout({"x": 1, "y": 2})
+        self.assertFalse(result["ok"])
+        self.assertEqual(controller.calls, [])
+
+    def test_without_controller_still_saves(self):
+        svc, _ = self._service()
+        svc.overlay_controller = None
+        result = svc.set_overlay_layout({"width": 900})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["width"], 900)
+
+
+class OverlayLayoutHttpTests(unittest.TestCase):
+    """布局模式 / 布局保存的 HTTP 面（含 token 与优雅降级）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name)
+        base = config.load()
+        (self.root / "config.yaml").write_text(
+            yaml.safe_dump(base, allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
+        self.cfg = config.load(self.root / "config.yaml")
+        self.controller = FakeOverlayController()
+        self.service = make_service(overlay_controller=self.controller,
+                                    cfg=self.cfg,
+                                    listener_lock=threading.RLock())
+
+        def fake_configure(patch):
+            merged = dict(self.service.cfg)
+            if isinstance(patch.get("overlay"), dict):
+                overlay = dict(merged.get("overlay") or {})
+                overlay.update(patch["overlay"])
+                merged["overlay"] = overlay
+            self.service.cfg = merged
+            return {"ok": True, "saved": "x", "restart_hint": [], "applied": {}}
+
+        self.service._configure = MagicMock(side_effect=fake_configure)
+
+        class BoundHandler(Handler):
+            pass
+
+        BoundHandler.service = self.service
+        self.server = Server(("127.0.0.1", 0), BoundHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def _request(self, path, data=None, headers=None):
+        request = urllib.request.Request(self.base + path, data=data,
+                                         headers=headers or {})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, response.headers, response.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
+
+    def _post(self, path, payload):
+        return self._request(path, data=json.dumps(payload).encode("utf-8"),
+                             headers={"X-Assistant-Token": TOKEN,
+                                      "Content-Type": "application/json"})
+
+    def test_layout_mode_requires_token(self):
+        status, _, _ = self._request("/api/overlay/layout_mode",
+                                     data=b'{"enabled": true}')
+        self.assertEqual(status, 403)
+        self.assertFalse(self.controller.layout_mode)
+
+    def test_layout_mode_endpoint(self):
+        status, _, body = self._post("/api/overlay/layout_mode", {"enabled": True})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["layout_mode"])
+        self.assertTrue(self.controller.layout_mode)
+
+    def test_layout_mode_missing_enabled_is_400(self):
+        status, _, _ = self._post("/api/overlay/layout_mode", {})
+        self.assertEqual(status, 400)
+
+    def test_layout_endpoint_saves_and_applies(self):
+        status, _, body = self._post("/api/overlay/layout",
+                                     {"x": 120, "y": 60,
+                                      "width": 760, "height": 210})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["ok"])
+        self.assertEqual((payload["x"], payload["y"],
+                          payload["width"], payload["height"]),
+                         (120, 60, 760, 210))
+        self.assertIn(("bounds", (120, 60, 760, 210)), self.controller.calls)
+
+    def test_layout_endpoint_missing_fields_is_400(self):
+        status, _, _ = self._post("/api/overlay/layout", {})
+        self.assertEqual(status, 400)
+
+    def test_get_overlay_exposes_layout_fields(self):
+        self.service.set_overlay_layout_mode(True)
+        status, _, body = self._request("/api/overlay")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        for key in ("layout_mode", "x", "y", "width", "height"):
+            self.assertIn(key, payload, key)
+        self.assertTrue(payload["layout_mode"])
 
 
 if __name__ == "__main__":

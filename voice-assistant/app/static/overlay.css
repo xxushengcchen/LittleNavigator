@@ -1,19 +1,39 @@
-/* 游戏内 Overlay（v1.5.1）
+/* 游戏内 Overlay（v1.5.2）
    独立于主界面的最小页面：只显示「听到」和「状态/回答」两行。
    设计 token 与 app.css 顶部的 :root 保持一致；页面背景必须透明，
-   因为桌面端窗口本身是 transparent=True + 原生 alpha 分层。 */
-:root{color-scheme:dark;--ground:#171719;--surface:#131217;--raised:#212023;--border:#303034;--ink:#f6f6f7;--muted:#b4b4bc;--faint:#96969f;--accent:#6ba8ed;--warn:#e4b95e;--bad:#f0879b;--r:6px;--fast:140ms;--font:"Public Sans","Microsoft YaHei UI","Microsoft YaHei",sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+   因为桌面端窗口本身是 transparent=True + 原生 alpha 分层。
+
+   v1.5.2 三条硬约束（对应 --overlay-smoke-test 的断言）：
+   1) 卡片贴合内容：width: fit-content，只有卡片有底色/边框，窗口其余区域全透明；
+   2) 字号统一：识别、状态、回答都用 --fs(14px)，只靠颜色和字重区分层级；
+   3) 布局模式：body[data-layout="true"] 下才显示虚线窗口框 / 缩放手柄 / 提示条，
+      非布局模式整页不接收鼠标事件（原生窗口同时是点击穿透的）。 */
+:root{color-scheme:dark;--ground:#171719;--surface:#131217;--raised:#212023;--border:#303034;--ink:#f6f6f7;--muted:#b4b4bc;--faint:#96969f;--accent:#6ba8ed;--warn:#e4b95e;--bad:#f0879b;--r:6px;--fast:140ms;--fs:14px;--font:"Public Sans","Microsoft YaHei UI","Microsoft YaHei",sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
 html,body{margin:0;width:100%;height:100%;background:transparent}
-body{overflow:hidden;color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;user-select:none}
-.ov-card{box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;gap:10px;padding:14px 18px;overflow:hidden;background:rgba(19,18,23,.82);border:1px solid var(--border);border-radius:var(--r);pointer-events:none}
-.ov-heard{display:flex;align-items:baseline;gap:9px;margin:0;min-width:0;font-size:13px;color:var(--muted)}
-.ov-tag{flex:none;font-size:11px;letter-spacing:.08em;color:var(--faint);border:1px solid var(--border);border-radius:3px;padding:1px 6px;line-height:1.5}
+body{overflow:hidden;color:var(--ink);font-family:var(--font);font-size:var(--fs);line-height:1.5;-webkit-font-smoothing:antialiased;user-select:none;touch-action:none}
+[hidden]{display:none!important}
+
+/* ---- 卡片：宽度贴合内容，最大不超过窗口 ---- */
+.ov-card{box-sizing:border-box;width:fit-content;max-width:calc(100% - 16px);max-height:calc(100% - 16px);margin:8px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px 14px;overflow:hidden;background:rgba(19,18,23,.82);border:1px solid var(--border);border-radius:var(--r);font-size:var(--fs);line-height:1.45;pointer-events:none;transition:border-color var(--fast),box-shadow var(--fast)}
+.ov-heard{display:flex;align-items:baseline;gap:8px;margin:0;min-width:0;font-size:var(--fs);color:var(--muted)}
+.ov-tag{flex:none;font-size:var(--fs);letter-spacing:.06em;color:var(--faint);border:1px solid var(--border);border-radius:3px;padding:0 6px;line-height:1.4}
 .ov-heard-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
-.ov-answer{margin:0;min-height:1.5em;color:var(--muted);font-size:14px;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow-wrap:anywhere;transition:color var(--fast)}
+.ov-answer{margin:0;min-width:0;max-width:100%;color:var(--muted);font-size:var(--fs);line-height:1.45;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap;transition:color var(--fast)}
 .ov-card[data-state="thinking"] .ov-answer{color:var(--muted)}
 .ov-card[data-state="thinking"] .ov-answer::after{content:"";display:inline-block;width:.5em;height:.5em;margin-left:.55em;border-radius:50%;background:var(--accent);vertical-align:middle;animation:ov-pulse 1.1s ease-in-out infinite}
-.ov-card[data-state="answer"] .ov-answer{color:var(--ink);font-size:22px;font-weight:500;letter-spacing:-.02em}
+.ov-card[data-state="answer"] .ov-answer{color:var(--ink);font-weight:500}
 .ov-card[data-state="error"] .ov-answer{color:var(--bad)}
 .ov-card[data-state="error"] .ov-heard{color:var(--faint)}
+
+/* ---- 布局模式装饰：只在 body[data-layout="true"] 下可见 ---- */
+.ov-frame{position:fixed;inset:0;box-sizing:border-box;border:1px dashed rgba(107,168,237,.8);border-radius:var(--r);pointer-events:none}
+.ov-resize{position:fixed;right:0;bottom:0;width:18px;height:18px;border-radius:10px 0 var(--r) 0;background:var(--accent);opacity:.85;cursor:nwse-resize;pointer-events:auto}
+.ov-resize::after{content:"";position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-right:2px solid #0f1115;border-bottom:2px solid #0f1115}
+.ov-hint{position:fixed;left:8px;bottom:6px;max-width:calc(100% - 34px);font-size:12px;line-height:1.4;color:var(--muted);background:rgba(19,18,23,.92);border:1px solid var(--border);border-radius:4px;padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+body[data-layout="true"]{cursor:move}
+body[data-layout="true"] .ov-card{pointer-events:auto;cursor:inherit;border-color:rgba(107,168,237,.8);box-shadow:0 0 0 1px rgba(107,168,237,.25)}
+body[data-dragging] .ov-card{cursor:inherit}
+body[data-dragging] *{cursor:inherit}
+
 @keyframes ov-pulse{0%,100%{opacity:.25}50%{opacity:1}}
-@media(prefers-reduced-motion:reduce){.ov-card[data-state="thinking"] .ov-answer::after{animation:none;opacity:.7}}
+@media(prefers-reduced-motion:reduce){.ov-card[data-state="thinking"] .ov-answer::after{animation:none;opacity:.7}.ov-card{transition:none}}

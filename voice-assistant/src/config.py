@@ -136,6 +136,13 @@ DEFAULTS: dict[str, Any] = {
     "ai": {
         "enabled": False,
         "mode": "whitelist",           # whitelist | analysis_key | full | all
+        # 全局停止本地播报（v1.5.2）：仅 all 档生效。开启后规则答案/本地拒绝/
+        # 看屏幕提示/AI 失败回退都不出声，只把文字写进 Overlay 与历史；
+        # 改车确认与等待语音（ack）保留——它们是操作反馈，不是问答。
+        "global_stop_local": True,
+        # 思考模式（v1.5.2）：off=关闭（默认，最快）；low=不关闭但思考强度最低。
+        # 只对识别得出的服务商下发参数（见 src/llm_engine.py 的 provider 判定）。
+        "thinking_mode": "off",
         "provider": "custom",          # 仅用于界面预填，不参与运行时逻辑
         "base_url": "",
         "api_key": "",
@@ -175,6 +182,9 @@ DEFAULTS: dict[str, Any] = {
         "width": 720,                  # 480–1200
         "height": 200,                 # 140–400
         "toggle_key": "Ctrl+Alt+O",    # 显示/隐藏快捷键
+        # 绝对坐标（v1.5.2）：null = 按 corner+margin 排；整数 = 用户拖出来的位置。
+        "x": None,
+        "y": None,
     },
 }
 
@@ -382,10 +392,21 @@ def _validate_overlay(cfg: dict) -> None:
     toggle = ov.get("toggle_key")
     if not isinstance(toggle, str) or not toggle.strip():
         raise ValueError("overlay.toggle_key 必须为非空字符串")
+    # 绝对坐标（v1.5.2）：null 表示「按 corner+margin 排」，整数是拖出来的位置。
+    # 上限刻意给得宽（±10000）：多屏/超宽屏用户的负坐标是正常的，这里只挡
+    # 「明显不是像素」的值（比如误填了 10 万），不假装知道他的屏幕有多大。
+    for key in ("x", "y"):
+        value = ov.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) \
+                or not -10000 <= value <= 10000:
+            raise ValueError(f"overlay.{key} 必须为 null 或 -10000–10000 的整数")
 
 
 _AI_MODES = ("whitelist", "analysis_key", "full", "all")
 _TTS_ADAPTERS = ("off", "doubao", "openai")
+THINKING_MODES = ("off", "low")
 
 
 def _validate_ai(cfg: dict) -> None:
@@ -395,6 +416,10 @@ def _validate_ai(cfg: dict) -> None:
         raise ValueError("ai 必须是配置对象")
     if not isinstance(ai.get("enabled"), bool):
         raise ValueError("ai.enabled 必须为布尔值")
+    if not isinstance(ai.get("global_stop_local"), bool):
+        raise ValueError("ai.global_stop_local 必须为布尔值")
+    if ai.get("thinking_mode") not in THINKING_MODES:
+        raise ValueError(f"ai.thinking_mode 必须是 {THINKING_MODES} 之一")
     if ai.get("mode") not in _AI_MODES:
         raise ValueError(f"ai.mode 必须是 {_AI_MODES} 之一")
     for key in ("base_url", "api_key", "model"):

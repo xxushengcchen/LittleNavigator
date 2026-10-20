@@ -579,3 +579,206 @@ class AckPlaybackTests(unittest.TestCase):
         events = []
         self._run(a, events)
         self.assertEqual(events, ["handle"])
+
+
+# ---------------------------------------------------------------- v1.5.2
+def playable_engine(root, *, mode="all", global_stop_local=True,
+                    available=True, ai_enabled=True):
+    """带「可播语音包 + 可观测播放器」的引擎，用来断言「有没有出声」。"""
+    a = make_assistant(root, ai_enabled=ai_enabled, mode=mode,
+                       global_stop_local=global_stop_local)
+    if ai_enabled and not available:
+        for _ in range(3):
+            a.ai.breaker.record(2000, timed_out=True)
+    a.pack.has.return_value = True
+    a.pack.texts.return_value = ["油量十八升"]
+    a.pack.path_of.return_value = root / "x.wav"
+    a._pick_existing = MagicMock(return_value=MagicMock(text="油量十八升"))
+    a.player.play_many = MagicMock(return_value=0.0)
+    a.player.play = MagicMock(return_value=0.0)
+    return a
+
+
+class NoDoubleResponseTests(unittest.TestCase):
+    """问题 3：AI-eligible 的路径在转交前一个字都不许播。
+
+    用户实测「本地拒绝」和「AI 回答」连着响——先听到「没听清」，
+    一两秒后再听到真正的回答。修法是：凡是 ai_eligible 就闭嘴交出去。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name).resolve()
+
+    def _miss(self, a):
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = MagicMock(intent=None, score=0.2,
+                                                 phrase="", margin=0.0,
+                                                 reason="未命中", ranked=[])
+        return a
+
+    def test_intent_none_does_not_speak_before_ai(self):
+        # global_stop_local=False：证明「不出声」来自 ai_eligible，不是全局静音。
+        a = self._miss(playable_engine(self.root, global_stop_local=False))
+        with patch.object(a, "_say") as say:
+            rec = a.ask("今天天气不错", source="keyboard")
+        say.assert_not_called()
+        self.assertTrue(rec["ai_eligible"])
+        self.assertEqual(a.live["state"], "thinking")
+
+    def test_rule_cannot_answer_does_not_speak_before_ai(self):
+        a = playable_engine(self.root, global_stop_local=False)
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = hit()
+        from src import router
+        with patch("src.engine.router.route",
+                   return_value=router.Decision([], "遥测里没有油量")), \
+             patch.object(a, "_say") as say:
+            rec = a.ask("油还够吗", source="keyboard")
+        say.assert_not_called()
+        self.assertTrue(rec["ai_eligible"])
+
+    def test_refusal_still_plays_when_ai_not_eligible(self):
+        # 安全类是红线：不转 AI，本地拒绝必须照常出声（非全局静音时）。
+        a = playable_engine(self.root, global_stop_local=False)
+        with patch.object(a, "_say") as say:
+            rec = a.ask("为什么我被罚了", source="keyboard")
+        say.assert_called_once()
+        self.assertFalse(rec.get("ai_eligible"))
+
+    def test_only_one_response_across_ask_and_ask_ai(self):
+        a = self._miss(playable_engine(self.root, global_stop_local=False))
+        # 只让等待语音素材「存在」：这样「看屏幕」提示不会额外插一句，
+        # 断言才能干净地只盯「本地拒绝有没有先响」。
+        a.pack.has.side_effect = lambda m: m.startswith("AST_ACK_")
+        from src.ai_pipeline import AiResult
+        played: list = []
+        a.player.play_many.side_effect = lambda *args, **kwargs: played.append(args)
+        with patch.object(a, "_say") as say, \
+             patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=True, text="今天适合保胎",
+                                                source="model")) as handle:
+            rec = a.ask("现在该怎么保胎", source="keyboard")
+            self.assertTrue(rec["ai_eligible"])
+            ai_rec = a.ask_ai("现在该怎么保胎", QueryKind.UNKNOWN, None,
+                              False, source="keyboard", extra=rec)
+        self.assertTrue(ai_rec["ok"])
+        self.assertEqual(handle.call_count, 1)           # AI 只出一次
+        say.assert_not_called()                          # 本地一次都没响
+        self.assertEqual(played, [])
+
+    def test_no_ai_configured_still_speaks_refusal(self):
+        # 没配 AI 就没有「转交」，本地拒答必须出声，否则用户完全没反馈。
+        a = playable_engine(self.root, ai_enabled=False)
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = MagicMock(intent=None, score=0.2,
+                                                 phrase="", margin=0.0,
+                                                 reason="未命中", ranked=[])
+        with patch.object(a, "_say") as say:
+            rec = a.ask("今天天气不错", source="keyboard")
+        say.assert_called_once()
+        self.assertFalse(rec.get("ai_eligible"))
+
+
+class GlobalStopLocalTests(unittest.TestCase):
+    """问题 3 后半：全局交给 AI 时本地语音全停，但改车确认与 ack 保留。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name).resolve()
+
+    def _rule_decision(self):
+        from src import router
+        return router.Decision(["AST_FUEL"], "油量 18.4L")
+
+    def test_flag_only_bites_in_all_mode(self):
+        full = playable_engine(self.root, mode="full", global_stop_local=True)
+        self.assertFalse(full.global_stop_local)
+        all_mode = playable_engine(self.root, mode="all", global_stop_local=True)
+        self.assertTrue(all_mode.global_stop_local)
+        all_off = playable_engine(self.root, mode="all", global_stop_local=False)
+        self.assertFalse(all_off.global_stop_local)
+
+    def test_flag_requires_ai_pipeline(self):
+        # AI 关了却留着 mode=all：不能再停本地播报，否则软件全程沉默。
+        a = playable_engine(self.root, ai_enabled=False)
+        self.assertFalse(a.global_stop_local)
+
+    def test_rule_answer_is_text_only(self):
+        # AI 熔断（不可用）→ 走规则兜底；全局静音时只写文字不播。
+        a = playable_engine(self.root, available=False)
+        a.matcher = MagicMock()
+        a.matcher.match.return_value = hit()
+        with patch("src.engine.router.route", return_value=self._rule_decision()):
+            rec = a.ask("油还够吗", source="keyboard")
+        self.assertTrue(rec["ok"])
+        self.assertTrue(rec.get("silent"))
+        self.assertEqual(rec["text"], "油量十八升")
+        self.assertEqual(a.live["answer"], "油量十八升")
+        a.player.play_many.assert_not_called()
+
+    def test_ai_failure_fallback_is_text_only(self):
+        a = playable_engine(self.root)
+        from src.ai_pipeline import AiResult
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=False, reason="超时")):
+            rec = a.ask_ai("油还够吗", QueryKind.KNOWN, "query_fuel", True,
+                           extra={"fallback_plan": ["AST_FUEL"],
+                                  "fallback_text": "油量 18.4L"})
+        self.assertTrue(rec["ok"])
+        self.assertTrue(rec["ai_fallback"])
+        self.assertTrue(rec.get("silent"))
+        self.assertEqual(a.live["answer"], "油量十八升")
+        a.player.play_many.assert_not_called()
+
+    def test_see_screen_prompt_is_silent(self):
+        a = playable_engine(self.root)
+        from src.ai_pipeline import AiResult
+        with patch.object(a.ai, "handle",
+                          return_value=AiResult(ok=True, text="今天适合保胎",
+                                                source="model",
+                                                checks={"tts": "fail"})), \
+             patch.object(a, "_say") as say:
+            rec = a.ask_ai("现在该怎么保胎", QueryKind.ANALYSIS, None, False)
+        self.assertTrue(rec["ok"])
+        say.assert_not_called()
+        a.player.play.assert_called_once()        # 等待语音保留
+        self.assertEqual(a.live["state"], "answer")
+
+    def test_safety_refusal_shows_text_without_voice(self):
+        a = playable_engine(self.root)
+        with patch.object(a, "_say") as say:
+            rec = a.ask("为什么我被罚了", source="keyboard")
+        say.assert_not_called()
+        a.player.play_many.assert_not_called()
+        self.assertFalse(rec["ok"])
+        self.assertFalse(rec.get("ai_eligible"))
+        self.assertEqual(a.live["answer"], "油量十八升")   # 替身包里的文案
+
+    def test_car_control_feedback_is_kept(self):
+        a = playable_engine(self.root)
+        with patch.object(a, "_say") as say:
+            a._say_with_fallback("AST_CC_TYRE", force=True)
+        say.assert_called_once_with("AST_CC_TYRE")
+
+    def test_local_utterance_without_force_is_muted(self):
+        a = playable_engine(self.root)
+        with patch.object(a, "_say") as say:
+            a._say_with_fallback("AST_REFUSE_CANT")
+        say.assert_not_called()
+
+    def test_flag_does_not_mute_other_modes(self):
+        a = playable_engine(self.root, mode="full", global_stop_local=True)
+        with patch.object(a, "_say") as say:
+            a.ask("为什么我被罚了", source="keyboard")
+        say.assert_called_once()
+
+    def test_operation_confirmation_path_keeps_voice(self):
+        # 改车成功/失败的话术都走 force=True，全局静音下仍要出声。
+        a = playable_engine(self.root)
+        calls = []
+        with patch.object(a, "_say", side_effect=lambda m: calls.append(m)):
+            a._say_with_fallback("AST_CC_FAIL", force=True)
+        self.assertEqual(calls, ["AST_CC_FAIL"])

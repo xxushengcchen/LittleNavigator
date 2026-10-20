@@ -119,6 +119,9 @@ class WaitingVoiceContentTests(unittest.TestCase):
                     self.assertLessEqual(len(text), 8,
                                          f"{mid} 的变体过长（≤8 个汉字）：{text}")
                     self.assertNotIn("{", text)          # 固定话术，不做模板替换
+                    # v1.5.2：短句必须带句末标点，否则 TTS 结尾会被硬切
+                    self.assertTrue(text.endswith("。"),
+                                    f"{mid} 的变体缺句末句号，TTS 尾音会被切：{text}")
                 self.assertEqual(len(set(variants)), 2, f"{mid} 两个变体重复：{variants}")
 
     def test_ack_variants_not_repeated_across_entries(self):
@@ -320,6 +323,85 @@ class SynthesizeScriptTests(unittest.TestCase):
             self.assertIn("AST_ACK_01, AST_ACK_01_01.WAV", spmsg)
             # 默认输出目录（build/assistant-telemetry）不应被这次运行碰到
             self.assertFalse((ROOT / "build" / "assistant-telemetry-test").exists())
+
+
+class PackTailTests(unittest.TestCase):
+    """assistant-extra 的尾部处理：60ms 余量 + 20ms 淡出（v1.5.2 问题 1）。
+
+    用户实测「等待 AI 的短音频结尾像被截断」：裁剪点紧贴语音尾部，
+    播放时是一个电平突变的硬切。修法是文案补句号（TTS 给自然收尾）
+    + 打包时留 60ms 余量并做 20ms 淡出。主包参数不变。
+    """
+
+    def _build_pack_module(self):
+        import importlib.util
+
+        path = ROOT / "scripts" / "build_pack.py"
+        spec = importlib.util.spec_from_file_location("_ln_build_pack", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_extra_content_declares_tail_params(self):
+        meta = json.loads(ACK_CONTENT.read_text(encoding="utf-8")).get("meta") or {}
+        self.assertGreaterEqual(meta.get("trim_pad_ms") or 0, 60,
+                                "assistant-extra 需要 ≥60ms 尾部余量")
+        self.assertGreater(meta.get("fade_out_ms") or 0, 0,
+                           "assistant-extra 需要尾部淡出，避免硬切")
+
+    def test_content_tail_opts_reads_extra_meta(self):
+        bp = self._build_pack_module()
+        pad, fade = bp._content_tail_opts(ROOT, ["content/assistant-extra.json"])
+        self.assertEqual(pad, 60.0)
+        self.assertEqual(fade, 20.0)
+
+    def test_main_pack_meta_keeps_old_defaults(self):
+        bp = self._build_pack_module()
+        pad, fade = bp._content_tail_opts(ROOT, ["content/messages*.json"])
+        self.assertIsNone(pad, "主包不应被 assistant-extra 的尾部参数影响")
+        self.assertIsNone(fade)
+
+    def test_fade_out_reaches_zero_and_leaves_head_alone(self):
+        try:
+            import numpy as np
+        except Exception:
+            self.skipTest("缺少 numpy")
+        bp = self._build_pack_module()
+        rate = 24000
+        x = np.full(rate // 10, 8000, dtype="int16")     # 100ms 恒定电平
+        y = bp._fade_out(x, rate, 20)                    # 只淡出最后 20ms
+        self.assertEqual(len(y), len(x))
+        self.assertEqual(int(y[0]), 8000, "淡出不能碰开头")
+        self.assertLessEqual(abs(int(y[-1])), 1, "最后一帧必须归零")
+        tail = np.abs(y[-int(rate * 0.02):]).astype("int32")
+        self.assertTrue(all(tail[i] >= tail[i + 1] for i in range(len(tail) - 1)),
+                        "淡出段应单调下降")
+
+    def test_fade_out_is_noop_when_disabled(self):
+        try:
+            import numpy as np
+        except Exception:
+            self.skipTest("缺少 numpy")
+        bp = self._build_pack_module()
+        x = np.full(480, 1000, dtype="int16")
+        y = bp._fade_out(x, 24000, 0)
+        self.assertTrue((x == y).all())
+
+    def test_trim_and_normalize_accepts_tail_params(self):
+        """参数必须真的接进裁剪/正规化管线（否则 --fade-out-ms 是个哑旗标）。"""
+        try:
+            import numpy as np
+        except Exception:
+            self.skipTest("缺少 numpy")
+        bp = self._build_pack_module()
+        rate = 24000
+        x = np.zeros(rate // 2, dtype="int16")
+        x[rate // 10: rate // 4] = 6000          # 中间 150ms 有声段
+        y = bp.trim_and_normalize(x, rate, rel_db=35.0, pad_ms=60.0,
+                                  target_rms_db=-17.0, do_trim=True,
+                                  do_norm=True, fade_out_ms=20.0)
+        self.assertGreater(len(y), rate // 10, "60ms 余量应当保留下来")
+        self.assertLessEqual(abs(int(y[-1])), 1, "结尾必须淡到 0")
 
 
 if __name__ == '__main__':

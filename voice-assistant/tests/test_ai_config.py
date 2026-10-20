@@ -218,5 +218,82 @@ class AiOverrideMergeTests(unittest.TestCase):
         self.assertEqual(cfg["ai"]["max_tokens"], 300)
 
 
+class ConfigV152Tests(unittest.TestCase):
+    """v1.5.2 新字段：全局停止本地播报 / 思考模式 / Overlay 绝对坐标。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name)
+        (self.root / "config.yaml").write_text(yaml.safe_dump({}), encoding="utf-8")
+
+    def load(self):
+        return config.load(self.root / "config.yaml")
+
+    def write_local(self, payload: dict):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+
+    # ---- ai.global_stop_local
+    def test_global_stop_local_defaults_true(self):
+        self.assertIs(self.load()["ai"]["global_stop_local"], True)
+
+    def test_global_stop_local_can_be_disabled(self):
+        self.write_local({"ai": {"global_stop_local": False}})
+        self.assertIs(self.load()["ai"]["global_stop_local"], False)
+
+    def test_global_stop_local_must_be_bool(self):
+        self.write_local({"ai": {"global_stop_local": "yes"}})
+        with self.assertRaises(ValueError):
+            self.load()
+
+    # ---- ai.thinking_mode
+    def test_thinking_mode_defaults_off(self):
+        self.assertEqual(self.load()["ai"]["thinking_mode"], "off")
+
+    def test_thinking_mode_accepts_low(self):
+        self.write_local({"ai": {"thinking_mode": "low"}})
+        self.assertEqual(self.load()["ai"]["thinking_mode"], "low")
+
+    def test_bad_thinking_mode_is_rejected(self):
+        for bad in ("high", "middle", "OFF", True, None):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"thinking_mode": bad}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    # ---- overlay.x / y
+    def test_overlay_xy_default_to_null(self):
+        ov = self.load()["overlay"]
+        self.assertIsNone(ov["x"])
+        self.assertIsNone(ov["y"])
+
+    def test_overlay_xy_accept_integers(self):
+        self.write_local({"overlay": {"x": -120, "y": 4321}})
+        ov = self.load()["overlay"]
+        self.assertEqual(ov["x"], -120)
+        self.assertEqual(ov["y"], 4321)
+
+    def test_overlay_xy_accept_extreme_bounds(self):
+        self.write_local({"overlay": {"x": -10000, "y": 10000}})
+        ov = self.load()["overlay"]
+        self.assertEqual(ov["x"], -10000)
+        self.assertEqual(ov["y"], 10000)
+
+    def test_overlay_xy_reject_out_of_range(self):
+        for bad in (10001, -10001):
+            with self.subTest(value=bad):
+                self.write_local({"overlay": {"x": bad}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_overlay_xy_reject_non_integer(self):
+        for bad in (12.5, "3", True):
+            with self.subTest(value=bad):
+                self.write_local({"overlay": {"y": bad}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+
 if __name__ == '__main__':
     unittest.main()

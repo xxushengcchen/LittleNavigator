@@ -165,6 +165,19 @@ class Assistant:
                 and getattr(self.ai, "mode", None) == "all")
 
     @property
+    def global_stop_local(self) -> bool:
+        """「全局交给 AI」时是否停掉本地问答语音（v1.5.2，契约 §2）。
+
+        只对 all 档生效：其它档位里本地规则仍是主路径，停了等于没声音。
+        也要求 AI 流水线真的存在——用户把 AI 关了却留着 mode=all 时，
+        再停本地播报会让软件彻底沉默。
+        """
+        if self.ai is None or getattr(self.ai, "mode", None) != "all":
+            return False
+        ai_cfg = (self.cfg or {}).get("ai") or {}
+        return bool(ai_cfg.get("global_stop_local", True))
+
+    @property
     def ai_enabled(self) -> bool:
         return self.ai is not None
 
@@ -289,9 +302,12 @@ class Assistant:
             rec.update({"ok": False, "intent": None, "layer": "refuse",
                         "kind": kind.value,
                         "ranked": [list(x) for x in tr["_hit"].ranked[:3]]})
-            # 交给引擎上层决定是否走 AI（见 ask_ai）
+            # 交给引擎上层决定是否走 AI（见 ask_ai）。
             rec["ai_eligible"] = self._ai_should_engage(kind, text, None, False)
-            self._say_refusal(kind)
+            # v1.5.2 双响应修复：这句话要转给 AI，就一个字都不许先播——
+            # 否则用户先听到「没听清」，一两秒后再听到 AI 的回答。
+            if not rec["ai_eligible"]:
+                self._say_refusal(kind)
             self._log(self.miss_log, rec)
             return rec
 
@@ -304,7 +320,14 @@ class Assistant:
             rec.update({"ok": False, "reason": dec.reason})
             rec["ai_eligible"] = self._ai_should_engage(
                 kind, text, tr["intent"], False)
-            self._say(dec.refusal_msg or REFUSE_CANT)
+            # 同上：AI eligible 的路径先出声就是双响应。
+            if not rec["ai_eligible"]:
+                # 全局交给 AI 时静音，只把文案写进 Overlay（安全/操作类
+                # 仍走本地，用户得看得见答案）。
+                if self.global_stop_local:
+                    self._show_text_only(dec.refusal_msg or REFUSE_CANT)
+                else:
+                    self._say(dec.refusal_msg or REFUSE_CANT)
             self._log(self.miss_log, rec)
             return rec
         p(f"  依据：{dec.reason}")
@@ -379,21 +402,22 @@ class Assistant:
             reason = action.get("reason") or "这件事软件做不到"
             p(f"  ✗ 改车不支持：{reason}")
             rec.update({"ok": False, "reason": reason})
-            self._say_with_fallback(action.get("say") or NO_CAR_CONTROL)
+            self._say_with_fallback(action.get("say") or NO_CAR_CONTROL,
+                                    force=True)
             self._log(self.miss_log, rec)
             return rec
 
         if self.car is None or not self.car.enabled:
             p("  ✗ 改车未启用")
             rec.update({"ok": False, "reason": "改车功能未启用"})
-            self._say_with_fallback(NO_CAR_CONTROL)
+            self._say_with_fallback(NO_CAR_CONTROL, force=True)
             self._log(self.miss_log, rec)
             return rec
 
         if not self.car.available:
             p("  ✗ 改车不可用（未连接游戏 / 未装 pyirsdk）")
             rec.update({"ok": False, "reason": "未连接游戏，改车指令没有发出"})
-            self._say_with_fallback(NO_CAR_CONTROL)
+            self._say_with_fallback(NO_CAR_CONTROL, force=True)
             self._log(self.miss_log, rec)
             return rec
 
@@ -406,7 +430,7 @@ class Assistant:
                     p("  ✗ 加满：读不到油箱容量")
                     rec.update({"ok": False,
                                 "reason": "读不到油箱容量，加满请在黑框里设"})
-                    self._say_with_fallback(NO_CAR_CONTROL)
+                    self._say_with_fallback(NO_CAR_CONTROL, force=True)
                     self._log(self.miss_log, rec)
                     return rec
                 action["litres"] = litres
@@ -418,7 +442,7 @@ class Assistant:
         if not result.get("ok"):
             p(f"  ✗ 改车发送失败：{result.get('error')}")
             rec.update({"ok": False, "reason": result.get("error")})
-            self._say_with_fallback(CC_FAIL)
+            self._say_with_fallback(CC_FAIL, force=True)
             self._log(self.miss_log, rec)
             return rec
 
@@ -434,7 +458,7 @@ class Assistant:
         applied = verified is None or verified.get("verified") is True
         if not applied:
             rec.update({"ok": False, "reason": verified.get("reason")})
-            self._say_with_fallback(CC_FAIL)
+            self._say_with_fallback(CC_FAIL, force=True)
             self._log(self.miss_log, rec)
             return rec
 
@@ -443,7 +467,7 @@ class Assistant:
                     "cc_applied": applied})
         msg_id = CC_CONFIRM.get(action["kind"], CC_FAIL)
         p(f"  ✓ 改车：{action}")
-        self._say_with_fallback(msg_id)
+        self._say_with_fallback(msg_id, force=True)
         self._log(self.qa_log, rec)
         return rec
 
@@ -459,19 +483,40 @@ class Assistant:
             return REFUSE_CANT
         return REFUSE_HEARD
 
-    def _say_with_fallback(self, preferred: str) -> None:
+    def _say_with_fallback(self, preferred: str, *, force: bool = False) -> None:
         """播一句话术，素材缺失时逐级降级。
 
         降级链存在的原因：新加的素材（AST_NO_CAR_CONTROL / AST_CC_*）在用户
         重建语音包之前不在包里。直接播会走 `_say()` 的静默跳过——那比播一句
         措辞不完美的话更糟：用户按完 PTT 什么都没听到，会以为软件坏了。
+
+        `force=True` 给改车反馈用：全局交给 AI 时「换胎成功」这类操作确认
+        仍然要出声——它不是问答，是动作结果。
         """
+        if not force and self.global_stop_local:
+            # 全局交给 AI：本地问答话术一律不出声，但「只显示文字」不能变成
+            # 「什么都不显示」——把这句话的文案写进 Overlay（安全/操作类
+            # 仍走本地，用户得看得见答案）。
+            self._show_text_only(preferred)
+            return
         for msg_id in (preferred, REFUSE_CANT, REFUSE_HEARD):
             if self.pack.has(msg_id):
                 self._say(msg_id)
                 return
         # 三个都没有：至少别让用户面对完全的沉默
         print("  ⚠ 话术素材全部缺失，本次无声", file=self.out)
+
+    def _show_text_only(self, preferred: str) -> None:
+        """按 `_say_with_fallback` 的降级链取文案，写进 live 但不播。
+
+        只用于「全局交给 AI」把本地语音停掉的时候：话术本身仍是有意义的
+        用户反馈（比如「软件不碰车」），不该因为不出声就整个消失。
+        """
+        for msg_id in (preferred, REFUSE_CANT, REFUSE_HEARD):
+            texts = self.pack.texts(msg_id) if self.pack.has(msg_id) else []
+            if texts:
+                self._live(state="answer", answer=texts[0], error="")
+                return
 
     def _say_refusal(self, kind) -> None:
         """按分类播拒绝话术。"""
@@ -506,8 +551,14 @@ class Assistant:
 
         调用方决定记哪本账（规则路径记 miss、AI 回退记 qa），这里只负责
         拼装、抽变体、播报和 live 更新。
+
+        全局交给 AI（`ai.mode=all` + `global_stop_local`）时只做「拼装 + 写
+        live」，不调播放器：契约要求规则答案与 AI 失败回退都不出声，
+        但文字仍要出现在 Overlay 与历史里。此时 rec 里记 `silent=True`，
+        便于复盘区分「没播」与「播失败」。
         """
         p = lambda s: print(s, file=self.out)  # noqa: E731
+        silent = self.global_stop_local
         if not plan:
             # 空计划不是「播了一句空话」，是调用方逻辑出错；明确判失败。
             rec.update({"ok": False, "reason": "没有可播的片段"})
@@ -534,6 +585,10 @@ class Assistant:
                     "segments": len(chosen), "ok": True})
         # 播报前先写 live：与 AI 路径同一时序约定（答案先出现，声音随其后）。
         self._live(state="answer", answer=assembled, error="")
+        if silent:
+            rec["silent"] = True
+            p("  🔇 全局交给 AI：本地答案只显示文字，不播语音")
+            return True
         try:
             played = 0.0
             first_ms: float | None = None
@@ -619,7 +674,10 @@ class Assistant:
             self._live(state="error", answer="", error=result.reason)
             p(f"  ✗ AI 未给出可用回答：{result.reason}")
             # 素材可能还没合成（Task 17）。有就播，没有就只留文字。
-            if result.checks.get('tts') != 'ok' and self.pack.has(AI_SEE_SCREEN):
+            # 全局交给 AI 时这条提示也不出声：用户要的是「只走 AI」，
+            # 失败时再甩一句本地话术就回到了他要摆脱的双响应。
+            if (not self.global_stop_local and result.checks.get("tts") != "ok"
+                    and self.pack.has(AI_SEE_SCREEN)):
                 self._say(AI_SEE_SCREEN)
             self._log(self.miss_log, rec)
             return rec
@@ -627,7 +685,8 @@ class Assistant:
         # 也让「直接替换 handle 返回文字」的调用方拿到一致的 live 状态。
         self._live(state="answer", answer=result.text or "", error="")
         p(f"  ✎ AI（{result.source}）{result.latency_ms}ms：{result.text}")
-        if result.checks.get("tts") != "ok" and self.pack.has(AI_SEE_SCREEN):
+        if (not self.global_stop_local and result.checks.get("tts") != "ok"
+                and self.pack.has(AI_SEE_SCREEN)):
             self._say(AI_SEE_SCREEN)
         self._log(self.qa_log, rec)
         return rec
@@ -717,11 +776,19 @@ class Assistant:
         这是密钥隔离的唯一出口——state() 与 export_logs() 都走这里，
         不要在别处直接读 cfg["ai"]，否则以后加字段很容易漏掉脱敏。
         """
+        from .llm_engine import thinking_supported
+
         ai = (self.cfg or {}).get("ai") or {}
         tts = ai.get("tts") or {}
         return {
             "enabled": bool(ai.get("enabled")),
             "mode": ai.get("mode"),
+            # 全局停止本地播报（v1.5.2）：界面开关回填用。
+            "global_stop_local": bool(ai.get("global_stop_local", True)),
+            # 思考模式：off/low + 当前服务商是否保证支持（界面提示用）。
+            "thinking_mode": ai.get("thinking_mode") or "off",
+            "thinking_supported": thinking_supported(
+                ai.get("base_url") or "", ai.get("model") or ""),
             "provider": ai.get("provider"),
             "base_url": ai.get("base_url") or "",
             "model": ai.get("model") or "",

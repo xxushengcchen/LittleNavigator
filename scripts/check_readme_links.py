@@ -13,6 +13,7 @@ FILES = [
     'docs/guide/user-guide.md', 'docs/knowledge-base.md',
     'docs/releases/v1.5.0.md',
     'docs/releases/v1.5.1.md',
+    'docs/releases/v1.5.2.md',
 ]
 
 def slugs(text):

@@ -126,6 +126,110 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("阿拉伯数字", system)
         self.assertIn("不要解释处罚原因", system)
 
+    def test_payload_prefers_spoken_duration_fields(self):
+        """v1.5.2：圈速/时长必须优先引用 race_context 的 *_spoken 字段。"""
+        c = LlmClient("http://x", "k", "m")
+        system = c._payload({}, "问题")["messages"][0]["content"]
+        self.assertIn("_spoken", system)
+        self.assertIn("lap_last_spoken", system)
+        self.assertIn("分秒", system)
+
+
+class ThinkingProviderTests(unittest.TestCase):
+    """服务商判定：只认 base_url / model 两条线索，不联网探测。"""
+
+    def test_deepseek_by_base_url(self):
+        from src.llm_engine import thinking_provider
+        self.assertEqual(thinking_provider("https://api.deepseek.com",
+                                           "whatever"), "deepseek")
+
+    def test_deepseek_by_model_prefix(self):
+        from src.llm_engine import thinking_provider
+        self.assertEqual(thinking_provider("http://local",
+                                           "deepseek-reasoner"), "deepseek")
+
+    def test_openai_by_base_url(self):
+        from src.llm_engine import thinking_provider
+        self.assertEqual(thinking_provider("https://api.openai.com/v1",
+                                           "gpt-4o"), "openai")
+
+    def test_openai_by_reasoning_model_prefix(self):
+        from src.llm_engine import thinking_provider
+        for model in ("o1-mini", "o3", "o4-mini", "gpt-5"):
+            with self.subTest(model=model):
+                self.assertEqual(thinking_provider("http://x", model), "openai")
+
+    def test_unknown_provider(self):
+        from src.llm_engine import thinking_provider
+        self.assertEqual(thinking_provider("https://ark.cn-beijing.volces.com/api/v3",
+                                           "ep-2024"), "unknown")
+        self.assertEqual(thinking_provider("http://127.0.0.1:11434/v1",
+                                           "qwen2.5:7b"), "unknown")
+
+    def test_supported_flag_matches_provider(self):
+        from src.llm_engine import thinking_supported
+        self.assertTrue(thinking_supported("https://api.deepseek.com", "deepseek-chat"))
+        self.assertTrue(thinking_supported("", "gpt-5"))
+        self.assertFalse(thinking_supported("http://x", "qwen2.5:7b"))
+
+
+class ThinkingRequestBodyTests(unittest.TestCase):
+    """fake HTTP：直接看真正发出去的请求体（契约 §3）。"""
+
+    def _sent_body(self, base_url, model, mode):
+        captured = {}
+
+        def fake_post(url, body, headers, timeout):
+            captured["url"] = url
+            captured["body"] = body
+            return {"choices": [{"message": {"content": '{"answer": "ok"}'}}]}
+
+        c = LlmClient(base_url, "k", model, thinking_mode=mode)
+        with patch("src.llm_engine._post_json", side_effect=fake_post):
+            c.ask({"now": {"lap": 1}}, "测试")
+        return captured["body"]
+
+    def test_deepseek_off_sends_disabled_thinking(self):
+        body = self._sent_body("https://api.deepseek.com", "deepseek-chat", "off")
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_deepseek_low_sends_enabled_and_low_effort(self):
+        body = self._sent_body("https://api.deepseek.com", "deepseek-chat", "low")
+        self.assertEqual(body["thinking"], {"type": "enabled"})
+        self.assertEqual(body["reasoning_effort"], "low")
+
+    def test_openai_low_sends_only_reasoning_effort(self):
+        body = self._sent_body("https://api.openai.com/v1", "gpt-5", "low")
+        self.assertEqual(body["reasoning_effort"], "low")
+        self.assertNotIn("thinking", body)
+
+    def test_openai_off_sends_nothing(self):
+        body = self._sent_body("https://api.openai.com/v1", "o3", "off")
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("reasoning_effort", body)
+
+    def test_unknown_provider_sends_nothing_in_both_modes(self):
+        for mode in ("off", "low"):
+            with self.subTest(mode=mode):
+                body = self._sent_body("http://127.0.0.1:11434/v1",
+                                       "qwen2.5:7b", mode)
+                self.assertNotIn("thinking", body)
+                self.assertNotIn("reasoning_effort", body)
+
+    def test_invalid_thinking_mode_falls_back_to_off(self):
+        c = LlmClient("https://api.deepseek.com", "k", "deepseek-chat",
+                      thinking_mode="high")
+        self.assertEqual(c.thinking_mode, "off")
+        self.assertEqual(c._payload({}, "q")["thinking"], {"type": "disabled"})
+
+    def test_body_keeps_protocol_fields(self):
+        """思考参数不能挤掉原有的 model/messages/temperature。"""
+        body = self._sent_body("https://api.deepseek.com", "deepseek-chat", "low")
+        self.assertEqual(body["model"], "deepseek-chat")
+        self.assertEqual(body["temperature"], 0)
+        self.assertEqual(body["messages"][0]["role"], "system")
+
 
 class ConnectionTestTests(unittest.TestCase):
     def test_success_reports_latency(self):

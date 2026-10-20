@@ -121,6 +121,9 @@ logging:
 #  timeout_s 硬上限 3.0、tts.timeout_s 硬上限 2.5，调大无效。
 ai:
   enabled: false
+  mode: "whitelist"            # whitelist | analysis_key | full | all
+  global_stop_local: true      # all 档：本地问答语音全部停掉，只走 AI（文字仍进 Overlay）
+  thinking_mode: "off"         # off=关闭思考（默认最快）；low=最低思考强度
   base_url: ""                 # OpenAI 兼容接口，如 https://api.deepseek.com
   model: ""
   timeout_s: 3.0
@@ -142,3 +145,5 @@ overlay:
   width: 720                   # 480–1200
   height: 200                  # 140–400
   toggle_key: "Ctrl+Alt+O"
+  x: null                      # 绝对坐标；null=按 corner+margin 排
+  y: null

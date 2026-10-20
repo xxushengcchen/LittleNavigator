@@ -524,7 +524,7 @@
 
   async function save(patch, hintEl, note) {
     var r = await api("/api/config", { patch: patch });
-    var ids=patch.car_control?['ira-cc-on','ira-cc-verify']:patch.ai && patch.ai.tts?['ira-tts-adapter','ira-tts-url','ira-tts-speaker','ira-tts-key','ira-ack-on']:patch.ai && !patch.ai.analysis_key?['ira-ai-on','ira-ai-mode','ira-ai-preset','ira-ai-url','ira-ai-model','ira-ai-key']:[];
+    var ids=patch.car_control?['ira-cc-on','ira-cc-verify']:patch.ai && patch.ai.tts?['ira-tts-adapter','ira-tts-url','ira-tts-speaker','ira-tts-key','ira-ack-on']:patch.ai && !patch.ai.analysis_key?['ira-ai-on','ira-ai-mode','ira-ai-preset','ira-ai-url','ira-ai-model','ira-ai-key','ira-ai-global','ira-ai-thinking']:patch.overlay?['ira-ov-on','ira-ov-opacity','ira-ov-corner','ira-ov-width','ira-ov-height','ira-ov-x','ira-ov-y']:[];
     ids.forEach(function(id){delete pendingDrafts[id];});
     if (hintEl) {
       hintEl.textContent = "已保存" + (r.restart_hint && r.restart_hint.length
@@ -667,6 +667,15 @@
     {key: "custom", label: "自定义", url: "", model: ""}
   ];
 
+  // v1.5.2：关闭「全局交给 AI」时恢复的档位。进入页面时记住非 all 的 mode，
+  // 从 all 关回来优先恢复它；没记住就回 whitelist。
+  var globalAiRestoreMode = null;
+  var AI_MODE_LABELS = {
+    whitelist: "白名单", analysis_key: "按键触发",
+    full: "规则答不上就接管", all: "全部交给 AI"
+  };
+  function aiModeLabel(mode) { return AI_MODE_LABELS[mode] || "白名单"; }
+
   function aiPresetOptions(current) {
     return AI_PRESETS.map(function (p) {
       return '<option value="' + p.key + '"' +
@@ -694,9 +703,28 @@
                      ["bottom-right", "右下角"], ["bottom-left", "左下角"]];
     var ackEnabled = a.ack_enabled === undefined ? true : !!a.ack_enabled;
 
-    card.innerHTML='<h2>模型接入</h2><div class="ira-form ai-form-grid">'+
+    // v1.5.2：全局 AI / 思考模式 / Overlay 几何的回填。
+    // 不能假设后端已经给出新字段：缺失时按契约默认值（whitelist / off / 720×200）。
+    var aiMode = a.mode || "whitelist";
+    if (aiMode !== "all") globalAiRestoreMode = aiMode;
+    var thinkingOff = a.thinking_mode !== "low";              // 默认 off：关闭思考
+    var globalStopLocal = a.global_stop_local !== false;        // all 档默认静音本地
+    var ovCfg = (st.config && st.config.overlay) || {};
+    function ovValue(key, fallback) {
+      var value = ov[key] != null ? ov[key] : ovCfg[key];
+      return value == null ? fallback : value;
+    }
+    var ovLayout = !!ov.layout_mode;
+    var ovWidth = ovValue("width", 720);
+    var ovHeight = ovValue("height", 200);
+    var ovX = ovValue("x", "");
+    var ovY = ovValue("y", "");
+    var posText = function (value) { return value === "" ? "" : esc(String(value)); };
+
+    card.innerHTML='<div class="ira-notice" id="ira-global-ai"><div class="ira-switchrow"><div><strong>全局交给 AI</strong><span class="ira-hint" id="ira-global-ai-desc">所有问答只走 AI，本地规则不再出声；安全/操作类只显示文字。</span></div><select class="ira-select" id="ira-ai-global" aria-label="全局交给 AI" style="width:190px;flex:none"><option value="1"'+(aiMode==='all'?' selected':'')+'>开启 · 全部交给 AI</option><option value="0"'+(aiMode==='all'?'':' selected')+'>关闭 · 按档位处理</option></select></div><div class="ira-meta" id="ira-ai-global-hint">'+(aiMode==='all' ? ('当前：所有问答交给 AI'+(globalStopLocal?' · 本地语音已静音':' · 本地语音未静音（global_stop_local=false）')) : ('当前：'+aiModeLabel(aiMode)+'；关闭后恢复到进入页面时的档位'))+'</div></div><h2>模型接入</h2><div class="ira-form ai-form-grid">'+
       field('启用 AI 分析','<select class="ira-select" id="ira-ai-on"><option value="0"'+(!a.enabled?' selected':'')+'>关闭</option><option value="1"'+(a.enabled?' selected':'')+'>开启</option></select>','当前状态：'+statusText)+
-      field('响应方式','<select class="ira-select" id="ira-ai-mode"><option value="whitelist"'+(a.mode==='whitelist'?' selected':'')+'>白名单 · 推荐</option><option value="analysis_key"'+(a.mode==='analysis_key'?' selected':'')+'>分析键触发</option><option value="full"'+(a.mode==='full'?' selected':'')+'>规则答不上就接管</option><option value="all"'+(a.mode==='all'?' selected':'')+'>全部交给 AI · 最像真人</option></select>','「全部交给 AI」连规则答得上的也交给模型；安全、处罚、改车仍走本地规则；需配好语音合成才听得到回答。')+
+      field('响应方式','<select class="ira-select" id="ira-ai-mode"><option value="whitelist"'+(aiMode==='whitelist'?' selected':'')+'>白名单 · 推荐</option><option value="analysis_key"'+(aiMode==='analysis_key'?' selected':'')+'>分析键触发</option><option value="full"'+(aiMode==='full'?' selected':'')+'>规则答不上就接管</option><option value="all"'+(aiMode==='all'?' selected':'')+'>全部交给 AI · 最像真人</option></select>','「全部交给 AI」连规则答得上的也交给模型；安全、处罚、改车仍走本地规则（只显示文字）；需配好语音合成才听得到回答。')+
+      field('思考模式','<select class="ira-select" id="ira-ai-thinking"><option value="off"'+(thinkingOff?' selected':'')+'>关闭 · 最快</option><option value="low"'+(thinkingOff?'':' selected')+'>不关闭 · 最低思考强度</option></select>','关闭最快；不关闭时使用最低思考强度。')+
       field('服务预设','<select class="ira-select" id="ira-ai-preset">'+aiPresetOptions(a.provider)+'</select>','选择服务商后可继续修改地址和模型名。')+
       field('模型名','<input class="ira-input" id="ira-ai-model" value="'+esc(a.model || '')+'" placeholder="服务商提供的模型名">','与接口服务中开放的名称一致。')+
       field('接口地址','<input class="ira-input" id="ira-ai-url" value="'+esc(a.base_url || '')+'" placeholder="https://api.deepseek.com">','使用兼容 Chat Completions 的接口。')+
@@ -718,8 +746,11 @@
       field('启用 Overlay','<select class="ira-select" id="ira-ov-on"><option value="0"'+(ov.enabled?'':' selected')+'>关闭</option><option value="1"'+(ov.enabled?' selected':'')+'>开启</option></select>','游戏上方浮层：无边框、置顶、点击穿透，不影响操作。')+
       field('透明度','<input class="ira-range" type="range" id="ira-ov-opacity" min="20" max="100" step="5" value="'+ovOpacity+'"><span class="ira-rangeval"><span class="ira-num" id="ira-ov-opacityval">'+ovOpacity+'</span> %</span>','越低越不挡视线；最低 20%。')+
       field('显示位置','<select class="ira-select" id="ira-ov-corner">'+ovCorners.map(function(c){return '<option value="'+c[0]+'"'+(ovCorner===c[0]?' selected':'')+'>'+c[1]+'</option>';}).join('')+'</select>','多屏时以主屏为准。')+
+      field('布局模式','<select class="ira-select" id="ira-ov-layout"><option value="0"'+(ovLayout?'':' selected')+'>关闭 · 点击穿透</option><option value="1"'+(ovLayout?' selected':'')+'>开启 · 可拖动缩放</option></select>','开启后临时关闭点击穿透，可拖动卡片、拖右下角缩放；游戏中按 Ctrl+Alt+L 也能切换。')+
+      field('窗口尺寸','<div class="ira-inline"><input class="ira-input ira-num" id="ira-ov-width" inputmode="numeric" min="240" max="4096" value="'+esc(String(ovWidth))+'"><span class="ira-meta">×</span><input class="ira-input ira-num" id="ira-ov-height" inputmode="numeric" min="80" max="2160" aria-label="Overlay 窗口高度（像素）" value="'+esc(String(ovHeight))+'"></div>','像素。宽度 240–4096，高度 80–2160；默认 720×200。')+
+      field('位置 X / Y','<div class="ira-inline"><input class="ira-input ira-num" id="ira-ov-x" inputmode="numeric" value="'+posText(ovX)+'" placeholder="留空 = 按角落"><span class="ira-meta">/</span><input class="ira-input ira-num" id="ira-ov-y" inputmode="numeric" aria-label="Overlay 位置 Y（留空按角落）" value="'+posText(ovY)+'" placeholder="留空 = 按角落"></div>','留空表示按「显示位置」的角落加边距排布；填写后固定到该坐标。')+
       field('切换热键','<input class="ira-input ira-num" value="'+esc(ovHotkey)+'" readonly>','游戏中按 '+esc(ovHotkey)+' 临时显示/隐藏，不会写入配置。')+
-      '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" type="button" id="ira-ov-save">保存 Overlay 设置</button><button class="ira-btn" type="button" id="ira-ov-toggle">立即显示/隐藏</button><span class="ira-savehint" id="ira-ov-out" role="status"></span></div></details>';
+      '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" type="button" id="ira-ov-save">保存 Overlay 设置</button><button class="ira-btn" type="button" id="ira-ov-toggle">立即显示/隐藏</button><button class="ira-btn" type="button" id="ira-ov-reset">恢复默认位置与尺寸</button><span class="ira-savehint" id="ira-ov-out" role="status"></span></div></details>';
 
     bindAiPanel(panel, hint);
     bindOverlaySettings(panel, ov);
@@ -735,6 +766,35 @@
     if (range && rangeVal) {
       range.oninput = function () { rangeVal.textContent = this.value; };
     }
+    function clearOverlayDrafts() {
+      ["ira-ov-on", "ira-ov-opacity", "ira-ov-corner",
+       "ira-ov-width", "ira-ov-height", "ira-ov-x", "ira-ov-y"
+      ].forEach(function (id) { delete pendingDrafts[id]; });
+    }
+    // 布局模式只调运行时接口，不改配置；服务器没有控制器时也要给出明确结果。
+    var layoutSel = $("#ira-ov-layout", panel);
+    if (layoutSel) {
+      layoutSel.addEventListener("change", async function () {
+        var out = $("#ira-ov-out", panel);
+        var want = layoutSel.value === "1";
+        layoutSel.disabled = true;
+        try {
+          var r = await api("/api/overlay/layout_mode", { enabled: want });
+          var actual = r && typeof r.layout_mode === "boolean" ? r.layout_mode : want;
+          layoutSel.value = actual ? "1" : "0";
+          if (out) {
+            out.textContent = actual
+              ? "布局模式已开启：点击不再穿透，可拖动卡片、拖右下角缩放"
+              : "布局模式已关闭：恢复点击穿透";
+          }
+        } catch (e) {
+          layoutSel.value = want ? "0" : "1";
+          if (out) out.textContent = "布局模式切换失败：" + e.message;
+        } finally {
+          layoutSel.disabled = false;
+        }
+      });
+    }
     var saveBtn = $("#ira-ov-save", panel);
     if (saveBtn) {
       saveBtn.addEventListener("click", async function () {
@@ -742,17 +802,20 @@
         var raw = parseInt(range && range.value, 10);
         if (!raw) raw = 85;
         var opacity = Math.round(Math.max(0.2, Math.min(1, raw / 100)) * 100) / 100;
+        // v1.5.2：几何也一起保存；X/Y 留空写 null，后端按 corner+margin 排。
         var patch = { overlay: {
           enabled: ($("#ira-ov-on", panel) || {}).value === "1",
           opacity: opacity,
-          corner: ($("#ira-ov-corner", panel) || {}).value || "top-right"
+          corner: ($("#ira-ov-corner", panel) || {}).value || "top-right",
+          width: overlayIntInput($("#ira-ov-width", panel), 720, 240, 4096),
+          height: overlayIntInput($("#ira-ov-height", panel), 200, 80, 2160),
+          x: overlayPositionInput($("#ira-ov-x", panel)),
+          y: overlayPositionInput($("#ira-ov-y", panel))
         } };
         saveBtn.disabled = true;
         try {
           await save(patch, hint, "游戏内 Overlay 设置");
-          ["ira-ov-on", "ira-ov-opacity", "ira-ov-corner"].forEach(function (id) {
-            delete pendingDrafts[id];
-          });
+          clearOverlayDrafts();
           if (raw < 20 && out) out.textContent = "透明度最低 20%，已按 20% 保存";
           await loadSettings();
         } catch (e) {
@@ -781,6 +844,41 @@
         }
       });
     }
+    var resetBtn = $("#ira-ov-reset", panel);
+    if (resetBtn) {
+      resetBtn.addEventListener("click", async function () {
+        var out = $("#ira-ov-out", panel);
+        resetBtn.disabled = true;
+        try {
+          // 恢复默认：位置回到角落排布（null），尺寸回 720×200。
+          await save({ overlay: { x: null, y: null, width: 720, height: 200 } },
+                     hint, "Overlay 位置与尺寸已恢复默认");
+          clearOverlayDrafts();
+          if (out) out.textContent = "已恢复默认位置与尺寸";
+          await loadSettings();
+        } catch (e) {
+          if (out) out.textContent = "重置失败：" + e.message;
+          reportError(e);
+        } finally {
+          resetBtn.disabled = false;
+        }
+      });
+    }
+  }
+
+  // Overlay 几何输入：空/非法回落到默认值或 null（null = 按角落排）。
+  function overlayIntInput(el, fallback, min, max) {
+    var raw = el ? parseInt(el.value, 10) : NaN;
+    if (!isFinite(raw)) return fallback;
+    return Math.max(min, Math.min(max, raw));
+  }
+  function overlayPositionInput(el) {
+    if (!el) return null;
+    var text = String(el.value == null ? "" : el.value).trim();
+    if (!text) return null;
+    var raw = parseInt(text, 10);
+    if (!isFinite(raw)) return null;
+    return Math.max(-10000, Math.min(10000, raw));
   }
 
   function renderCarPanel(st) {
@@ -802,6 +900,8 @@
       base_url: $("#ira-ai-url", panel).value.trim(),
       model: $("#ira-ai-model", panel).value.trim()
     };
+    // v1.5.2：思考模式作为 ai patch 的一部分保存（off=关闭，low=最低强度）。
+    p.thinking_mode = ($("#ira-ai-thinking", panel) || {}).value === "low" ? "low" : "off";
     var key = $("#ira-ai-key", panel).value.trim();
     if (key) p.api_key = key;
     return { ai: p };
@@ -821,6 +921,25 @@
   }
 
   function bindAiPanel(panel, hint) {
+    var globalSwitch = $("#ira-ai-global", panel);
+    if (globalSwitch) {
+      globalSwitch.addEventListener("change", async function () {
+        var wantAll = globalSwitch.value === "1";
+        // 开：写 all；关：恢复进入页面时记下的档位（从 all 进来时回 whitelist）。
+        var restore = globalAiRestoreMode || "whitelist";
+        var patch = wantAll ? { ai: { mode: "all" } } : { ai: { mode: restore } };
+        globalSwitch.disabled = true;
+        try {
+          await save(patch, hint, "全局交给 AI");
+          await loadSettings();
+        } catch (e) {
+          globalSwitch.value = wantAll ? "0" : "1";
+          reportError(e);
+        } finally {
+          globalSwitch.disabled = false;
+        }
+      });
+    }
     var preset = $("#ira-ai-preset", panel);
     if (preset) {
       preset.addEventListener("change", function () {
@@ -879,9 +998,15 @@
         out.textContent = "合成中…";
         try {
           var r = await api("/api/ai/tts/test", {});
-          out.textContent = r.ok
-            ? ("成功 " + r.bytes + " 字节，" + r.latency_ms + " ms")
-            : ("失败：" + (r.error || "未知错误"));
+          if (r.ok) {
+            // v1.5.2：必须说明「有没有真的响」，只报耗时等于没测。
+            out.textContent = "已播放"
+              + (r.played === false ? "（服务端未实际播放，请检查输出设备）" : "")
+              + (r.bytes ? " · " + r.bytes + " 字节" : "")
+              + (r.latency_ms != null ? " · " + r.latency_ms + " ms" : "");
+          } else {
+            out.textContent = "失败：" + (r.error || "未知错误");
+          }
         } catch (e) { out.textContent = "失败：" + e.message; }
       });
     }

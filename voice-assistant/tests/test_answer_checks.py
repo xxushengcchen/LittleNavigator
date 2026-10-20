@@ -105,6 +105,55 @@ class RunAllTests(unittest.TestCase):
         self.assertTrue(ok)      # 空回答没有数字、没有字段，三道闸都过
 
 
+class DataAliasTests(unittest.TestCase):
+    """data_used 的常见别名不能整条杀掉回答（v1.5.2 问题 #7）。
+
+    实测：回答与数字都对，只因为 data_used 写了 `lap_time` 就被判失败。
+    别名解析成白名单字段后仍走原来的「白名单 + 本次上下文存在」两道检查，
+    数值校验完全不经过这里；真未知字段照样拒绝。
+    """
+
+    CTX = {"now": {"lap_last": 83.512, "lap_best": 83.104, "laps_remain": 5},
+           "derived": {"avg3": 83.4}}
+
+    def test_lap_time_alias_passes(self):
+        self.assertIsNone(check_data(["lap_time"], self.CTX))
+
+    def test_last_lap_alias_passes(self):
+        self.assertIsNone(check_data(["last_lap"], self.CTX))
+
+    def test_best_lap_alias_passes(self):
+        self.assertIsNone(check_data(["best_lap"], self.CTX))
+
+    def test_dotted_alias_passes(self):
+        self.assertIsNone(check_data(["now.lap_time"], self.CTX))
+
+    def test_alias_keeps_other_entries_checked(self):
+        # 别名本身合法，但同一个列表里的未知字段仍然要拒绝
+        self.assertIsNotNone(check_data(["lap_time", "fuel_pressure"], self.CTX))
+
+    def test_unknown_field_still_rejected(self):
+        for name in ("engine_temp", "lap_average", "lap_best_time"):
+            with self.subTest(field=name):
+                self.assertIsNotNone(check_data([name], self.CTX))
+
+    def test_alias_rejected_when_target_absent_from_this_context(self):
+        # 本轮上下文没有 lap_last 时，别名也不能凭空成立
+        ctx = {"now": {"laps_remain": 5}, "derived": {"laps_spare": 1.2}}
+        self.assertIsNotNone(check_data(["lap_time"], ctx))
+
+    def test_alias_does_not_bypass_number_gate(self):
+        payload = {"answer": "上一圈 1分23.5秒", "data_used": ["lap_time"]}
+        ok, checks = run_all(payload, self.CTX, "上一圈多少", 60)
+        self.assertTrue(ok, checks)
+        # 数值仍然要能对上：换一个编造的分秒，data 闸过、number 闸必须拦
+        payload = {"answer": "上一圈 1分30.0秒", "data_used": ["lap_time"]}
+        ok, checks = run_all(payload, self.CTX, "上一圈多少", 60)
+        self.assertFalse(ok)
+        self.assertEqual(checks["data"], "pass")
+        self.assertEqual(checks["number"], "fail")
+
+
 if __name__ == '__main__':
     unittest.main()
 

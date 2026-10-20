@@ -56,6 +56,58 @@ class BuildTests(unittest.TestCase):
             self.assertIn(key, ALLOWED_FIELDS, f"derived.{key} 不在白名单")
 
 
+class SpokenFieldTests(unittest.TestCase):
+    """v1.5.2：时长字段成对给出「口语化」版本，模型照抄即可，不必自己换算。
+
+    数值字段保留不变（数字闸仍按原字段核对）；`_spoken` 只是播报用的字符串。
+    """
+
+    def test_lap_times_have_spoken_pairs(self):
+        ctx = build(snap(), [], QueryKind.KNOWN, "上一圈多少")
+        self.assertEqual(ctx["now"]["lap_last"], 83.512)
+        self.assertEqual(ctx["now"]["lap_last_spoken"], "1分23.5秒")
+        self.assertEqual(ctx["now"]["lap_best_spoken"], "1分23.1秒")
+
+    def test_time_remain_spoken_uses_whole_seconds(self):
+        ctx = build(snap(time_remain_s=750.4), [], QueryKind.KNOWN, "还剩多久")
+        self.assertEqual(ctx["now"]["time_remain_s"], 750.0)
+        self.assertEqual(ctx["now"]["time_remain_spoken"], "12分30秒")
+
+    def test_avg3_and_avg5_have_spoken_pairs(self):
+        laps = [{"lap": i, "lap_time": 83.0 + i * 0.1} for i in range(1, 6)]
+        # 最近 3 圈：83.3 / 83.4 / 83.5 → 均值 83.4
+        ctx = build(snap(), laps, QueryKind.ANALYSIS, "圈速稳定吗")
+        self.assertEqual(ctx["derived"]["avg3"], 83.4)
+        self.assertEqual(ctx["derived"]["avg3_spoken"], "1分23.4秒")
+        self.assertEqual(ctx["derived"]["avg5"], 83.3)
+        self.assertEqual(ctx["derived"]["avg5_spoken"], "1分23.3秒")
+
+    def test_spoken_fields_omitted_when_value_missing(self):
+        ctx = build(snap(lap_last=None, lap_best=None, time_remain_s=None),
+                    [], QueryKind.KNOWN, "油")
+        for key in ("lap_last_spoken", "lap_best_spoken", "time_remain_spoken"):
+            self.assertNotIn(key, ctx["now"], f"{key} 不该在缺值出现")
+        self.assertNotIn("avg3_spoken", ctx["derived"])
+
+    def test_spoken_fields_are_whitelisted(self):
+        ctx = build(snap(time_remain_s=750), [], QueryKind.KNOWN, "还剩多久")
+        self.assertIn("lap_last_spoken", ctx["now"])
+        for key in ("lap_last_spoken", "lap_best_spoken", "time_remain_spoken",
+                    "avg3_spoken", "avg5_spoken"):
+            self.assertIn(key, ALLOWED_FIELDS, f"{key} 不在白名单，模型引用会被拒")
+
+    def test_spoken_value_passes_number_gate(self):
+        from src.answer_checks import check_numbers
+
+        ctx = build(snap(), [], QueryKind.KNOWN, "上一圈多少")
+        spoken = ctx["now"]["lap_last_spoken"]
+        self.assertIsNone(check_numbers(f"上一圈 {spoken}",
+                                        ctx, "上一圈多少"))
+        # 同一路径下编造的数字仍然被拦
+        self.assertIsNotNone(check_numbers("上一圈 1分30.0秒",
+                                           ctx, "上一圈多少"))
+
+
 class TrimTests(unittest.TestCase):
     def test_trim_drops_far_laps_first(self):
         laps = [{"lap": i, "lap_time": 83.0} for i in range(1, 20)]

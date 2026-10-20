@@ -26,6 +26,62 @@ class LlmError(RuntimeError):
     """模型调用失败的统一异常。调用方据此降级，不区分底层原因。"""
 
 
+# ---------------------------------------------------------------- 思考开关（v1.5.2）
+# 严格按契约只对「认得出的服务商」下发参数：认不出来就什么都不加，也不报错。
+# 认错的代价很实在——往不认识的 OpenAI 兼容服务塞一个它不认的字段，
+# 有的服务直接 400，用户只会看到「模型调用失败」，查不出原因。
+_THINKING_MODES = ("off", "low")
+_OPENAI_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+
+
+def thinking_provider(base_url: str, model: str) -> str:
+    """认出思考参数该按哪家协议下发：deepseek / openai / unknown。
+
+    判定只看两个线索，不做网络探测：
+      · base_url 里带服务商名（deepseek / openai）
+      · model 名带服务商前缀（deepseek… / o1 o3 o4 gpt-5…）
+    两家都像时按契约顺序取 DeepSeek（先判）。
+    """
+    base = (base_url or "").strip().lower()
+    name = (model or "").strip().lower()
+    if "deepseek" in base or name.startswith("deepseek"):
+        return "deepseek"
+    if "openai" in base or any(name.startswith(p) for p in _OPENAI_MODEL_PREFIXES):
+        return "openai"
+    return "unknown"
+
+
+def thinking_supported(base_url: str, model: str) -> bool:
+    """界面提示用：这家服务商能不能保证听懂思考开关。"""
+    return thinking_provider(base_url, model) != "unknown"
+
+
+def thinking_params(base_url: str, model: str, mode: str) -> dict:
+    """按服务商与档位生成请求体附加参数。
+
+    | 服务商   | off                          | low                                    |
+    |----------|------------------------------|----------------------------------------|
+    | DeepSeek | {"thinking": {"type": "disabled"}} | {"thinking": {"type": "enabled"}, "reasoning_effort": "low"} |
+    | OpenAI   | （不加）                      | {"reasoning_effort": "low"}            |
+    | 其他     | （不加）                      | （不加）                                |
+
+    off 时 DeepSeek 必须显式关：deepseek-reasoner 之类的模型默认就思考，
+    「不传」等于没关，延迟原样还在。
+    """
+    mode = mode if mode in _THINKING_MODES else "off"
+    provider = thinking_provider(base_url, model)
+    if provider == "deepseek":
+        if mode == "off":
+            return {"thinking": {"type": "disabled"}}
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}
+    if provider == "openai":
+        # OpenAI 的 off 就是「什么都不传」：非推理模型本来不思考，
+        # 推理模型也没有通用的「关掉」字段，硬塞只可能被 400。
+        return {"reasoning_effort": "low"} if mode == "low" else {}
+    # 未知服务商：契约要求不加参数、不报错，界面另行提示「不保证支持」。
+    return {}
+
+
 def _post_json(url: str, body: dict, headers: dict, timeout: float) -> dict:
     """一次性 POST 并解析 JSON。抽成模块级函数便于测试替换。"""
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -78,10 +134,14 @@ class LlmClient:
     """一个可复用的客户端。线程安全：内部用锁保护单飞与取消标志。"""
 
     def __init__(self, base_url: str, api_key: str, model: str,
-                 timeout_s: float = 2.0, max_tokens: int = 300):
+                 timeout_s: float = 2.0, max_tokens: int = 300,
+                 thinking_mode: str = "off"):
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key or ""
         self.model = model or ""
+        # 配置层已校验；这里再兜一层：坏值按「关闭」处理，绝不因此拒绝发请求。
+        self.thinking_mode = (thinking_mode if thinking_mode in _THINKING_MODES
+                              else "off")
         # 配置只能收紧：用户写 99 也会被钳到 2.0
         self.timeout_s = const.clamp(timeout_s, const.LLM_DEADLINE_HARD_MAX,
                                      "ai.timeout_s")
@@ -110,6 +170,10 @@ class LlmClient:
             "不要提供调校或操作指令，不要解释处罚原因。"
             "数字必须原样引用上下文里给出的值，不要自己计算或四舍五入；"
             "并且必须使用阿拉伯数字。"
+            "\n\n圈速与时长优先引用上下文里的 *_spoken 字段"
+            "（如 lap_last_spoken、lap_best_spoken、time_remain_spoken）："
+            "它已经是口语化的「分秒」说法，直接原样使用，不要自己把秒换算成分秒，"
+            "也不要改写其中的数字。只有没有对应 *_spoken 字段时，才引用原始数值字段。"
             "\n\n若答案依赖会变化的数值（油量、圈数、胎温、差距等），"
             "必须在 template 里给出可复用的条件模板，让下次能换新数值重算："
             '{"params": ["字段名..."], '
@@ -126,7 +190,7 @@ class LlmClient:
         )
         user = "遥测上下文：\n" + json.dumps(ctx, ensure_ascii=False) + \
                "\n\n问题：" + (question or "")
-        return {
+        body = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
@@ -135,6 +199,10 @@ class LlmClient:
             "max_tokens": self.max_tokens,
             "temperature": 0,
         }
+        # 思考开关按服务商下发（契约 §3）：认不出来就原样不加，不报错。
+        body.update(thinking_params(self.base_url, self.model,
+                                    self.thinking_mode))
+        return body
 
     def ask(self, ctx: dict, question: str) -> dict:
         """发一次请求并返回解析后的 JSON。失败一律抛 LlmError。

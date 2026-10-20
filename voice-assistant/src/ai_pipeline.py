@@ -11,14 +11,66 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import time
 
 from . import ai_constants as const
-from . import answer_checks, race_context
+from . import answer_checks, numbers as numbers_mod, race_context
 from .ai_learn import LearnStore, fill_template
 from .llm_engine import AdaptiveBreaker, LlmClient, LlmError
 from .query_class import QueryKind
 from .tts_engine import TtsEngine, TtsError
+
+# 「N 秒」这样的时长表述。前置不能是数字/小数点，避免从更长的数字里截一段出来。
+_SECONDS_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*秒")
+
+
+def _fallback_seconds_to_spoken(seconds: float) -> str:
+    """T1 的 `numbers.seconds_to_spoken` 不可用时的同口径兜底。
+
+    只在 helper 缺失/签名不兼容时走到这里；格式与契约一致：>=60s → X分Y.Z秒。
+    """
+    ticks = int(round(float(seconds) * 10))
+    whole, frac = divmod(ticks, 10)
+    if whole < 60:
+        return f"{whole}.{frac}秒"
+    minutes, secs = divmod(whole, 60)
+    return f"{minutes}分{secs}.{frac}秒"
+
+
+def spoken_seconds(seconds: float) -> str:
+    """把秒数转成口语时长，优先用 T1 的 `numbers.seconds_to_spoken`。"""
+    func = getattr(numbers_mod, "seconds_to_spoken", None)
+    if callable(func):
+        try:
+            return func(seconds, 1)
+        except (TypeError, ValueError):
+            pass
+    return _fallback_seconds_to_spoken(seconds)
+
+
+def rewrite_spoken_durations(text: str) -> str:
+    """把 AI 文本里 >=60 秒的时长改写成「X分Y.Z秒」（v1.5.2）。
+
+    为什么必须在校验之后做：answer_checks 的数字闸按「原样引用」核对数字，
+    先把 83.512 改写成「1分23.5秒」再去校验，等于自己制造了一个对不上的数。
+    所以时序固定为：三道闸通过 → 改写 → 写 Overlay → TTS。
+    """
+    if not (text or "").strip():
+        return text or ""
+
+    def repl(match: re.Match) -> str:
+        raw = match.group(1)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return match.group(0)
+        if value < 60:
+            return match.group(0)
+        spoken = spoken_seconds(value)
+        return spoken or match.group(0)
+
+    return _SECONDS_RE.sub(repl, text)
 
 
 class AiResult:
@@ -124,6 +176,10 @@ class AiPipeline:
         self.max_input_tokens = const.MAX_INPUT_TOKENS_HARD
         self.breaker = AdaptiveBreaker()
         self.store = store
+        # 思考开关（v1.5.2）：配置层已校验 off/low；这里兜一层防坏值。
+        self.thinking_mode = (ai.get("thinking_mode")
+                              if ai.get("thinking_mode") in ("off", "low")
+                              else "off")
 
         self.client: LlmClient | None = None
         if ai.get("base_url") and ai.get("api_key"):
@@ -131,7 +187,8 @@ class AiPipeline:
                 ai.get("base_url", ""), ai.get("api_key", ""),
                 ai.get("model", ""),
                 timeout_s=ai.get("timeout_s", const.LLM_DEADLINE_HARD_MAX),
-                max_tokens=ai.get("max_tokens", const.MAX_OUTPUT_TOKENS_HARD))
+                max_tokens=ai.get("max_tokens", const.MAX_OUTPUT_TOKENS_HARD),
+                thinking_mode=self.thinking_mode)
 
         self.tts: TtsEngine | None = None
         tts_cfg = ai.get("tts") or {}
@@ -204,6 +261,9 @@ class AiPipeline:
             if stale:
                 self._expire(result, stale)
             else:
+                # 圈速口语化必须在三道闸之后、TTS 之前：改写后的文本才是
+                # 用户看到/听到的那一份，数字校验仍然只认原始引用。
+                result.text = rewrite_spoken_durations(result.text)
                 # 先让 Overlay 看到答案，再合成/播报：TTS 是同步阻塞的，
                 # 等播完再写等于晚一整句的时长，Overlay 就失去「实时」意义了。
                 self._notify_live(result.text)

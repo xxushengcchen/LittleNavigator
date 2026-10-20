@@ -10,6 +10,8 @@
     GET  /api/state                 状态快照（连接/PTT/语音包/遥测/最近问答）
     GET  /api/overlay               游戏内 Overlay：配置摘要 + 实时识别/回答
     POST /api/overlay/toggle        运行时显示/隐藏 Overlay（不改配置）
+    POST /api/overlay/layout_mode   进入/退出布局模式（拖动/缩放）
+    POST /api/overlay/layout        运行时移动/缩放并写回配置
     GET  /overlay                   游戏内 Overlay 页面（无边框透明窗口用）
     GET  /api/log?limit=50          问答记录 + 未识别清单
     GET  /api/stats                 本场统计
@@ -62,9 +64,16 @@ OVERLAY_DEFAULTS: dict = {
     "width": 720,
     "height": 200,
     "toggle_key": "Ctrl+Alt+O",
+    # v1.5.2：绝对坐标（布局模式拖出来的位置）。null = 按 corner+margin 排。
+    "x": None,
+    "y": None,
 }
 OVERLAY_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 OVERLAY_LIVE_STATES = ("idle", "thinking", "answer", "error")
+# 布局接口能改的字段：位置 + 尺寸。
+OVERLAY_LAYOUT_KEYS = ("x", "y", "width", "height")
+# 绝对坐标的硬护栏（与 src/config.py 的 validate 同口径）。
+OVERLAY_COORD_LIMIT = 10000
 
 
 def overlay_settings(cfg: dict | None) -> dict:
@@ -93,6 +102,14 @@ def overlay_settings(cfg: dict | None) -> dict:
     out["margin"] = max(0, min(int(out["margin"]), 512))
     out["width"] = max(240, min(int(out["width"]), 4096))
     out["height"] = max(80, min(int(out["height"]), 2160))
+    # 绝对坐标：null（按角落排）或整数。非法的值一律回落到 null，
+    # 让窗口按 corner+margin 出现，而不是跑到 −99999 那种看不见的地方。
+    for key in ("x", "y"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            out[key] = max(-OVERLAY_COORD_LIMIT, min(int(value), OVERLAY_COORD_LIMIT))
+        else:
+            out[key] = None
     return out
 
 
@@ -165,6 +182,8 @@ class Service:
         self.quit_requested = False
         self.desktop_mode = False        # 原生窗口模式（app.desktop 里置 True）
         self.overlay_controller = None   # app.desktop 注入的游戏内 Overlay 窗口控制器
+        # 布局模式状态：控制器支持回读时以它为准（见 overlay_layout_mode）。
+        self._overlay_layout_mode = False
         self.qa_log = self.asst.qa_log
         self.miss_log = self.asst.miss_log
 
@@ -367,6 +386,10 @@ class Service:
             "margin": settings["margin"],
             "width": settings["width"],
             "height": settings["height"],
+            # v1.5.2：绝对坐标与布局模式，供设置页回填。
+            "x": settings["x"],
+            "y": settings["y"],
+            "layout_mode": self.overlay_layout_mode(),
             "toggle_key": settings["toggle_key"],
             "visible": None,
             "live": self.overlay_live(),
@@ -377,6 +400,76 @@ class Service:
             except Exception:  # noqa: BLE001 - 控制器异常不能拖垮状态接口
                 summary["visible"] = None
         return summary
+
+    def overlay_layout_mode(self) -> bool:
+        """当前是否处于「布局模式」（可拖动/缩放，关掉点击穿透）。
+
+        优先问控制器（T3 的 OverlayController 会带 `layout_mode` 属性）；
+        控制器没有这个属性时回落到本服务记下的最近一次设置，保证
+        浏览器模式 / 老控制器下接口仍然可用。
+        """
+        controller = getattr(self, "overlay_controller", None)
+        if controller is not None:
+            try:
+                value = getattr(controller, "layout_mode", None)
+            except Exception:  # noqa: BLE001 - 控制器异常不能拖垮状态接口
+                value = None
+            if isinstance(value, bool):
+                return value
+        return bool(getattr(self, "_overlay_layout_mode", False))
+
+    def set_overlay_layout_mode(self, enabled: bool) -> dict:
+        """POST /api/overlay/layout_mode：进入/退出 Overlay 布局模式。"""
+        enabled = bool(enabled)
+        controller = getattr(self, "overlay_controller", None)
+        if controller is None:
+            return {"ok": False, "available": False, "layout_mode": enabled,
+                    "error": "游戏内 Overlay 不可用（浏览器模式或 --no-window）"}
+        setter = getattr(controller, "set_layout_mode", None)
+        if not callable(setter):
+            return {"ok": False, "available": True,
+                    "layout_mode": self.overlay_layout_mode(),
+                    "error": "当前 Overlay 版本不支持布局模式"}
+        try:
+            result = setter(enabled)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "available": True,
+                    "layout_mode": self.overlay_layout_mode(),
+                    "error": f"{type(exc).__name__}: {exc}"}
+        effective = result if isinstance(result, bool) else None
+        if effective is None:
+            try:
+                observed = getattr(controller, "layout_mode", None)
+            except Exception:  # noqa: BLE001
+                observed = None
+            effective = observed if isinstance(observed, bool) else enabled
+        self._overlay_layout_mode = effective
+        return {"ok": True, "available": True, "layout_mode": effective}
+
+    def set_overlay_layout(self, body: dict) -> dict:
+        """POST /api/overlay/layout：运行时移动/缩放 Overlay，并写盘保留。
+
+        落盘走 configure（复用它的校验和白名单），把 x/y/width/height 写进
+        config.local.yaml；窗口侧由 `_apply_overlay_live` 调
+        `controller.set_bounds(...)` 生效（T3 提供，缺失时降级）。
+        """
+        if not isinstance(body, dict):
+            raise ValueError("布局请求必须为 JSON 对象")
+        values = {key: body.get(key) for key in OVERLAY_LAYOUT_KEYS if key in body}
+        if not values:
+            raise ValueError("缺少布局字段（x / y / width / height）")
+        saved = self.configure({"overlay": values})
+        if not isinstance(saved, dict) or not saved.get("ok"):
+            return {"ok": False, "saved": False,
+                    "error": (saved or {}).get("error") or "布局保存失败"}
+        settings = overlay_settings(getattr(self, "cfg", {}))
+        result = {"ok": True, "saved": bool(saved.get("saved")),
+                  "x": settings["x"], "y": settings["y"],
+                  "width": settings["width"], "height": settings["height"]}
+        applied = saved.get("applied_overlay")
+        if isinstance(applied, dict) and applied:
+            result["applied"] = applied
+        return result
 
     def toggle_overlay(self) -> dict:
         """POST /api/overlay/toggle：运行时显示/隐藏，不动配置。"""
@@ -410,13 +503,28 @@ class Service:
             if "corner" in values:
                 controller.set_corner(settings["corner"])
                 applied["corner"] = settings["corner"]
-            if any(key in values for key in ("width", "height", "margin")):
-                set_geometry = getattr(controller, "set_geometry", None)
-                if callable(set_geometry):
-                    set_geometry(settings["width"], settings["height"],
-                                 settings["margin"])
+            if any(key in values for key in ("x", "y", "width", "height", "margin")):
+                # 优先用 set_bounds：布局模式下拖动/缩放更新的是「位置+尺寸」，
+                # 只调 set_geometry 会把用户拖出来的坐标丢掉（T3 提供 set_bounds）。
+                # x/y 为 null 时仍走 corner+margin 那套，不把 None 塞给窗口。
+                set_bounds = getattr(controller, "set_bounds", None)
+                has_position = (settings["x"] is not None
+                                and settings["y"] is not None)
+                if callable(set_bounds) and has_position and any(
+                        key in values for key in ("x", "y", "width", "height")):
+                    set_bounds(settings["x"], settings["y"],
+                               settings["width"], settings["height"])
                     applied["geometry"] = [settings["width"], settings["height"],
                                            settings["margin"]]
+                    applied["bounds"] = [settings["x"], settings["y"],
+                                         settings["width"], settings["height"]]
+                else:
+                    set_geometry = getattr(controller, "set_geometry", None)
+                    if callable(set_geometry):
+                        set_geometry(settings["width"], settings["height"],
+                                     settings["margin"])
+                        applied["geometry"] = [settings["width"], settings["height"],
+                                               settings["margin"]]
         except Exception as exc:  # noqa: BLE001
             applied["error"] = f"{type(exc).__name__}: {exc}"
         return applied
@@ -491,10 +599,41 @@ class Service:
         return self.asst.ai.client.test_connection()
 
     def ai_tts_test(self) -> dict:
-        """测试语音合成：合成一句短话，报耗时。"""
-        if self.asst.ai is None or self.asst.ai.tts is None:
-            return {"ok": False, "error": "语音合成未配置"}
-        return self.asst.ai.tts.test()
+        """测试语音合成：合成一句，**真的播出来**，报告是否出声。
+
+        v1.5.2 修的问题：原先只调 `TtsEngine.test()`，它合成成功就返回
+        `ok: true`，但音频字节被丢掉了——界面显示「合成成功」，扬声器一声
+        没有。测试按钮必须验证整条链路，所以这里自己拿音频交给
+        `assistant.player.play_bytes()`。
+        """
+        pipeline = getattr(self.asst, "ai", None)
+        tts = getattr(pipeline, "tts", None) if pipeline is not None else None
+        if tts is None:
+            return {"ok": False, "played": False, "error": "语音合成未配置"}
+        started = time.monotonic()
+        try:
+            audio = tts.synth("测试语音合成。")
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "played": False, "bytes": 0,
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                    "error": str(exc)[:200]}
+        latency_ms = round((time.monotonic() - started) * 1000)
+        player = getattr(self.asst, "player", None)
+        if player is None:
+            return {"ok": False, "played": False, "bytes": len(audio or b""),
+                    "latency_ms": latency_ms, "error": "播放器不可用"}
+        if not getattr(player, "enabled", True):
+            return {"ok": False, "played": False, "bytes": len(audio or b""),
+                    "latency_ms": latency_ms,
+                    "error": "播放已关闭（playback.enabled=false），听不到测试音"}
+        try:
+            player.play_bytes(audio)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "played": False, "bytes": len(audio or b""),
+                    "latency_ms": latency_ms,
+                    "error": f"播放失败：{exc}"[:200]}
+        return {"ok": True, "played": True, "bytes": len(audio or b""),
+                "latency_ms": latency_ms}
 
     def ai_review(self) -> dict:
         """赛后复盘：列出本场走过模型的问答。"""
@@ -625,11 +764,15 @@ class Service:
                    "ai": {"enabled", "mode", "provider", "base_url", "model",
                           "api_key", "timeout_s", "max_tokens",
                           "max_answer_chars", "rate_limit_per_min",
-                          "analysis_key", "whitelist_intents", "tts", "ack"},
+                          "analysis_key", "whitelist_intents", "tts", "ack",
+                          # v1.5.2：全局停止本地播报 + 思考模式
+                          "global_stop_local", "thinking_mode"},
                    "ptt": {"vk", "binding", "min_hold_ms", "max_hold_s", "poll_ms", "input_device"},
                    "playback": {"enabled", "volume", "device", "ducking"},
                    "overlay": {"enabled", "opacity", "corner", "margin",
-                               "width", "height", "toggle_key"},
+                               "width", "height", "toggle_key",
+                               # v1.5.2：绝对坐标（布局模式写回）
+                               "x", "y"},
                    "voice_pack": {"cooldown"}}
         if not isinstance(patch, dict):
             raise ValueError("patch 必须为配置对象")
@@ -855,6 +998,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "hint": "窗口即将关闭"})
             elif u.path == "/api/overlay/toggle":
                 self._json(self.service.toggle_overlay())
+            elif u.path == "/api/overlay/layout_mode":
+                if "enabled" not in body:
+                    raise ValueError("缺少 enabled")
+                self._json(self.service.set_overlay_layout_mode(
+                    bool(body.get("enabled"))))
+            elif u.path == "/api/overlay/layout":
+                self._json(self.service.set_overlay_layout(body))
             elif u.path == "/api/config":
                 self._json(self.service.configure(body.get("patch") or {}))
             elif u.path == "/api/ai/test":

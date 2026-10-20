@@ -167,6 +167,13 @@ ai:
   #       full 规则答不上就交给模型（最智能、最慢、最贵）
   #       all 全部交给模型：规则层答得上也走 AI，只有安全/操作两类留在本地
   mode: "whitelist"
+  # 全局停止本地播报（v1.5.2）：仅 all 档生效。开启后规则答案、本地拒绝、
+  # 看屏幕提示、AI 失败回退都不出声，只把文字写进 Overlay 与历史；
+  # 改车确认与等待语音保留（那是操作反馈/等待提示，不是问答）。
+  global_stop_local: true
+  # 思考模式（v1.5.2）：off=关闭（默认，最快）；low=不关闭但用最低思考强度。
+  # 只对识别得出的服务商（DeepSeek / OpenAI）下发请求参数，其他服务商不加参数。
+  thinking_mode: "off"
   provider: "custom"          # 仅用于界面预填
   base_url: ""
   model: ""
@@ -218,3 +225,7 @@ overlay:
   width: 720                 # 480–1200
   height: 200                # 140–400
   toggle_key: "Ctrl+Alt+O"
+  # 绝对坐标（v1.5.2）：null = 按 corner+margin 排；填整数则直接用该位置
+  # （布局模式拖动后会自动写回这里）。
+  x: null
+  y: null

@@ -50,6 +50,16 @@ _PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 # 分秒：1 分 23 秒 / 1 分 23.5 秒
 _MIN_SEC_RE = re.compile(r"(\d+)\s*分\s*(\d+(?:\.\d+)?)\s*秒")
 
+# data_used 的字段别名：模型会按游戏/日志里的习惯叫法引用同一份数据。
+# v1.5.2 实测：回答内容完全正确，只因为 data_used 写了 `lap_time` 就整条被丢。
+# 别名先解析成白名单字段、再走原来的两道检查（白名单 + 本次上下文存在），
+# 数值校验不受影响，真未知字段照样拒绝。
+FIELD_ALIASES: dict[str, str] = {
+    "lap_time": "lap_last",        # iRacing 圈速日志的叫法
+    "last_lap": "lap_last",        # 与对手层的 last_lap 同义
+    "best_lap": "lap_best",        # 与对手层的 best_lap 同义
+}
+
 
 def _flatten(node, prefix: str = "") -> list[tuple[str, float]]:
     """把上下文展平成 (字段路径, 数值) 列表，供比对。"""
@@ -109,16 +119,39 @@ def check_data(data_used: list[str], ctx: dict) -> str | None:
     for name in data_used:
         if not isinstance(name, str):
             return f"data_used 含非字符串项：{name!r}"
-        if _path_exists(ctx, name):
-            # 点路径：末段字段名仍须在白名单内，且整条路径在 ctx 里真实存在
-            leaf = name.rsplit(".", 1)[-1]
-            if leaf not in ALLOWED_FIELDS:
-                return f"data_used 引用了白名单外的字段：{name}"
+        error = _field_error(name, ctx, present)
+        if error is None:
             continue
-        if name not in ALLOWED_FIELDS:
+        # 别名容错：只在原名不成立时才尝试，且解析后仍要走完整两道检查。
+        # 未知字段（没有别名 / 别名也不在本次上下文）继续按原名拒绝。
+        alias = _alias_target(name)
+        if alias is not None and _field_error(alias, ctx, present) is None:
+            continue
+        return error
+    return None
+
+
+def _alias_target(name: str) -> str | None:
+    """把别名换成白名单字段名，保留点路径前缀（now.lap_time → now.lap_last）。"""
+    if "." in name:
+        head, leaf = name.rsplit(".", 1)
+        target = FIELD_ALIASES.get(leaf)
+        return f"{head}.{target}" if target else None
+    return FIELD_ALIASES.get(name)
+
+
+def _field_error(name: str, ctx: dict, present: set[str]) -> str | None:
+    """单个 data_used 项的两道检查；返回 None 表示这条引用成立。"""
+    if _path_exists(ctx, name):
+        # 点路径：末段字段名仍须在白名单内，且整条路径在 ctx 里真实存在
+        leaf = name.rsplit(".", 1)[-1]
+        if leaf not in ALLOWED_FIELDS:
             return f"data_used 引用了白名单外的字段：{name}"
-        if name not in present:
-            return f"data_used 引用了本次上下文里没有的字段：{name}"
+        return None
+    if name not in ALLOWED_FIELDS:
+        return f"data_used 引用了白名单外的字段：{name}"
+    if name not in present:
+        return f"data_used 引用了本次上下文里没有的字段：{name}"
     return None
 
 

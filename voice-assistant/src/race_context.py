@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+from .numbers import seconds_to_spoken
 from .query_class import QueryKind
 from .telemetry import Snapshot
 
@@ -25,9 +26,14 @@ ALLOWED_FIELDS: frozenset[str] = frozenset({
     "on_pit_road", "pits_open", "incident_count",
     "water_temp", "oil_temp", "rpm", "gear",
     "tyre_cold_pressure", "tyre_history", "track_rubber",
+    # now 里的口语化时长（v1.5.2）：与数值字段成对出现，模型优先引用它们，
+    # 避免把 83.5 秒念成「八十三点五秒」。数值字段保留，不改旧行为。
+    "lap_last_spoken", "lap_best_spoken", "time_remain_spoken",
     # derived（预计算值，模型只准引用这些）
     "laps_spare", "delta_to_best", "avg3", "avg5", "trend_per_lap",
     "tyre_temp_delta", "position_change", "gap_ahead_change", "gap_behind_change",
+    # derived 里的口语化时长（v1.5.2）
+    "avg3_spoken", "avg5_spoken",
     # session
     "total_laps", "flags",
     # opponents 层内的叶子字段（模型会用点路径引用，如 opponents.leader.best_lap）
@@ -92,6 +98,15 @@ def _now_layer(s: Snapshot) -> dict:
         "track_rubber": s.track_rubber,
     }
     out = {k: v for k, v in raw.items() if v is not None}
+    # 口语化时长（v1.5.2）：跟数值字段成对给。模型直接引用这里的字符串，
+    # 就不会把 83.5 秒念成「八十三点五秒」；answer_checks 的数值闸靠原字段
+    # 照旧核对，这里的字符串只是给播报用。
+    for key in ("lap_last", "lap_best"):
+        if out.get(key) is not None:
+            out[f"{key}_spoken"] = seconds_to_spoken(out[key], 1)
+    if out.get("time_remain_s") is not None:
+        # 剩余时间是整秒计时（time_remain_s 已按 0 位小数取整），口播不带小数
+        out["time_remain_spoken"] = seconds_to_spoken(out["time_remain_s"], 0)
     if s.tyre_history:
         out["tyre_history"] = {
             w: {k: _round(v, 3) if k != "session_time" else v
@@ -154,6 +169,11 @@ def _derived_layer(s: Snapshot, laps: list[dict]) -> dict:
         b = _numeric(laps[-2].get("gap_behind_s"))
         if a is not None and b is not None:
             out["gap_behind_change"] = round(a - b, 2)
+
+    # 口语化时长（v1.5.2）：avg3 / avg5 同样给出「X分Y.Z秒」，避免模型自己换算。
+    for key in ("avg3", "avg5"):
+        if out.get(key) is not None:
+            out[f"{key}_spoken"] = seconds_to_spoken(out[key], 1)
 
     return out
 

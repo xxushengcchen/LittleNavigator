@@ -9,6 +9,13 @@ v1.5.1 起多开一个游戏内 Overlay 窗口：无边框、置顶、点击穿�
 用原生 Win32 扩展样式（WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
 WS_EX_TOOLWINDOW）实现；Ctrl+Alt+O 全局热键临时显示/隐藏，不写配置。
 
+v1.5.2 起 Overlay 可自由摆放：
+- overlay.x / overlay.y 给绝对坐标；为 null 时仍按 corner + margin 排；
+- Ctrl+Alt+L 切换「布局模式」：临时去掉 WS_EX_TRANSPARENT（不再点击穿透），
+  页面显示虚线窗口框、拖动区与右下缩放手柄，拖动/缩放通过
+  POST /api/overlay/layout 落到 controller.set_bounds()，退出后恢复穿透；
+- 卡片改为贴合内容（fit-content），窗口其余区域全透明。
+
 关窗 = 退出：会顺手停掉 PTT 监听、关掉 HTTP 服务。
 """
 from __future__ import annotations
@@ -42,7 +49,15 @@ SM_CYSCREEN = 1
 VK_CONTROL = 0x11
 VK_MENU = 0x12           # Alt
 VK_O = 0x4F
+VK_L = 0x4C
 OVERLAY_HOTKEY_POLL_S = 0.06
+# 运行时几何钳制：与 app/static/overlay.js 的 MIN/MAX 保持一致，
+# 也避免拖动/缩放把窗口推到不可见区域后用户找不回来。
+OVERLAY_MIN_WIDTH = 240
+OVERLAY_MAX_WIDTH = 4096
+OVERLAY_MIN_HEIGHT = 80
+OVERLAY_MAX_HEIGHT = 2160
+OVERLAY_COORD_LIMIT = 10000
 # 关闭状态时把 Overlay 停在屏幕外：透明窗口在页面导航时会被 pywebview
 # 主动 Show() 一次（透明窗口的已知行为），停在屏幕外可避免启动闪一下。
 OVERLAY_OFFSCREEN = -20000
@@ -144,6 +159,43 @@ def corner_position(settings: dict, screen_w: int, screen_h: int) -> tuple[int, 
     return max(0, x), max(0, y)
 
 
+def _int_or_none(value) -> int | None:
+    """配置里的坐标允许 null；bool 是 int 子类，必须单独挡掉。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(round(value))
+    return None
+
+
+def resolve_position(settings: dict, screen_w: int, screen_h: int) -> tuple[int, int]:
+    """按轴决定位置：overlay.x/y 有值就用绝对坐标，为 null 才用 corner+margin。
+
+    两个轴独立判断——只设 x 不设 y 时，y 仍跟随 corner，方便用户把窗口
+    卡在屏幕中间某一侧。T2 的 src/config.py 校验保证这里是 int 或 null。
+    """
+    corner_x, corner_y = corner_position(settings, screen_w, screen_h)
+    abs_x = _int_or_none(settings.get("x"))
+    abs_y = _int_or_none(settings.get("y"))
+    x = corner_x if abs_x is None else abs_x
+    y = corner_y if abs_y is None else abs_y
+    return x, y
+
+
+def overlay_bounds_settings(cfg: dict | None, settings: dict) -> dict:
+    """把 overlay.x/y 合并进设置字典，不依赖 server.overlay_settings 是否已升级。
+
+    T2 在 app/server.py 里扩展 overlay_settings() 之前，这里直接从原始配置读，
+    保证「config 写了 x/y 就能生效」；升级之后两条路子读到的值一致。
+    """
+    out = dict(settings)
+    raw = cfg.get("overlay") if isinstance(cfg, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    for key in ("x", "y"):
+        out[key] = _int_or_none(raw.get(key))
+    return out
+
+
 # ====================================================================== Overlay
 class OverlayController:
     """游戏内 Overlay 的窗口控制：原生样式、透明度、定位、显示/隐藏。
@@ -159,6 +211,7 @@ class OverlayController:
         self._visible = False
         self._hwnd = None
         self._style_applied = False
+        self._layout_mode = False
         self._lock = threading.RLock()
         self._log = log
 
@@ -170,6 +223,11 @@ class OverlayController:
     @property
     def settings(self) -> dict:
         return dict(self._settings)
+
+    @property
+    def layout_mode(self) -> bool:
+        """布局模式：True = 不穿透、页面显示拖动区与缩放手柄。"""
+        return bool(self._layout_mode)
 
     # ---- 原生句柄 / DPI / 屏幕 ------------------------------------
     def hwnd(self):
@@ -224,7 +282,8 @@ class OverlayController:
         return width, height
 
     def target_position(self, settings: dict | None = None) -> tuple[int, int]:
-        return corner_position(settings or self._settings, *self.screen_metrics())
+        # overlay.x/y 绝对坐标优先；为 null 时才落到 corner + margin。
+        return resolve_position(settings or self._settings, *self.screen_metrics())
 
     # ---- 原生操作 -------------------------------------------------
     def _set_pos(self, x: int, y: int, width: int | None = None,
@@ -256,17 +315,26 @@ class OverlayController:
         return max(0, min(255, int(round(float(self._settings["opacity"]) * 255))))
 
     def apply_native_style(self) -> dict:
-        """点击穿透 + 不抢焦点 + 不占任务栏 + 分层透明度。"""
+        """点击穿透 + 不抢焦点 + 不占任务栏 + 分层透明度。
+
+        布局模式下临时去掉 WS_EX_TRANSPARENT（否则鼠标事件全被穿透，
+        拖动区/缩放手柄收不到点击），Layered / NoActivate / ToolWindow 保持。
+        """
         hwnd = self.hwnd()
         if not hwnd:
             raise RuntimeError("Overlay 窗口尚未创建原生句柄")
         api = _api()
         user32 = api["user32"]
         style_before = int(user32.GetWindowLongW(hwnd, GWL_EXSTYLE))
-        wanted = (WS_EX_LAYERED | WS_EX_TRANSPARENT
-                  | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+        wanted = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+        if not self._layout_mode:
+            wanted |= WS_EX_TRANSPARENT
         # 清掉 APPWINDOW：否则 TOOLWINDOW 和它同时存在时仍可能出现在任务栏。
-        style_after = (style_before | wanted) & ~WS_EX_APPWINDOW
+        # 布局模式下还要把 TRANSPARENT 清掉，鼠标才能落到本窗口。
+        clear = WS_EX_APPWINDOW
+        if self._layout_mode:
+            clear |= WS_EX_TRANSPARENT
+        style_after = (style_before | wanted) & ~clear
         if style_after != style_before:
             user32.SetWindowLongW(hwnd, GWL_EXSTYLE, int(style_after))
         self._apply_alpha()
@@ -329,6 +397,89 @@ class OverlayController:
         self._set_pos(x, y, self._settings["width"], self._settings["height"])
         return x, y
 
+    # ---- 布局模式 / 运行时几何 ------------------------------------
+    def _push_layout_mode(self, enabled: bool) -> bool:
+        """把布局模式告诉页面（显示/隐藏拖动区、虚线框、缩放手柄）。
+
+        页面可能还没加载完或窗口已销毁，失败只记一行日志，不能拖垮热键线程。
+        """
+        script = "window.ovSetLayoutMode && window.ovSetLayoutMode(%s)" % (
+            "true" if enabled else "false")
+        try:
+            self.window.evaluate_js(script)
+            return True
+        except Exception as exc:  # noqa: BLE001 - 页面未就绪/窗口已销毁
+            self._log(f"[overlay] 布局模式页面同步失败："
+                      f"{type(exc).__name__}: {exc}")
+            return False
+
+    def set_layout_mode(self, enabled: bool) -> bool:
+        """进入/退出布局模式：切换 WS_EX_TRANSPARENT 并通知页面。"""
+        with self._lock:
+            enabled = bool(enabled)
+            self._layout_mode = enabled
+            if self.hwnd():
+                try:
+                    self.apply_native_style()
+                except Exception as exc:  # noqa: BLE001
+                    self._log("[overlay] 布局模式原生样式切换失败："
+                              f"{type(exc).__name__}: {exc}")
+            self._push_layout_mode(enabled)
+            return enabled
+
+    @staticmethod
+    def _clamp_int(value, lo: int, hi: int, fallback) -> int:
+        number = _int_or_none(value)
+        if number is None:
+            return int(fallback)
+        return max(lo, min(hi, number))
+
+    @staticmethod
+    def _clamp_coord(value, fallback=None):
+        """坐标：None 保留 None（= 按 corner 排），数字钳到 ±OVERLAY_COORD_LIMIT。"""
+        number = _int_or_none(value)
+        if number is None:
+            return fallback
+        return max(-OVERLAY_COORD_LIMIT, min(OVERLAY_COORD_LIMIT, number))
+
+    def _bounds_payload(self) -> dict:
+        x, y = self.target_position()
+        return {"ok": True, "x": int(x), "y": int(y),
+                "width": int(self._settings["width"]),
+                "height": int(self._settings["height"])}
+
+    def set_bounds(self, x=None, y=None, width=None, height=None) -> dict:
+        """运行时移动/缩放（POST /api/overlay/layout 落到这里）。
+
+        x/y 的语义与配置完全一致（T2 保存后会把权威值原样传进来）：
+        - 数字 = 绝对坐标，之后不再跟 corner 走；
+        - None = 该轴没有绝对坐标，回到 corner + margin。
+        width/height 传 None 表示保持当前值。返回实际采用的几何，
+        调用方（server）直接回给界面就能让拖动后不回弹。
+        """
+        with self._lock:
+            settings = self._settings
+            if width is not None:
+                settings["width"] = self._clamp_int(
+                    width, OVERLAY_MIN_WIDTH, OVERLAY_MAX_WIDTH,
+                    settings["width"])
+            if height is not None:
+                settings["height"] = self._clamp_int(
+                    height, OVERLAY_MIN_HEIGHT, OVERLAY_MAX_HEIGHT,
+                    settings["height"])
+            settings["x"] = self._clamp_coord(x)
+            settings["y"] = self._clamp_coord(y)
+            self._resize_and_position()
+            return self._bounds_payload()
+
+    def set_position(self, x=None, y=None) -> dict:
+        """只设位置；传 None 的轴回到 corner + margin 规则（界面「重置位置」用）。"""
+        with self._lock:
+            self._settings["x"] = self._clamp_coord(x)
+            self._settings["y"] = self._clamp_coord(y)
+            self._resize_and_position()
+            return self._bounds_payload()
+
     # ---- 显示 / 隐藏 ----------------------------------------------
     def _window_call(self, name: str, *args):
         method = getattr(self.window, name, None)
@@ -351,6 +502,9 @@ class OverlayController:
 
     def hide(self) -> bool:
         with self._lock:
+            if self._layout_mode:
+                # 隐藏时退回点击穿透：下一次显示不应意外变成「能点但不能动」。
+                self.set_layout_mode(False)
             try:
                 self._window_call("hide")
             finally:
@@ -405,7 +559,14 @@ class OverlayController:
 # ------------------------------------------------------------------ 热键
 def start_overlay_hotkey(controller: OverlayController,
                          stop_event: threading.Event, log=print):
-    """后台线程轮询 Ctrl+Alt+O，切换 Overlay 显示/隐藏（不写配置）。"""
+    """后台线程轮询两个组合键（不写配置）：
+
+    - Ctrl+Alt+O：显示/隐藏 Overlay；
+    - Ctrl+Alt+L：进入/退出布局模式（关掉点击穿透，允许鼠标拖动/缩放）。
+
+    用 GetAsyncKeyState 而不是 RegisterHotKey：不动系统全局热键表，
+    也不会因为 iRacing 独占输入而注册失败。
+    """
     if sys.platform != "win32":
         return None
     api = _api()
@@ -415,19 +576,32 @@ def start_overlay_hotkey(controller: OverlayController,
         return bool(user32.GetAsyncKeyState(vk) & 0x8000)
 
     def loop() -> None:
-        was_down = False
+        toggle_down = False
+        layout_down = False
         while not stop_event.is_set():
             try:
-                pressed = down(VK_CONTROL) and down(VK_MENU) and down(VK_O)
-                if pressed and not was_down:
+                ctrl_alt = down(VK_CONTROL) and down(VK_MENU)
+                toggle_pressed = ctrl_alt and down(VK_O)
+                layout_pressed = ctrl_alt and down(VK_L)
+                if toggle_pressed and not toggle_down:
                     try:
                         visible = controller.toggle()
                         log(f"[overlay] 热键切换：{'显示' if visible else '隐藏'}")
                     except Exception as exc:  # noqa: BLE001
                         log(f"[overlay] 热键切换失败：{type(exc).__name__}: {exc}")
-                was_down = pressed
+                if layout_pressed and not layout_down:
+                    try:
+                        enabled = controller.set_layout_mode(
+                            not controller.layout_mode)
+                        state = "开（可拖动/缩放，Ctrl+Alt+L 退出）" if enabled \
+                            else "关（已恢复点击穿透）"
+                        log(f"[overlay] 布局模式：{state}")
+                    except Exception as exc:  # noqa: BLE001
+                        log("[overlay] 布局模式切换失败："
+                            f"{type(exc).__name__}: {exc}")
+                toggle_down, layout_down = toggle_pressed, layout_pressed
             except Exception:  # noqa: BLE001
-                was_down = False
+                toggle_down = layout_down = False
             stop_event.wait(OVERLAY_HOTKEY_POLL_S)
 
     thread = threading.Thread(target=loop, daemon=True, name="overlay-hotkey")
@@ -436,8 +610,77 @@ def start_overlay_hotkey(controller: OverlayController,
 
 
 # ------------------------------------------------------------- 冒烟测试
+_OVERLAY_PAGE_FACTS_JS = r"""
+(function () {
+  var card = document.getElementById("ov-card");
+  var tag = document.querySelector(".ov-tag");
+  var heard = document.getElementById("ov-heard-text");
+  var answer = document.getElementById("ov-answer");
+  var frame = document.getElementById("ov-frame");
+  var handle = document.getElementById("ov-resize");
+  function style(el, prop) { return el ? getComputedStyle(el)[prop] : null; }
+  var rect = card ? card.getBoundingClientRect() : null;
+  return JSON.stringify({
+    title: document.title,
+    viewport: [window.innerWidth, window.innerHeight],
+    card: rect ? {width: rect.width, height: rect.height,
+                  left: rect.left, top: rect.top} : null,
+    card_width_style: style(card, "width"),
+    card_max_width: style(card, "maxWidth"),
+    card_background: style(card, "backgroundColor"),
+    card_font: style(card, "fontSize"),
+    tag_font: style(tag, "fontSize"),
+    heard_font: style(heard, "fontSize"),
+    answer_font: style(answer, "fontSize"),
+    answer_color: style(answer, "color"),
+    html_background: getComputedStyle(document.documentElement).backgroundColor,
+    body_background: style(document.body, "backgroundColor"),
+    body_layout: (document.body && document.body.dataset.layout) || "",
+    layout_hook: typeof window.ovSetLayoutMode,
+    frame_hidden: frame ? frame.hidden : null,
+    handle_hidden: handle ? handle.hidden : null
+  });
+})()
+"""
+
+
+def _overlay_page_facts(window) -> dict:
+    """读页面侧事实（DOM / 计算样式）。JS 不可用时抛异常，由调用方记限制。"""
+    data = window.evaluate_js(_OVERLAY_PAGE_FACTS_JS)
+    if isinstance(data, str):
+        data = json.loads(data)
+    return data if isinstance(data, dict) else {}
+
+
+def _css_alpha(color) -> float:
+    """把 getComputedStyle 的颜色值解析成 alpha（0–1）；解析不了按 0。"""
+    if not color:
+        return 0.0
+    text = str(color).strip().lower()
+    if text in ("transparent", "rgba(0, 0, 0, 0)"):
+        return 0.0
+    if text.startswith("rgb("):
+        return 1.0
+    if text.startswith("rgba("):
+        try:
+            return float(text[text.index("(") + 1:text.rindex(")")].split(",")[3])
+        except (ValueError, IndexError):
+            return 0.0
+    return 0.0
+
+
+def _transparent_color(color) -> bool:
+    return str(color or "").strip().lower() in ("transparent",
+                                                "rgba(0, 0, 0, 0)")
+
+
 def overlay_smoke_facts(controller: OverlayController, window) -> dict:
-    """创建窗口并应用样式后的机械断言（--overlay-smoke-test 用）。"""
+    """创建窗口并应用样式后的机械断言（--overlay-smoke-test 用）。
+
+    v1.5.1 的断言（点击穿透 / 置顶定位 / 透明度）全部保留；v1.5.2 追加：
+    布局模式标志（原生样式位 + 页面拖动区）、卡片贴合内容与窗口全透明、
+    字号统一 14px、运行时几何 set_bounds 生效且最小尺寸有钳制。
+    """
     record: dict = {"ok": False, "checks": {}, "facts": {}, "limitations": []}
     try:
         applied = controller.apply_native_style()
@@ -450,17 +693,30 @@ def overlay_smoke_facts(controller: OverlayController, window) -> dict:
     scale = controller._dpi_scale()
     expected_x, expected_y = controller.target_position()
     tolerance = max(6, int(round(scale * 16)))
-    title = None
-    body_background = None
+    original = dict(controller.settings)
+    page: dict = {}
     try:
-        title = window.evaluate_js("document.title")
-        body_background = window.evaluate_js(
-            "getComputedStyle(document.body).backgroundColor")
+        page = _overlay_page_facts(window)
     except Exception as exc:  # noqa: BLE001
         record["limitations"].append(
             f"页面 JS 校验不可用：{type(exc).__name__}: {exc}")
 
-    checks = {
+    def rect_matches(observed: dict, target: dict) -> bool:
+        want = [int(round(target[key] * scale))
+                for key in ("x", "y", "width", "height")]
+        got = [observed["left"], observed["top"],
+               observed["width"], observed["height"]]
+        return all(abs(a - b) <= tolerance for a, b in zip(got, want))
+
+    viewport = page.get("viewport") or [0, 0]
+    card = page.get("card") or {}
+    viewport_w = float(viewport[0] or 0)
+    viewport_h = float(viewport[1] or 0)
+    card_w = float(card.get("width") or 0)
+    card_h = float(card.get("height") or 0)
+
+    checks: dict[str, bool] = {
+        # ---- v1.5.1 旧断言 ----
         "ex_style_layered": bool(style & WS_EX_LAYERED),
         "ex_style_transparent": bool(style & WS_EX_TRANSPARENT),
         "ex_style_noactivate": bool(style & WS_EX_NOACTIVATE),
@@ -471,10 +727,117 @@ def overlay_smoke_facts(controller: OverlayController, window) -> dict:
             abs(rect["left"] - int(round(expected_x * scale))) <= tolerance
             and abs(rect["top"] - int(round(expected_y * scale))) <= tolerance),
         "ex_style_appwindow_cleared": not bool(style & WS_EX_APPWINDOW),
-        "renderer_loaded": title == "游戏内 Overlay",
-        "page_background_transparent": body_background in ("rgba(0, 0, 0, 0)",
-                                                           "transparent"),
+        "renderer_loaded": page.get("title") == "游戏内 Overlay",
+        # ---- v1.5.2 透明 / 贴合内容 / 统一字号 ----
+        "page_background_transparent": (
+            _transparent_color(page.get("body_background"))
+            and _transparent_color(page.get("html_background"))),
+        "card_paints_own_background": (
+            _css_alpha(page.get("card_background")) > 0.2),
+        "card_hugs_content": (
+            card_w > 0 and viewport_w > 0 and card_w < viewport_w - 16),
+        "card_inside_window": (
+            card_w > 0 and card_h > 0 and viewport_h > 0
+            and float(card.get("left") or 0) >= 0
+            and float(card.get("top") or 0) >= 0
+            and card_w <= viewport_w and card_h <= viewport_h),
+        "font_size_uniform_14px": all(
+            page.get(key) == "14px" for key in
+            ("card_font", "tag_font", "heard_font", "answer_font")),
+        # ---- v1.5.2 布局模式 ----
+        "layout_hook_present": page.get("layout_hook") == "function",
+        "layout_mode_default_off": (
+            not controller.layout_mode
+            and page.get("body_layout") == "false"
+            and page.get("handle_hidden") is True
+            and page.get("frame_hidden") is True),
     }
+
+    layout_facts: dict = {}
+    try:
+        controller.set_layout_mode(True)
+        style_on = controller.read_extended_style()
+        page_on = _overlay_page_facts(window)
+        checks["layout_mode_enter_clears_transparent"] = (
+            controller.layout_mode and not (style_on & WS_EX_TRANSPARENT))
+        checks["layout_mode_enter_keeps_native_bits"] = (
+            (style_on & (WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+            == (WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+        checks["layout_mode_enter_shows_handles"] = (
+            page_on.get("body_layout") == "true"
+            and page_on.get("handle_hidden") is False
+            and page_on.get("frame_hidden") is False)
+        controller.set_layout_mode(False)
+        style_off = controller.read_extended_style()
+        page_off = _overlay_page_facts(window)
+        checks["layout_mode_exit_restores_click_through"] = (
+            not controller.layout_mode and bool(style_off & WS_EX_TRANSPARENT))
+        checks["layout_mode_exit_hides_handles"] = (
+            page_off.get("body_layout") == "false"
+            and page_off.get("handle_hidden") is True)
+        layout_facts = {
+            "ex_style_layout_on": f"0x{style_on:08X}",
+            "ex_style_layout_off": f"0x{style_off:08X}",
+            "page_layout_on": page_on.get("body_layout"),
+            "page_layout_off": page_off.get("body_layout"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        record["limitations"].append(
+            f"布局模式断言失败：{type(exc).__name__}: {exc}")
+        for key in ("layout_mode_enter_clears_transparent",
+                    "layout_mode_enter_keeps_native_bits",
+                    "layout_mode_enter_shows_handles",
+                    "layout_mode_exit_restores_click_through",
+                    "layout_mode_exit_hides_handles"):
+            checks.setdefault(key, False)
+
+    geometry_facts: dict = {}
+    try:
+        target = {"x": 120, "y": 140, "width": 520, "height": 180}
+        bounds = controller.set_bounds(**target)
+        rect_geo = controller.read_window_rect()
+        checks["geometry_applied"] = (
+            bounds.get("x") == target["x"] and bounds.get("y") == target["y"]
+            and bounds.get("width") == target["width"]
+            and bounds.get("height") == target["height"]
+            and rect_matches(rect_geo, target))
+        page_geo = _overlay_page_facts(window)
+        vp_geo = page_geo.get("viewport") or [0, 0]
+        card_geo = page_geo.get("card") or {}
+        checks["card_stays_fit_after_resize"] = (
+            float(card_geo.get("width") or 0) > 0
+            and float(card_geo.get("width") or 0) < float(vp_geo[0] or 0) - 16)
+        clamped = controller.set_bounds(width=10, height=10)
+        checks["geometry_clamps_min_size"] = (
+            clamped.get("width") == OVERLAY_MIN_WIDTH
+            and clamped.get("height") == OVERLAY_MIN_HEIGHT)
+        geometry_facts = {
+            "bounds_target": target,
+            "bounds_applied": bounds,
+            "window_rect_after_bounds": rect_geo,
+            "bounds_clamped": clamped,
+        }
+    except Exception as exc:  # noqa: BLE001
+        record["limitations"].append(
+            f"几何断言失败：{type(exc).__name__}: {exc}")
+        checks.setdefault("geometry_applied", False)
+
+    # 还原：settings 与窗口几何都要回到冒烟前的状态，冒烟不能留下副作用。
+    try:
+        with controller._lock:
+            controller._settings.clear()
+            controller._settings.update(original)
+            controller._resize_and_position()
+        restored = controller.read_window_rect()
+        checks["geometry_restored"] = (
+            abs(restored["left"] - int(round(expected_x * scale))) <= tolerance
+            and abs(restored["top"] - int(round(expected_y * scale)))
+            <= tolerance)
+    except Exception as exc:  # noqa: BLE001
+        checks["geometry_restored"] = False
+        record["limitations"].append(
+            f"几何还原失败：{type(exc).__name__}: {exc}")
+
     record["checks"] = checks
     record["facts"] = {
         "hwnd": applied["hwnd"],
@@ -487,16 +850,31 @@ def overlay_smoke_facts(controller: OverlayController, window) -> dict:
         "opacity": controller.settings["opacity"],
         "corner": controller.settings["corner"],
         "margin": controller.settings["margin"],
+        "position_source": ("absolute" if controller.settings.get("x") is not None
+                            or controller.settings.get("y") is not None
+                            else "corner"),
         "window_rect": rect,
         "expected_position_logical": [expected_x, expected_y],
         "dpi_scale": scale,
-        "document_title": title,
-        "body_background": body_background,
+        "document_title": page.get("title"),
+        "body_background": page.get("body_background"),
+        "html_background": page.get("html_background"),
+        "card_background": page.get("card_background"),
+        "card_rect": page.get("card"),
+        "card_width_style": page.get("card_width_style"),
+        "card_max_width": page.get("card_max_width"),
+        "font_sizes": {key: page.get(key) for key in
+                       ("tag_font", "heard_font", "answer_font")},
+        "layout_mode": controller.layout_mode,
+        **layout_facts,
+        **geometry_facts,
     }
     if scale != 1.0:
         record["limitations"].append(
             f"DPI 缩放 {scale:.2f}，窗口矩形按物理像素与逻辑位置换算比对")
     record["limitations"].append("多屏环境只按主屏（GetSystemMetrics）定位")
+    record["limitations"].append(
+        "布局模式的真实鼠标拖动需人工验收；这里只验证原生样式位与页面拖动区可见")
     record["ok"] = all(checks.values())
     return record
 
@@ -545,6 +923,26 @@ def _free_port(preferred: int) -> int:
     raise RuntimeError("找不到可用端口")
 
 
+def _port_free(port: int) -> bool:
+    """端口是否能被我们独占监听。
+
+    Windows 上 Server/ThreadingHTTPServer 默认 allow_reuse_address=True，
+    SO_REUSEADDR 允许绑定一个已被其它进程监听的端口（两边都 Listen），
+    新连接落到谁手里不确定。用户开着正式版时跑 --overlay-smoke-test，
+    Overlay 窗口就可能连到那个进程，读到旧页面/旧静态资源。
+    所以先用一个不带 REUSE 的普通 socket 探测一下。
+    """
+    if not isinstance(port, int) or port <= 0 or port > 65535:
+        return False
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        try:
+            probe.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -581,8 +979,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"播放后端 = {svc.asst.player.backend}")
 
     Handler.service = svc
+    # 端口被正式版/其它实例占着时不要“抢”过来：Windows 的 SO_REUSEADDR 会让
+    # bind 假成功，导致 Overlay 窗口连到别的进程上。探测失败就用系统端口。
+    bind_port = args.port
+    if not _port_free(bind_port):
+        print(f"⚠ 端口 {bind_port} 已被其他进程占用，改用系统分配的端口"
+              "（不会接管已经运行的实例）")
+        bind_port = 0
     try:
-        httpd = Server(("127.0.0.1", args.port), Handler)
+        httpd = Server(("127.0.0.1", bind_port), Handler)
     except OSError as exc:
         if getattr(exc, "winerror", None) != 10048 and exc.errno not in (98, 10048):
             svc.close()
@@ -610,14 +1015,18 @@ def main(argv: list[str] | None = None) -> int:
             httpd.server_close()
         return 0
 
-    override = overlay_settings(svc.cfg)
+    override = overlay_bounds_settings(svc.cfg, overlay_settings(svc.cfg))
     overlay_enabled = bool(override["enabled"]) or args.overlay_smoke_test
-    # 热键/PTT 冲突提示：默认 PTT 是右 Ctrl，和 Ctrl+Alt+O 的 Ctrl 同一物理键。
+    # overlay.x/y 有值就用绝对坐标（T2 在 src/config.py 校验）；否则 corner+margin。
+    if override.get("x") is not None or override.get("y") is not None:
+        print(f"[overlay] 使用配置里的绝对坐标：x={override.get('x')} "
+              f"y={override.get('y')}")
+    # 热键/PTT 冲突提示：默认 PTT 是右 Ctrl，和两个 Overlay 热键的 Ctrl 同一物理键。
     ptt_vk = svc.cfg.get("ptt", {}).get("vk", 0xA3)
     try:
         if int(ptt_vk) in (0x11, 0x12, 0xA2, 0xA3):
-            print("提示：Overlay 热键 Ctrl+Alt+O 与 PTT 键位（Ctrl）可能短暂冲突；"
-                  "短按通常低于误触阈值，不会被当成提问。")
+            print("提示：Overlay 热键 Ctrl+Alt+O / Ctrl+Alt+L 与 PTT 键位（Ctrl）"
+                  "可能短暂冲突；短按通常低于误触阈值，不会被当成提问。")
     except (TypeError, ValueError):
         pass
 
@@ -675,7 +1084,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     start_overlay_hotkey(overlay_controller, stop_hotkey, log=print)
                     print(f"[overlay] 热键 {override['toggle_key']} 已监听"
-                          "（显示/隐藏，不写配置）")
+                          "（显示/隐藏，不写配置）；"
+                          "Ctrl+Alt+L = 布局模式（拖动/缩放）")
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠ Overlay 热键监听失败：{type(exc).__name__}: {exc}")
         if args.overlay_smoke_test:
@@ -716,7 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
             print("⚠ 读不到主屏尺寸，Overlay 交由窗口管理器定位")
             initial_x = initial_y = None
         elif overlay_enabled:
-            initial_x, initial_y = corner_position(override, *screen)
+            initial_x, initial_y = resolve_position(override, *screen)
         else:
             # 关闭时先停在屏幕外：透明窗口导航时会被 pywebview 主动 Show 一次。
             initial_x = initial_y = OVERLAY_OFFSCREEN

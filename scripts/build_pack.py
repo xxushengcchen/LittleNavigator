@@ -59,12 +59,17 @@ def decode_mono(src: pathlib.Path, rate: int, tempo: float = 1.0):
 
 
 def trim_and_normalize(x, rate: int, *, rel_db: float, pad_ms: float,
-                       target_rms_db: float, do_trim: bool, do_norm: bool):
+                       target_rms_db: float, do_trim: bool, do_norm: bool,
+                       fade_out_ms: float = 0.0):
     """裁掉頭尾靜音並做響度正規化。
     為何不用 ffmpeg 的 silenceremove：它的判定與保留量難以精準控制，
     實測會過度裁切（把單音節字砍掉一半）。這裡改用包絡偵測，
     以「峰值往下 rel_db」為語音門檻，再明確保留 pad_ms 的餘量，
     確保拼接時不會切斷字頭字尾、也不會留下聽得出來的空隙。
+
+    fade_out_ms > 0 時最後再疊一段線性淡出（見 _fade_out）。預設 0＝不做，
+    主包行為完全不變；等待語音（assistant-extra）用 60ms 餘量 + 20ms 淡出，
+    解決「很短的一句被裁切點硬切、聽起來像被截斷」的問題。
     """
     import numpy as np
 
@@ -89,7 +94,29 @@ def trim_and_normalize(x, rate: int, *, rel_db: float, pad_ms: float,
         gain_db = min(target_rms_db - rms_db, -1.5 - peak_db)
         x = np.clip(f * (10 ** (gain_db / 20.0)), -1.0, 1.0)
         x = (x * 32767.0).astype(np.int16)
+
+    if fade_out_ms > 0 and len(x):
+        x = _fade_out(x, rate, fade_out_ms)
     return x
+
+
+def _fade_out(x, rate: int, fade_out_ms: float):
+    """把最後 fade_out_ms 毫秒線性壓到 0，讓裁切點平滑歸零。
+
+    為什麼需要：等待語音是很短的獨立句子，裁剪點緊貼語音尾部；
+    直接切斷會留下一個電平突變，聽感就是「話被咔掉了」。
+    60ms 餘量把衰減尾巴留下來，20ms 淡出再把最後一段壓到零——
+    即使門檻以下的尾音已經被裁掉，波形末端也是連續的。
+    """
+    import numpy as np
+
+    n = int(rate * fade_out_ms / 1000)
+    if n <= 0 or len(x) < 2:
+        return x
+    n = min(n, len(x))
+    y = x.astype(np.float32) / 32768.0
+    y[-n:] *= np.linspace(1.0, 0.0, n, dtype=np.float32)
+    return np.clip(np.round(y * 32767.0), -32768, 32767).astype(np.int16)
 
 
 def write_wav(dst: pathlib.Path, x, rate: int, sample_fmt: str) -> None:
@@ -139,6 +166,41 @@ def needs_speedup(item: dict) -> bool:
     return False
 
 
+def _content_paths(root: pathlib.Path, patterns: list[str]) -> list[pathlib.Path]:
+    """與 content_loader 相同的檔案解析規則（支援萬用字元），用來讀 meta。"""
+    paths: list[pathlib.Path] = []
+    for pat in patterns:
+        hits = sorted(root.glob(pat)) if any(c in pat for c in "*?[") else [root / pat]
+        paths.extend(h for h in hits if h.exists())
+    return paths
+
+
+def _content_tail_opts(root: pathlib.Path, patterns: list[str]):
+    """從文案 meta 讀尾部參數，回傳 (trim_pad_ms, fade_out_ms)，缺省為 None。
+
+    為什麼放在文案裡：同一個 build_pack.py 也要建主包，主包文案沒有這兩個 key
+    就完全走舊行為；assistant-extra 在 meta 裡宣告 60ms 餘量 + 20ms 淡出，
+    Lead 按 HANDOFF 的既有命令重跑合成就自動生效，不必記住額外旗標。
+    """
+    pad = fade = None
+    for path in _content_paths(root, patterns):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8")).get("meta") or {}
+        except (OSError, ValueError):
+            continue
+        for key in ("trim_pad_ms", "fade_out_ms"):
+            value = meta.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if value < 0:
+                continue
+            if key == "trim_pad_ms" and pad is None:
+                pad = float(value)
+            elif key == "fade_out_ms" and fade is None:
+                fade = float(value)
+    return pad, fade
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -155,8 +217,12 @@ def main() -> int:
     p.add_argument("--no-normalize", action="store_true", help="關閉響度正規化")
     p.add_argument("--trim-rel-db", type=float, default=35.0,
                    help="語音門檻＝峰值往下幾 dB，預設 35")
-    p.add_argument("--trim-pad", type=float, default=20.0,
-                   help="裁切後保留的頭尾餘量（毫秒），預設 20")
+    p.add_argument("--trim-pad", type=float, default=None,
+                   help="裁切後保留的頭尾餘量（毫秒）；省略時讀文案 meta.trim_pad_ms，"
+                        "再省略才用 20")
+    p.add_argument("--fade-out-ms", type=float, default=None,
+                   help="結尾淡出時長（毫秒）；省略時讀文案 meta.fade_out_ms，"
+                        "再省略才用 0（不做淡出）")
     p.add_argument("--target-rms", type=float, default=-17.0,
                    help="目標 RMS 音量（dBFS），預設 -17")
     p.add_argument("--frag-tempo", type=float, default=1.25,
@@ -174,6 +240,17 @@ def main() -> int:
     items, _ = load_items(root, patterns=args.content)
     print(f"載入 {len(items)} 個 msgId")
 
+    # 尾部參數優先序：命令列 > 文案 meta > 預設。預設值維持舊行為（20ms / 不做淡出），
+    # assistant-extra 在 content/assistant-extra.json 的 meta 裡宣告 60ms / 20ms。
+    meta_pad, meta_fade = _content_tail_opts(root, args.content)
+    trim_pad = args.trim_pad if args.trim_pad is not None else (
+        meta_pad if meta_pad is not None else 20.0)
+    fade_out_ms = args.fade_out_ms if args.fade_out_ms is not None else (
+        meta_fade if meta_fade is not None else 0.0)
+    if trim_pad < 0 or fade_out_ms < 0:
+        p.error("--trim-pad / --fade-out-ms 不能為負")
+    print(f"  尾部處理：裁切餘量 {trim_pad:.0f}ms，淡出 {fade_out_ms:.0f}ms")
+
     audio_dir = root / args.audio
     pack_dir = root / args.out / args.name
     pack_dir.mkdir(parents=True, exist_ok=True)
@@ -185,10 +262,11 @@ def main() -> int:
 
     wav_opts = {
         "rel_db": args.trim_rel_db,
-        "pad_ms": args.trim_pad,
+        "pad_ms": trim_pad,
         "target_rms_db": args.target_rms,
         "do_trim": not args.no_trim,
         "do_norm": not args.no_normalize,
+        "fade_out_ms": fade_out_ms,
     }
 
     for item in items:

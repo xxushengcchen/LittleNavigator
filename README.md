@@ -48,7 +48,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 
 - **少找一次黑框。** 查询油量、剩余时间、名次、圈速和前后车信息，再用中文语音回答。
 - **日常问答留在本机。** 本地语音识别、规则匹配与录音播报，不要求接入大模型或语音服务。
-- **需要时再扩展。** AI 分析、AI 回答的语音合成（TTS）、游戏内 Overlay、语音进站控制分别启用，默认关闭。
+- **需要时再扩展。** AI 分析、全局交给 AI、思考模式、AI 回答的语音合成（TTS）、游戏内 Overlay、语音进站控制分别启用，默认关闭。
 - **语音包也能独立使用。** 只安装中文 Spotter，由 iRacing 触发原有播报，不必启动助手。
 
 ## 三步开始使用
@@ -57,9 +57,9 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 2. 打开软件，在「语音输入」选择麦克风，采集键盘或方向盘上的说话键，然后开启监听。
 3. 进入 iRacing，按住绑定键说「还剩多少时间」，松开后等待回答。
 
-当前正式版为 [v1.5.1](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.5.1)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.5.1.md)。
+当前正式版为 [v1.5.2](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.5.2)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.5.2.md)。
 
-> **从 v1.5.0 升级。** 如果你之前下载的是 v1.5.0 首版安装包（装完「知识库」页读不到数据），直接安装 v1.5.1 覆盖即可；用户配置会保留。
+> **从 v1.5.1 升级。** 直接安装 v1.5.2 覆盖即可；用户配置会保留。
 
 <details>
 <summary>不开游戏试用、升级与安装问题</summary>
@@ -186,7 +186,7 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 
 - 入门：[安装与启动](docs/guide/user-guide.md#1-安装与启动) · [首次设置](docs/guide/user-guide.md#2-首次设置能说话能听见) · [十一个页面](docs/guide/user-guide.md#3-十一个页面) · [怎么问](docs/guide/user-guide.md#4-怎么问) · [排错](docs/guide/user-guide.md#9-排错)
 - 专题：[API 接入](docs/guide/api-setup.md) · [能力与限制](docs/guide/capabilities-and-limits.md) · [Spotter 安装](docs/guide/spotter-install.md) · [知识库说明](docs/knowledge-base.md)
-- 版本：[v1.5.1 更新说明](docs/releases/v1.5.1.md) · [旧版界面指南](docs/guide/v1.4.5-interface.md)
+- 版本：[v1.5.2 更新说明](docs/releases/v1.5.2.md) · [旧版界面指南](docs/guide/v1.4.5-interface.md)
 
 ## 开发和参与
 

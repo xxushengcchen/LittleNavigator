@@ -8,6 +8,7 @@
       1005 → N1000 + MID_ZERO + N5     一千零五
   · 小数逐位读：1.8 → N1 + POINT + N8   一点八
   · 圈速按分秒拆：83.512 → 一分二十三秒五 → N1 + MINUTE + 23 + SECOND + N5
+  · AI 回答的时长口播用 seconds_to_spoken()：「83.5」→「1分23.5秒」
 
 所有生成的 msgId 都要在语音包里真实存在，selftest() 会逐条校验。
 """
@@ -83,6 +84,45 @@ def laptime_to_msgids(seconds: float, digits: int = 1) -> list[str]:
 def gap_to_msgids(seconds: float, digits: int = 1) -> list[str]:
     """车距：1.8 秒 → 一点八秒（用 SPCC_GAPIS / _PT2 包在外面）。"""
     return decimal_to_msgids(seconds, digits)
+
+
+# ---------------------------------------------------------------- 口语化时长
+
+
+def seconds_to_spoken(seconds: float, digits: int = 1) -> str:
+    """把秒数转成中文口语时长，供 AI 回答后处理与 prompt 里的 `_spoken` 字段用。
+
+    为什么需要它：模型会把 lap_last=83.512 直接念成「八十三点五秒」，
+    而车手习惯听「一分二十三点五秒」。这里只做格式化，不做数值四舍五入之外的
+    任何推断——调用方给的数字必须原样出现在结果里，否则数字闸会对不上。
+
+    规则（与契约一致）：
+      · >=60s → 「X分Y.Z秒」    83.512 → 1分23.5秒；750 → 12分30.0秒（digits=1）
+      · <60s  → 「Y.Z秒」        45.2 → 45.2秒；0 → 0.0秒
+      · digits=0 时省略小数：83.512 → 1分24秒（秒级进位的正规化按四舍五入）
+      · 非法值（非数字 / bool / NaN / inf / 负数 / digits 越界）抛 ValueError
+
+    秒部分四舍五入到 60.0 时向分进位（59.96 → 1分0.0秒），不会出现「0分60.0秒」。
+    """
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        raise ValueError("时长必须是数字")
+    value = float(seconds)
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("时长必须有限且非负")
+    if isinstance(digits, bool) or not isinstance(digits, int) or not 0 <= digits <= 3:
+        raise ValueError("时长精度必须是 0–3 位的整数")
+
+    scale = 10 ** digits
+    ticks = int(round(value * scale))           # 以 10^-digits 秒为单位取整
+    whole, frac = divmod(ticks, scale)
+    if whole < 60:
+        if digits == 0:
+            return f"{whole}秒"
+        return f"{whole}.{frac:0{digits}d}秒"
+    minutes, secs = divmod(whole, 60)
+    if digits == 0:
+        return f"{minutes}分{secs}秒"
+    return f"{minutes}分{secs}.{frac:0{digits}d}秒"
 
 
 # ---------------------------------------------------------------- 自检

@@ -1,8 +1,13 @@
 {
   "name": "little-navigator-ui-qa",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "description": "Development-only browser regression checks; the desktop app has no Node runtime dependency.",
-  "scripts": {"test:ui": "node voice-assistant/tools/test_ui.cjs", "assets:readme": "node assets/readme/build_logos.cjs"},
-  "devDependencies": {"playwright": "1.62.1"}
+  "scripts": {
+    "test:ui": "node voice-assistant/tools/test_ui.cjs",
+    "assets:readme": "node assets/readme/build_logos.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
 }
