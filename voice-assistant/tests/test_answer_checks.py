@@ -154,6 +154,99 @@ class DataAliasTests(unittest.TestCase):
         self.assertEqual(checks["number"], "fail")
 
 
+SEGMENT_CTX = {
+    "now": {"lap_last": 83.512, "laps_remain": 5},
+    "derived": {"delta_to_best": 0.4},
+    "segments": {
+        "count": 4,
+        "player": [{"lap": 12, "lap_time": 102.5,
+                    "lap_time_spoken": "1分42.5秒",
+                    "sectors": [25.4, 24.9, 30.0, 22.2]}],
+        "target": {"role": "ahead", "car_idx": 2,
+                   "sectors": [25.0, 24.7, 30.4, 21.9],
+                   "deltas": [-0.4, -0.2, 0.4, -0.3],
+                   "deltas_spoken": ["慢0.40秒", "慢0.20秒",
+                                     "快0.40秒", "慢0.30秒"]},
+        "best_loss": [{"sector": 1, "delta_s": 0.4,
+                       "delta_spoken": "0.40秒"},
+                      {"sector": 4, "delta_s": 0.3,
+                       "delta_spoken": "0.30秒"}],
+    },
+}
+
+
+class SegmentDataTests(unittest.TestCase):
+    """data_used 里的 segments.* 必须真实存在于本次上下文。"""
+
+    def test_layer_and_paths_pass(self):
+        for name in ("segments", "segments.target", "segments.target.deltas",
+                     "segments.target.deltas_spoken", "segments.player",
+                     "segments.best_loss", "segments.count"):
+            with self.subTest(name=name):
+                self.assertIsNone(check_data([name], SEGMENT_CTX), name)
+
+    def test_unknown_segments_field_is_rejected(self):
+        self.assertIsNotNone(check_data(["segments.target.tyre"], SEGMENT_CTX))
+
+    def test_segments_absent_from_context_is_rejected(self):
+        self.assertIsNotNone(check_data(["segments"], CTX))
+
+    def test_segment_leaf_names_are_whitelisted(self):
+        from src.race_context import ALLOWED_FIELDS
+        for name in ("segments", "count", "player", "target", "best_loss",
+                     "role", "car_idx", "sectors", "deltas", "deltas_spoken",
+                     "sector", "delta_s", "delta_spoken", "lap_time",
+                     "lap_time_spoken"):
+            with self.subTest(name=name):
+                self.assertIn(name, ALLOWED_FIELDS)
+
+
+class SegmentNumberTests(unittest.TestCase):
+    """answer_checks.check_numbers：段号按 count、段差按 |delta| + 方向。"""
+
+    def check(self, answer, question="哪一段慢"):
+        return check_numbers(answer, SEGMENT_CTX, question)
+
+    def test_sector_ordinal_within_count_passes(self):
+        self.assertIsNone(self.check("第 3 段比较慢"))
+
+    def test_sector_ordinal_out_of_range_fails(self):
+        self.assertIsNotNone(self.check("第 7 段比较慢"))
+
+    def test_sector_ordinal_without_segments_layer_fails(self):
+        self.assertIsNotNone(check_numbers("第 3 段比较慢", CTX, "哪一段慢"))
+
+    def test_sector_loss_matches_signed_delta(self):
+        # 第 2 段 delta = -0.2 → 我慢 0.20 秒
+        self.assertIsNone(self.check("第 2 段比前车慢 0.20 秒"))
+
+    def test_sector_loss_invented_value_fails(self):
+        self.assertIsNotNone(self.check("第 2 段比前车慢 0.35 秒"))
+
+    def test_sector_loss_wrong_direction_fails(self):
+        # 该段实际落后，却说「快」
+        self.assertIsNotNone(self.check("第 2 段比前车快 0.20 秒"))
+
+    def test_sector_loss_direction_matches_positive_delta(self):
+        # 第 3 段 delta = +0.4 → 对方更慢，我快了 0.4 秒
+        self.assertIsNone(self.check("第 3 段比前车快 0.40 秒"))
+
+    def test_sector_time_still_uses_normal_number_gate(self):
+        self.assertIsNone(self.check("第 2 段用了 24.9 秒"))
+        self.assertIsNotNone(self.check("第 2 段用了 24.1 秒"))
+
+    def test_chinese_sector_ordinal_is_allowed(self):
+        # 「第二段」的「二」是序数，不是可播报数值；段号仍按 count 校验。
+        self.assertIsNone(self.check("第二段比前车慢 0.20 秒"))
+        self.assertIsNotNone(self.check("第八段比前车慢 0.20 秒"))
+
+    def test_chinese_numerals_outside_segments_still_rejected(self):
+        self.assertIsNotNone(self.check("第 2 段比前车慢了零点二秒"))
+
+    def test_other_numbers_are_still_checked(self):
+        self.assertIsNotNone(self.check("第 2 段比前车慢 0.20 秒，还剩 9 圈"))
+
+
 if __name__ == '__main__':
     unittest.main()
 

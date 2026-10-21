@@ -62,7 +62,7 @@ async function check(name, fn) {
       const intents = await page.locator('[data-kb-graph] .kb-node[aria-label*="条短语"]').count();
       const fields = await page.locator('[data-kb-graph] .kb-node[aria-label*="个字段"]').count();
       const outs = await page.locator('[data-kb-graph] .kb-node[aria-label*="播报方式"]').count();
-      assert.equal(intents, 14);
+      assert.equal(intents, 15);
       assert.equal(fields, 8);
       assert.equal(outs, 3);
       assert.ok(await page.locator('[data-kb-graph] .kb-edge').count() > 20);
@@ -81,7 +81,7 @@ async function check(name, fn) {
       await page.locator('#kb-mode-matrix').click();
       await page.locator('#kb-view-matrix').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#kb-view-graph').isHidden(), true);
-      assert.equal(await page.locator('[data-kb-matrix] tr').count(), 15); // header + 14
+      assert.equal(await page.locator('[data-kb-matrix] tr').count(), 16); // header + 15
       assert.equal(await page.locator('.kb-matrix th.kb-rowhead button.on').count(), 1);
       assert.match(await page.locator('#kb-detail h2').innerText(), /轮胎/);
     });
@@ -100,7 +100,7 @@ async function check(name, fn) {
       assert.equal(rows, 1);
       await page.locator('#kb-filter').fill('');
       await page.waitForTimeout(120);
-      assert.equal(await page.locator('.kb-matrix tbody tr').count(), 14);
+      assert.equal(await page.locator('.kb-matrix tbody tr').count(), 15);
     });
 
     await check('Escape clears the selection', async () => {
@@ -112,7 +112,7 @@ async function check(name, fn) {
     await check('graph mode still works after switching back', async () => {
       await page.locator('#kb-mode-graph').click();
       await page.locator('#kb-view-graph').waitFor({ state: 'visible' });
-      assert.equal(await page.locator('[data-kb-graph] .kb-node[aria-label*="条短语"]').count(), 14);
+      assert.equal(await page.locator('[data-kb-graph] .kb-node[aria-label*="条短语"]').count(), 15);
     });
 
     await check('conflicts are reported as rule problems, separate from data gaps', async () => {

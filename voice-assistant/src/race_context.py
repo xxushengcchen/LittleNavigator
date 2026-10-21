@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from .numbers import seconds_to_spoken
 from .query_class import QueryKind
 from .telemetry import Snapshot
@@ -39,19 +41,41 @@ ALLOWED_FIELDS: frozenset[str] = frozenset({
     # opponents 层内的叶子字段（模型会用点路径引用，如 opponents.leader.best_lap）
     "ahead", "behind", "leader",
     "pos", "gap_s", "last_lap", "best_lap", "completed",
+    # segments 层（v1.5.4）：分段对比。count/player 是层内结构；
+    # target 里的 role/car_idx/sectors/deltas/deltas_spoken 逐段给出；
+    # best_loss 是已经算好的「最亏的 2 段」，模型只准引用这些数。
+    "segments", "count", "player", "target", "best_loss",
+    "role", "car_idx", "sectors", "deltas", "deltas_spoken",
+    "sector", "delta_s", "delta_spoken", "lap_time", "lap_time_spoken",
 })
 
 # 层名本身也可以被引用：模型说「用了 recent_laps」是诚实的——我们确实给了它。
 # 但数据闸会再核对「这一层在本次上下文里是否真的存在」（见 answer_checks），
 # 所以把层名放进白名单不等于放行不存在的数据。
 LAYER_NAMES: frozenset[str] = frozenset({
-    "now", "derived", "session", "recent_laps", "opponents",
+    "now", "derived", "session", "recent_laps", "opponents", "segments",
 })
 
 ALLOWED_FIELDS = ALLOWED_FIELDS | LAYER_NAMES
 
 # 问题里出现这些词时才附加对手层——它约 120 token，不该为「还有多少油」付这笔钱。
 _OPPONENT_HINTS = ("前车", "后车", "前面", "后面", "对手", "第一名", "领跑", "差距", "名次")
+
+# 问题里出现这些词时才附加 segments 层（v1.5.4）。分段数据比对手层更贵
+# （逐段数组），只在真的问到「哪一段/丢时间」时才给。
+_SECTOR_HINTS = ("哪一段", "哪段", "分段", "赛段", "区间", "丢时间", "丢了时间",
+                 "哪里慢", "哪边慢", "慢在哪", "损失时间", "sector",
+                 "各段", "每段", "第几段")
+# 「第 2 段用了多少」这类点名某一段的问法：数字形式不在子串表里，单独判。
+_SECTOR_REF_RE = re.compile(r"第\s*(?:[0-9]+|[一二三四五六七八九十]+)\s*段")
+
+
+def _asks_sectors(question: str) -> bool:
+    q = question or ""
+    return any(h in q for h in _SECTOR_HINTS) or bool(_SECTOR_REF_RE.search(q))
+
+# 分段的「损失」判定阈值：小于这个数的段差当噪声，不报。
+LOSS_EPS = 0.05
 
 
 def _numeric(value) -> float | None:
@@ -228,10 +252,230 @@ def _opponents_layer(s: Snapshot) -> dict:
     return out
 
 
-def build(snap: Snapshot, laps: list[dict], kind: QueryKind, question: str) -> dict:
+def sector_role(question: str) -> str | None:
+    """问句里点名的是前车还是后车；没点名返回 None（由调用方决定默认）。"""
+    q = question or ""
+    if any(w in q for w in ("后车", "后面", "后方", "后車", "後車")):
+        return "behind"
+    if any(w in q for w in ("前车", "前面", "前方", "前車")):
+        return "ahead"
+    return None
+
+
+def sectors_for(snap: Snapshot, segments=None) -> object | None:
+    """取分段模型：显式传入优先，其次取快照上的只读引用。
+
+    第二优先是给 AI 上下文用的——`ai_pipeline` 只把 Snapshot 传进来，
+    引擎在 `Assistant.snapshot()` 里把 `DerivedTracker.segments` 挂上去，
+    这里就不必改 AI 流水线的调用签名。
+    """
+    if segments is not None:
+        return segments
+    return getattr(snap, "segments", None)
+
+
+class SectorView:
+    """`SegmentModel`（T1 的 src/segments.py）的只读适配层。
+
+    为什么要有这一层：分段模型还没落地时（或版本对不上、方法缺失），
+    调用方需要「明确知道没有数据」并拒答，而不是 AttributeError 把整条
+    回答链路带崩。所有取值失败一律返回 None/空，`available` 为假。
+    """
+
+    def __init__(self, model=None):
+        self._model = model
+        try:
+            count = int(getattr(model, "num_sectors", 0) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        self.num_sectors = max(0, count)
+
+    @property
+    def available(self) -> bool:
+        return self._model is not None and self.num_sectors >= 2
+
+    # ---- 内部取值 -------------------------------------------------
+    def _call(self, name: str, *args):
+        fn = getattr(self._model, name, None)
+        if not callable(fn):
+            return None
+        try:
+            return fn(*args)
+        except Exception:      # noqa: BLE001 - 分段是展示层，坏数据不该炸链路
+            return None
+
+    def _series(self, raw) -> list[float | None]:
+        """把 T1 返回的 tuple 收敛成长度 = num_sectors 的列表。"""
+        if not isinstance(raw, (list, tuple)):
+            return [None] * self.num_sectors
+        values = [_round(v, 2) for v in list(raw)[:self.num_sectors]]
+        values += [None] * (self.num_sectors - len(values))
+        return values
+
+    def _sectors_of(self, lap) -> list[float | None] | None:
+        raw = getattr(lap, "sectors", None)
+        if not isinstance(raw, (list, tuple)):
+            return None
+        return self._series(raw)
+
+    def _use_lap(self, lap) -> bool:
+        if getattr(lap, "valid", True) is False:
+            return False
+        if bool(getattr(lap, "in_pit", False)):
+            return False
+        sectors = self._sectors_of(lap)
+        return sectors is not None and any(s is not None for s in sectors)
+
+    def _laps(self, name: str, n: int = 3) -> list:
+        raw = self._call(name, n) or []
+        if not isinstance(raw, (list, tuple)):
+            return []
+        laps = [lap for lap in raw if self._use_lap(lap)]
+        # 统一按圈号升序：「最近」= 末尾。T1 若按「最近在前」返回也能对齐。
+        if laps and all(isinstance(getattr(lap, "lap", None), int) for lap in laps):
+            laps = sorted(laps, key=lambda lap: lap.lap)
+        return laps[-n:]
+
+    # ---- 对外视图（AI 上下文）-------------------------------------
+    def player_laps(self, n: int = 3) -> list[dict]:
+        if not self.available:
+            return []
+        out: list[dict] = []
+        for lap in self._laps("player_recent", n):
+            row: dict = {"lap": getattr(lap, "lap", None),
+                         "sectors": self._sectors_of(lap)}
+            lap_time = _numeric(getattr(lap, "lap_time", None))
+            if lap_time is not None:
+                row["lap_time"] = round(lap_time, 3)
+                row["lap_time_spoken"] = seconds_to_spoken(round(lap_time, 3), 1)
+            out.append({k: v for k, v in row.items() if v is not None})
+        return out
+
+    def target(self, role: str) -> dict | None:
+        """对比车（前车/后车）的逐段数值。没有可识别目标时返回 None。"""
+        if not self.available:
+            return None
+        idx = self._call("target_for", role)
+        if isinstance(idx, bool) or not isinstance(idx, int):
+            return None
+        deltas = self._series(self._call("compare", idx, 3))
+        sectors = self._series(self._call("sector_medians", idx, 3))
+        if all(v is None for v in deltas) and all(v is None for v in sectors):
+            return None
+        return {"role": role, "car_idx": idx, "sectors": sectors,
+                "deltas": deltas,
+                "deltas_spoken": [self._delta_spoken(d) for d in deltas]}
+
+    def pick_target(self, question: str = "") -> dict | None:
+        """按问句点名的方向找对比车；没点名就前车优先、后车兜底。"""
+        role = sector_role(question)
+        if role is not None:
+            return self.target(role)
+        return self.target("ahead") or self.target("behind")
+
+    def gains(self, target: dict | None, limit: int = 2) -> list[dict]:
+        """对比车里「我比它快」的段（delta > 0），按赚得多的排前。"""
+        if not isinstance(target, dict):
+            return []
+        out: list[dict] = []
+        for i, delta in enumerate(target.get("deltas") or []):
+            if delta is None or delta < LOSS_EPS:
+                continue
+            out.append({"sector": i + 1,
+                        "delta_s": round(delta, 2),
+                        "delta_spoken": seconds_to_spoken(round(delta, 2), 2)})
+        out.sort(key=lambda row: row["delta_s"], reverse=True)
+        return out[:max(0, limit)]
+
+    def player_medians(self, n: int = 3) -> list[float | None]:
+        """自己最近 n 个有效圈的逐段中位数（None = 该段没有样本）。"""
+        if not self.available:
+            return [None] * self.num_sectors
+        return self._series(self._call("sector_medians", None, n))
+
+    def best_lap(self) -> dict | None:
+        """最近有效圈里圈速最快的那条（没有圈速就返回 None）。"""
+        laps = [lap for lap in self.player_laps(3)
+                if _numeric(lap.get("lap_time")) is not None]
+        if not laps:
+            return None
+        return min(laps, key=lambda lap: lap["lap_time"])
+
+    def losses_vs_best(self, limit: int = 2) -> list[dict]:
+        """没有可对比的前后车时：最近分段中位数 vs 个人最佳圈的逐段差。
+
+        这是**自己跟自己**的观察值，仍然只陈述「哪段比最佳圈慢多少」，
+        不冒充对手数据、不归因。
+        """
+        best = self.best_lap()
+        if best is None:
+            return []
+        medians = self.player_medians(3)
+        sectors = best.get("sectors") or []
+        out: list[dict] = []
+        for i, median in enumerate(medians):
+            target = sectors[i] if i < len(sectors) else None
+            if median is None or target is None:
+                continue
+            loss = median - target          # 正值 = 比最佳圈慢
+            if loss < LOSS_EPS:
+                continue
+            out.append({"sector": i + 1,
+                        "delta_s": round(loss, 2),
+                        "delta_spoken": seconds_to_spoken(round(loss, 2), 2)})
+        out.sort(key=lambda row: row["delta_s"], reverse=True)
+        return out[:max(0, limit)]
+
+    def losses(self, target: dict | None, limit: int = 2) -> list[dict]:
+        """从对比结果里挑「我比它慢」的段，按亏得多的排前，最多 limit 条。"""
+        if not isinstance(target, dict):
+            return []
+        out: list[dict] = []
+        for i, delta in enumerate(target.get("deltas") or []):
+            if delta is None:
+                continue
+            loss = -delta                       # deltas = target - mine
+            if loss < LOSS_EPS:
+                continue
+            out.append({"sector": i + 1,
+                        "delta_s": round(loss, 2),
+                        "delta_spoken": seconds_to_spoken(round(loss, 2), 2)})
+        out.sort(key=lambda row: row["delta_s"], reverse=True)
+        return out[:max(0, limit)]
+
+    @staticmethod
+    def _delta_spoken(delta: float | None) -> str | None:
+        if delta is None:
+            return None
+        if abs(delta) < 0.005:
+            return "持平"
+        if delta < 0:                            # 对方更快 = 我慢
+            return f"慢{abs(delta):.2f}秒"
+        return f"快{abs(delta):.2f}秒"
+
+    def layer(self, question: str = "") -> dict | None:
+        """组装 AI 上下文的 segments 层；没有有效分段数据时返回 None。"""
+        if not self.available:
+            return None
+        player = self.player_laps(3)
+        if not player:
+            return None
+        layer: dict = {"count": self.num_sectors, "player": player}
+        target = self.pick_target(question)
+        if target is not None:
+            layer["target"] = target
+            best = self.losses(target)
+            if best:
+                layer["best_loss"] = best
+        return layer
+
+
+def build(snap: Snapshot, laps: list[dict], kind: QueryKind, question: str,
+          segments=None) -> dict:
     """按问题类型组装上下文。
 
-    简单问题只给 now + derived（约 300 token）；分析型再带最近 5 圈。
+    简单问题只给 now + derived（约 300 token）；分析型再带最近 5 圈；
+    问到分段/丢时间时才附加 segments 层（v1.5.4）。
     """
     ctx: dict = {
         "now": _now_layer(snap),
@@ -247,6 +491,11 @@ def build(snap: Snapshot, laps: list[dict], kind: QueryKind, question: str) -> d
         opp = _opponents_layer(snap)
         if opp:
             ctx["opponents"] = opp
+
+    if _asks_sectors(q):
+        seg = SectorView(sectors_for(snap, segments)).layer(q)
+        if seg:
+            ctx["segments"] = seg
 
     return ctx
 
@@ -277,6 +526,17 @@ def trim(ctx: dict, max_tokens: int) -> dict:
         out["recent_laps"].pop(0)
     if not out.get("recent_laps"):
         out.pop("recent_laps", None)
+    if estimate_tokens(out) <= max_tokens:
+        return out
+
+    # 1b) 分段层：先只留最近一圈（逐段数组很贵），再整层丢掉。
+    seg = out.get("segments")
+    if isinstance(seg, dict) and estimate_tokens(out) > max_tokens:
+        player = seg.get("player") or []
+        if len(player) > 1:
+            seg["player"] = player[-1:]
+    if "segments" in out and estimate_tokens(out) > max_tokens:
+        out.pop("segments", None)
     if estimate_tokens(out) <= max_tokens:
         return out
 

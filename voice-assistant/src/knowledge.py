@@ -46,6 +46,8 @@ def _library_path() -> Path:
 INTENT_LABELS: dict[str, str] = {
     "query_fuel": "燃油",
     "query_laptime": "圈速",
+    # v1.5.4：只报 iRacing 官方赛段（SplitTimeInfo）的分段用时差，不报弯道。
+    "query_sector_loss": "赛段损失",
     "query_laps": "比赛进度",
     "query_position": "名次",
     "query_gap": "前后车",
@@ -78,6 +80,9 @@ EXTRA_INTENT_FIELDS: dict[str, tuple[str, ...]] = {
     "query_speed": ("car",),
     "query_car_settings": ("set",),
     "query_opponent": ("pos", "lap"),
+    # 赛段计时来自 60Hz CarIdxLapDistPct 过段插值（src/segments.py），
+    # 与圈速、前后车共用「圈速与进度」「对手与位置」两组遥测；段数随赛道变化。
+    "query_sector_loss": ("lap", "pos"),
     "query_tyre": ("car", "set"),
 }
 
@@ -161,6 +166,9 @@ def _fields_for(intent: str, spec: dict) -> list[str]:
 OUTPUT_MODES: dict[str, tuple[str, ...]] = {
     "query_fuel": ("整句", "数值", "时间"),
     "query_laptime": ("整句", "数值"),
+    # 赛段回答是「第 N 段 + 比前车慢 + 数字 + 秒」的 atom 拼装：
+    # 固定片段（整句）与逐位数字（数值）混用，两种口径都标出来。
+    "query_sector_loss": ("整句", "数值"),
     "query_laps": ("整句", "数值", "时间"),
     "query_position": ("整句", "数值"),
     "query_gap": ("整句", "数值"),

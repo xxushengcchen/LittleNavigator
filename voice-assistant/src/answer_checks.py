@@ -50,6 +50,38 @@ _PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 # 分秒：1 分 23 秒 / 1 分 23.5 秒
 _MIN_SEC_RE = re.compile(r"(\d+)\s*分\s*(\d+(?:\.\d+)?)\s*秒")
 
+# 分段引用（v1.5.4）：「第 2 段」/「第二段」。段号不是遥测字段值，不能指望
+# 它出现在上下文数字里；改为按 segments.count 校验范围。
+# 中文段号是**序数**（「第二段」的「二」不是可播报数值），单独解析，
+# 不参与后面「中文数字一律拒绝」的规则。
+_SECTOR_REF_RE = re.compile(r"第\s*([0-9]+|[一二三四五六七八九十]+)\s*段")
+
+# 分段差：「第 2 段比前车慢 0.31 秒」「第 4 段落后 0.18 秒」。
+# 必须带方向词才算段差——「第 2 段用时 25.3 秒」是段用时，仍走普通数字闸。
+_SECTOR_DELTA_RE = re.compile(
+    r"第\s*([0-9]+|[一二三四五六七八九十]+)\s*段[^0-9]{0,12}?"
+    r"(慢|快|落后|领先|多|少)[^0-9]{0,6}?"
+    r"(\d+(?:\.\d+)?)\s*秒")
+
+_CN_FOR_SECTOR = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+                  "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def _sector_number(text: str) -> int | None:
+    """解析段号：阿拉伯或中文序数（「十二」=12）。认不出返回 None。"""
+    if text.isdigit():
+        return int(text)
+    if text == "十":
+        return 10
+    if text.startswith("十"):
+        return 10 + _CN_FOR_SECTOR.get(text[1], 0) if len(text) > 1 else 10
+    if "十" in text:
+        head, _, tail = text.partition("十")
+        if head not in _CN_FOR_SECTOR or (tail and tail not in _CN_FOR_SECTOR):
+            return None
+        return _CN_FOR_SECTOR[head] * 10 + (_CN_FOR_SECTOR[tail] if tail else 0)
+    return _CN_FOR_SECTOR.get(text)
+
 # data_used 的字段别名：模型会按游戏/日志里的习惯叫法引用同一份数据。
 # v1.5.2 实测：回答内容完全正确，只因为 data_used 写了 `lap_time` 就整条被丢。
 # 别名先解析成白名单字段、再走原来的两道检查（白名单 + 本次上下文存在），
@@ -207,6 +239,86 @@ def _present_names(ctx: dict) -> set[str]:
     return names
 
 
+def _segment_layer(ctx: dict) -> dict | None:
+    node = ctx.get("segments") if isinstance(ctx, dict) else None
+    return node if isinstance(node, dict) else None
+
+
+def _segment_count(ctx: dict) -> int | None:
+    node = _segment_layer(ctx)
+    if not node:
+        return None
+    count = node.get("count")
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 64:
+        return None
+    return count
+
+
+def _segment_deltas(ctx: dict) -> list[float | None]:
+    """上下文里对比车逐段差的**带符号**列表（target - mine）。"""
+    node = _segment_layer(ctx) or {}
+    target = node.get("target") if isinstance(node.get("target"), dict) else None
+    raw = (target or {}).get("deltas")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[float | None] = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            out.append(None)
+        else:
+            out.append(float(value))
+    return out
+
+
+def _check_segments(text: str, stripped: str, ctx: dict) -> tuple[str | None, str]:
+    """校验分段表述（v1.5.4），返回 (错误, 摘掉分段后的文本)。
+
+    两件事单独裁决，因为它们在上下文里都不是「某个字段的数字」：
+      · 段号：按 segments.count 判范围（第 7 段 / 共 3 段必须拒绝）；
+      · 段差：必须对上对比车该段的 |delta|，方向词还要与符号一致。
+    「第 2 段用时 25.3 秒」不是段差，留给普通数字闸按段用时核对。
+    """
+    if not _SECTOR_REF_RE.search(text):
+        return None, stripped
+    count = _segment_count(ctx)
+    if count is None:
+        return "回答引用了分段数据，但本次上下文没有 segments 层", stripped
+    deltas = _segment_deltas(ctx)
+
+    # 先处理「段差」整段：它的文本里包含「第 N 段」，先摘掉才不会把
+    # 「比前车慢 0.20 秒」里的 0.20 留到普通数字闸去误杀。
+    for match in _SECTOR_DELTA_RE.finditer(text):
+        number = _sector_number(match.group(1))
+        direction, raw = match.group(2), match.group(3)
+        if number is None:
+            return f"分段编号无法识别：{match.group(1)}", stripped
+        if not 1 <= number <= count:
+            return f"分段编号 {number} 超出上下文的分段数 {count}", stripped
+        delta = deltas[number - 1] if number - 1 < len(deltas) else None
+        value = float(raw)
+        if delta is None:
+            return f"第 {number} 段的段差在上下文中没有对应值", stripped
+        if abs(abs(delta) - value) > _tolerance(raw):
+            return f"第 {number} 段 {raw} 秒与上下文段差 {delta:+.2f} 不符", stripped
+        # 方向词不能反着说：慢/落后 = 对方更快（delta < 0），快/领先 = delta > 0。
+        loss = -delta
+        if direction in ("慢", "落后", "多") and loss <= 0:
+            return f"第 {number} 段说「{direction}」但上下文是领先", stripped
+        if direction in ("快", "领先", "少") and loss >= 0:
+            return f"第 {number} 段说「{direction}」但上下文是落后", stripped
+        stripped = stripped.replace(match.group(0), " ")
+
+    for match in _SECTOR_REF_RE.finditer(text):
+        number = _sector_number(match.group(1))
+        if number is None:
+            return f"分段编号无法识别：{match.group(1)}", stripped
+        if not 1 <= number <= count:
+            return f"分段编号 {number} 超出上下文的分段数 {count}", stripped
+        stripped = stripped.replace(match.group(0), " ")
+
+    return None, stripped
+
+
 def check_numbers(answer: str, ctx: dict, question: str) -> str | None:
     """回答里的每个数字都必须能在上下文中找到出处。"""
     text = answer or ""
@@ -216,6 +328,12 @@ def check_numbers(answer: str, ctx: dict, question: str) -> str | None:
     stripped = text
     for span in min_sec_spans:
         stripped = stripped.replace(span, " ")
+
+    # 分段表述单独裁决（段号 / 段差），通过后从 stripped 里摘掉，
+    # 剩下的数字继续走原来的普通规则。
+    segment_error, stripped = _check_segments(text, stripped, ctx)
+    if segment_error:
+        return segment_error
 
     # 中文数字一律拒绝：让它改用阿拉伯数字，比猜「一点八」的含义可靠。
     # 先摘掉量词搭配（「上一圈」的「一」不是数值），再判断剩下的有没有中文数字。

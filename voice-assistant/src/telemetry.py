@@ -13,6 +13,8 @@ from dataclasses import replace
 from dataclasses import dataclass, field
 from typing import Any
 
+from .segments import SegmentModel, normalize_sector_starts
+
 # iRacing SessionFlags 位定义（只挑用得到的）
 FLAG_BITS = {
     "checkered": 0x00000001,
@@ -39,6 +41,10 @@ FLAG_BITS = {
 
 # TrackWetness 枚举 → 文案档位
 WETNESS = {1: "dry", 2: "dry", 3: "damp", 4: "wet", 5: "wet", 6: "wet", 7: "wet"}
+
+# 「缓存里还没有值」的哨兵。不能用 None：session_id 本身可能是 None，
+# 用它当 key 时「未缓存」和「缓存了 None 键」必须能区分。
+_NOT_SET = object()
 
 
 def decode_flags(raw: int) -> list[str]:
@@ -145,6 +151,12 @@ class Snapshot:
     gap_estimated: bool = False
     gap_ahead_idx: int | None = None
     gap_behind_idx: int | None = None
+    # --- v1.5.4 赛段计时 ---
+    # SplitTimeInfo 边界（0..1 升序，含 0.0；空 tuple = 本场没有分段信息）。
+    sector_starts: tuple[float, ...] = ()
+    track_num_turns: int | None = None
+    # CarIdxClass：同组别才能比较分段；-1/缺失表示未知。
+    car_classes: list | None = None
 
     # 状态
     session_flags: int = 0
@@ -202,6 +214,9 @@ class DerivedTracker:
         self.lap_records: list[dict] = []
         self._lap_open: dict | None = None
         self._lap_crossed_pit = False
+        # v1.5.4：分段计时模型。采样线程在 update() 里喂数据；
+        # 对外只读（race_context 通过它取前后车分段对比）。
+        self.segments = SegmentModel()
 
     def reset(self) -> None:
         self._last_lap = self._lap_start_fuel = self._last_fuel = None
@@ -212,6 +227,7 @@ class DerivedTracker:
         self.lap_records.clear()
         self._lap_open = None
         self._lap_crossed_pit = False
+        self.segments.reset()
 
     @property
     def valid_lap(self) -> bool:
@@ -244,6 +260,9 @@ class DerivedTracker:
                     self._tyre_history[wheel]={**values,'session_time':s.session_time}
         s.tyre_history={wheel:dict(values) for wheel,values in self._tyre_history.items()}
         self._derive_gaps(s)
+        # 分段计时要在圈末结算（_close_lap）之前喂：它自己在圈末回绕时结算，
+        # 圈记录才能挂上刚算出来的分段用时。
+        self.segments.update(s)
         if s.fuel_level is not None and self._last_fuel is not None and s.fuel_level > self._last_fuel + 0.05:
             self._valid_lap = False
         if s.on_pit_road:
@@ -324,9 +343,16 @@ class DerivedTracker:
                 "wear": round(cur["wear"], 3) if cur.get("wear") is not None else None,
             }
 
+        # 分段用时：只有分段模型判定有效的那圈才有；无效圈给空 list，
+        # 下游（race_context / 界面）据此知道「这圈不能拿来比」。
+        sector_times = self.segments.sectors_for(opened["lap"])
+        sectors = ([round(value, 3) if value is not None else None
+                    for value in sector_times] if sector_times is not None else [])
+
         self.record_lap({
             "lap": opened["lap"],
             "lap_time": round(s.lap_last, 3) if s.lap_last and s.lap_last > 0 else None,
+            "sectors": sectors,
             "fuel_start": opened["fuel_start"],
             "fuel_used": fuel_used,
             "tyre": tyre,
@@ -396,10 +422,16 @@ class SimTelemetry:
         self._t0 = time.monotonic()
         self._base_lap = overrides.get("lap", 12)
 
-    def _laps_elapsed(self) -> int:
-        if not self.advance:
-            return 0
-        return int((time.monotonic() - self._t0) / self.lap_seconds)
+    def _elapsed_state(self) -> tuple[float, int, float]:
+        """一次取样的三个时间量：(总时长, 已完成圈数, 本圈已过秒数)。
+
+        三个值必须来自**同一个** monotonic 读数：分成三次调用会在
+        圈边界上出现「圈号还是旧的、位置已经回绕」的错位帧，分段模型
+        会把刚跑完的圈当成跳圈丢掉。
+        """
+        seconds = max(0.0, time.monotonic() - self._t0)
+        laps = int(seconds / self.lap_seconds)
+        return seconds, laps, seconds - laps * self.lap_seconds
 
     def read(self) -> Snapshot:
         base = dict(
@@ -420,6 +452,11 @@ class SimTelemetry:
             car_last_laps=[82.1,82.8,83.2,84.3,83.8,84.5,85.0,83.512],
             car_best_laps=[81.9,82.5,83.0,84.0,83.5,84.2,84.8,83.104],
             car_completed_laps=[12,11,11,11,11,11,11,11],
+            # 分段计时：固定 4 段（0 / 25% / 50% / 75%），让模拟模式与单测可跑；
+            # 同组别（class=1）让前后车对比在 --sim 下有数据。
+            sector_starts=(0.0, 0.25, 0.5, 0.75),
+            track_num_turns=20,
+            car_classes=[1, 1, 1, 1, 1, 1, 1, 1],
             gap_ahead_trend=-0.30, gap_behind_trend=-0.60,
             relative_humidity=.62,class_position=3,lap_current=34.2,speed_kph=187.2,
             water_temp=86.0,oil_temp=102.0,engine_warnings=0,pits_open=True,in_pit_stall=False,
@@ -445,19 +482,61 @@ class SimTelemetry:
         # 让派生量有值，便于验证油量分支
         s.fuel_per_lap = 1.42
         s.laps_of_fuel = round(s.fuel_level / s.fuel_per_lap, 1) if s.fuel_level is not None else None
-        # --sim-advance：按经过时间推进圈数，让 --sim 也能产出圈记录。
-        # 不推进时（默认）所有字段与原来完全一致，既有测试断言不受影响。
-        elapsed = self._laps_elapsed()
-        if elapsed:
-            s.lap = (s.lap or 0) + elapsed
-            s.lap_completed = (s.lap_completed or 0) + elapsed
-            # 每圈消耗 1.42 L，最低留 1 L，避免除零
-            if s.fuel_level is not None:
-                s.fuel_level = round(max(1.0, s.fuel_level - 1.42 * elapsed), 2)
-                s.laps_of_fuel = round(s.fuel_level / s.fuel_per_lap, 1)
-            if s.laps_remain is not None:
-                s.laps_remain = max(0, s.laps_remain - elapsed)
+        # --sim-advance：按经过时间推进圈数与圈内位置，让 --sim 也能产出
+        # 圈记录与分段用时。不推进时（默认）所有字段与原来完全一致，
+        # 既有测试断言不受影响。
+        if self.advance:
+            seconds, elapsed, progress_s = self._elapsed_state()
+            self._apply_advance(s, seconds, elapsed, progress_s)
         return s
+
+    def _apply_advance(self, s: Snapshot, seconds: float, elapsed: int,
+                       progress_s: float) -> None:
+        """推进模拟遥测：时间/圈号/油量 + 圈内位置（供分段计时验证）。
+
+        位置和 session_time 都按同一个单调时钟线性推进，线性插值才能
+        精确还原跨段时刻；否则「哪一段慢」测出来的只是采样抖动。
+        """
+        progress = progress_s / self.lap_seconds
+        original = list(s.car_lap_dist or [])
+        s.session_time = seconds
+        s.lap = (s.lap or 0) + elapsed
+        s.lap_completed = (s.lap_completed or 0) + elapsed
+        s.lap_current = round(progress_s, 3)
+        # 玩家车从线后起步（pct=0），跨线时刻正好落在 elapsed 的整数倍上，
+        # 圈号与位置才自洽；否则「位置已回绕、圈号还没变」会触发跳圈过滤，
+        # 模拟模式下永远出不了有效分段。
+        player = s.car_idx if isinstance(s.car_idx, int) else None
+        if original:
+            s.car_lap_dist = [
+                round(progress % 1.0, 4) if index == player
+                else round((pct + progress) % 1.0, 4)
+                for index, pct in enumerate(original)]
+        # 圈速与分段之和必须自洽（Σ 校验），所以模拟圈速就是 lap_seconds。
+        lap_seconds = round(self.lap_seconds, 3)
+        s.lap_last = lap_seconds
+        s.lap_best = lap_seconds
+        if s.car_last_laps:
+            s.car_last_laps = [lap_seconds] * len(s.car_last_laps)
+        if s.car_best_laps:
+            s.car_best_laps = [lap_seconds] * len(s.car_best_laps)
+        if s.car_completed_laps:
+            # 每辆车按自己的圈内偏移跨线：玩家落在整圈边界，其他车按
+            # (偏移 + 进度) 是否过 1 再补一圈。这样前车/后车的圈号与它
+            # 自己的位置一致，分段模型不会把它们当跳圈整圈丢掉。
+            completed = []
+            for index, laps in enumerate(s.car_completed_laps):
+                offset = 0.0 if index == player else (
+                    original[index] if index < len(original) else 0.0)
+                completed.append(laps + elapsed + int(offset + progress))
+            s.car_completed_laps = completed
+        # 每圈消耗 1.42 L，最低留 1 L，避免除零
+        if s.fuel_level is not None:
+            s.fuel_level = round(max(1.0, s.fuel_level - 1.42 * elapsed), 2)
+            if s.fuel_per_lap:
+                s.laps_of_fuel = round(s.fuel_level / s.fuel_per_lap, 1)
+        if s.laps_remain is not None:
+            s.laps_remain = max(0, s.laps_remain - elapsed)
 
 
 class IrsdkTelemetry:
@@ -466,6 +545,10 @@ class IrsdkTelemetry:
     def __init__(self):
         self._ir = None
         self._err: str | None = None
+        # SplitTimeInfo 是 session YAML（不是 60Hz 变量），读一次按 session 缓存。
+        # 用 sentinel 而不是 None 作「未缓存」：session_id 本身可能就是 None。
+        self._sector_key: Any = _NOT_SET
+        self._sector_starts: tuple[float, ...] = ()
         try:
             import irsdk  # type: ignore
             self._ir = irsdk.IRSDK()
@@ -541,10 +624,20 @@ class IrsdkTelemetry:
             car_positions=get('CarIdxPosition'),car_class_positions=get('CarIdxClassPosition'),
             car_last_laps=get('CarIdxLastLapTime'),
             car_best_laps=get('CarIdxBestLapTime'),car_completed_laps=get('CarIdxLapCompleted'),
+            car_classes=get('CarIdxClass'),
         )
         weekend=get('WeekendInfo',{}) or {}
         limit=re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*(kph|km/h|mph)\s*',str(weekend.get('TrackPitSpeedLimit','')),flags=re.I)
         if limit:s.pit_speed_limit_kph=float(limit[1])*(1.609344 if limit[2].lower()=='mph' else 1)
+        turns=weekend.get('TrackNumTurns')
+        if isinstance(turns,int) and not isinstance(turns,bool) and 0<turns<500:
+            s.track_num_turns=turns
+        # 分段边界：读失败静默留空。分段计时是增强能力，不能反过来
+        # 让整帧主遥测（油量/圈速/前后车）一起失败。
+        try:
+            s.sector_starts=self._session_sector_starts(ir,s.session_id)
+        except Exception:      # noqa: BLE001
+            s.sector_starts=()
         driver=get('DriverInfo',{}) or {}
         s.pace_car_indices=[d['CarIdx'] for d in driver.get('Drivers',[])
                             if d.get('CarIsPaceCar') and isinstance(d.get('CarIdx'),int)]
@@ -592,6 +685,33 @@ class IrsdkTelemetry:
                 setattr(s, name, None)
         self._err = None
         return s
+
+    def _session_sector_starts(self, ir, session_key) -> tuple[float, ...]:
+        """读 SplitTimeInfo.Sectors[].SectorStartPct，按 session 缓存。
+
+        为什么按 session 缓存：这是 session YAML（不是 60Hz 变量），
+        每帧都深拷一份没有意义；但换赛道/换场次时边界会变，所以用
+        session_id 当缓存键，键一变就重读。
+
+        读失败（键缺失/旧版 SDK/结构不认识）返回空 tuple 或上一次同
+        session 的缓存，**绝不抛异常**：分段计时是附加能力，不能让一次
+        会话 YAML 解析失败把主遥测拖死。
+        """
+        same_session = self._sector_key == session_key
+        if same_session and self._sector_starts:
+            return self._sector_starts
+        try:
+            starts = normalize_sector_starts(ir["SplitTimeInfo"])
+        except Exception:      # noqa: BLE001
+            # 同一 session 里偶发读失败可以继续用已缓存的边界；
+            # 换 session 后的失败绝不回退到旧赛道的边界。
+            return self._sector_starts if same_session else ()
+        if not starts:
+            # 键在但结构为空：session YAML 可能还没写完，下一帧再试，不缓存空值
+            return self._sector_starts if same_session else ()
+        self._sector_key = session_key
+        self._sector_starts = starts
+        return starts
 
     def close(self) -> None:
         if self._ir is not None:

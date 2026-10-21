@@ -55,7 +55,13 @@ def _asks_number(q: str) -> bool:
     return any(w in (q or "") for w in _NUM_WORDS)
 
 
-def route(intent: str, s: Snapshot, query: str = "") -> Decision:
+def route(intent: str, s: Snapshot, query: str = "", segments=None) -> Decision:
+    """意图 → Decision。
+
+    `segments` 是 DerivedTracker.segments（T1 的分段模型），只有赛段类问题
+    需要它；其它分支拿到 None 也照常工作（向后兼容旧调用方）。
+    """
+    raw_query = query or ""
     query = canonicalize(normalize(query))
     if not s.connected:
         return _refuse("iRacing 没连上，现在拿不到任何数据")
@@ -70,7 +76,7 @@ def route(intent: str, s: Snapshot, query: str = "") -> Decision:
         return _refuse('这里只读取遥测，不操作车辆或提供调校指令')
     from .telemetry_answers import answer
     try:
-        extended=answer(intent,s,query)
+        extended=answer(intent,s,query,segments=segments,raw_query=raw_query)
         if extended is not None:return extended
     except (ValueError,OverflowError):return _refuse('遥测数值无效或超出可表达范围')
     fn = _ROUTES.get(intent)

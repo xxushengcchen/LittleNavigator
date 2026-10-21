@@ -784,10 +784,7 @@ query_laptime:
   - 跟最好那圈差多少
   - 跟最好差多少
   - 比最佳慢多少
-  - 我慢在哪
   - 什么原因慢了
-  - 我哪段丢了时间
-  - 我在哪丢时间
   - 这圈比上圈快吗
   - 上圈快了还是慢了
   - 还能再快吗
@@ -922,6 +919,46 @@ query_laptime:
   - 上一圈距离最佳差多少
   - 我上一圈比最佳慢几秒
   - 我现在比最快圈慢几秒
+# v1.5.4 赛段损失：只报 iRacing 官方分段（SplitTimeInfo），不报弯道。
+# 段用时来自 60Hz CarIdxLapDistPct 过段插值（src/segments.py），段数随赛道变化；
+# 回答只陈述观察到的段用时差，不归因刹车点/走线/轮胎，也不预测下一圈。
+# 「我慢在哪 / 我哪段丢了时间 / 我在哪丢时间」从 query_laptime 移到这里：
+# 问的是分段损失，不是整圈成绩；整圈仍由 query_laptime 回答，行为不变。
+query_sector_loss:
+  route: state_layer
+  fields:
+  - SplitTimeInfo
+  - CarIdxLapDistPct
+  - LapCompleted
+  template: 第{sector}段{delta}
+  examples:
+  - 我上一圈哪一段慢
+  - 上一圈哪段慢
+  - 哪一段慢
+  - 哪一段最慢
+  - 哪段慢了
+  - 我慢在哪
+  - 慢在哪
+  - 哪里慢
+  - 哪里丢时间
+  - 我哪里丢时间
+  - 我哪段丢了时间
+  - 我在哪丢时间
+  - 哪一段丢时间
+  - 上一圈分段
+  - 上一圈分段成绩
+  - 上一圈各段多少
+  - 第几段用了多少
+  - 第二段用了多少
+  - 第三段跑多久
+  - 跟前车分段差多少
+  - 前车分段比我快多少
+  - 跟后车分段差多少
+  - 后车分段比我快多少
+  - 分段圈速多少
+  - 各段用时多少
+  - 赛段用时多少
+  - 和前后车分段差距
 query_position:
   route: state_layer
   fields:

@@ -2,6 +2,7 @@ import unittest
 from src.race_context import build, estimate_tokens, trim, ALLOWED_FIELDS
 from src.query_class import QueryKind
 from src.telemetry import Snapshot
+from tests.test_router_sector import FakeSegments, default_model
 
 
 def snap(**kw):
@@ -151,6 +152,141 @@ class MissingDataTests(unittest.TestCase):
     def test_empty_laps_list_is_safe(self):
         ctx = build(snap(), [], QueryKind.ANALYSIS, "为什么慢")
         self.assertNotIn("recent_laps", ctx)
+
+
+class SegmentLayerTests(unittest.TestCase):
+    """v1.5.4：segments 层只在问到分段时附加，数值全部预计算好。"""
+
+    def _build(self, question, model=None, s=None):
+        return build(s or snap(), [], QueryKind.ANALYSIS, question,
+                     segments=model)
+
+    def test_not_included_by_default(self):
+        ctx = self._build("油还够吗", default_model())
+        self.assertNotIn("segments", ctx)
+
+    def test_included_for_sector_questions(self):
+        for question in ("哪一段慢", "哪里丢时间", "上一圈分段",
+                         "跟后车分段差多少", "各段用时多少"):
+            with self.subTest(q=question):
+                ctx = self._build(question, default_model())
+                self.assertIn("segments", ctx)
+
+    def test_layer_shape(self):
+        ctx = self._build("哪一段慢", default_model())
+        seg = ctx["segments"]
+        self.assertEqual(seg["count"], 4)
+        self.assertLessEqual(len(seg["player"]), 3)
+        self.assertEqual(seg["target"]["role"], "ahead")
+        self.assertEqual(seg["target"]["car_idx"], 2)
+        self.assertEqual(len(seg["target"]["deltas"]), 4)
+        self.assertEqual(len(seg["target"]["deltas_spoken"]), 4)
+        self.assertLessEqual(len(seg["best_loss"]), 2)
+
+    def test_player_entries_carry_lap_and_spoken_time(self):
+        ctx = self._build("哪一段慢", default_model())
+        latest = ctx["segments"]["player"][-1]
+        self.assertEqual(latest["lap"], 12)
+        self.assertEqual(latest["lap_time"], 102.5)
+        self.assertEqual(latest["lap_time_spoken"], "1分42.5秒")
+        self.assertEqual(latest["sectors"], [25.4, 24.9, 30.0, 22.2])
+
+    def test_deltas_are_signed_and_spoken(self):
+        ctx = self._build("哪一段慢", default_model())
+        target = ctx["segments"]["target"]
+        self.assertEqual(target["deltas"], [-0.4, -0.2, 0.4, -0.3])
+        self.assertEqual(target["deltas_spoken"],
+                         ["慢0.40秒", "慢0.20秒", "快0.40秒", "慢0.30秒"])
+
+    def test_best_loss_is_sorted_desc_and_capped(self):
+        ctx = self._build("哪一段慢", default_model())
+        best = ctx["segments"]["best_loss"]
+        self.assertEqual([row["sector"] for row in best], [1, 4])
+        self.assertEqual([row["delta_s"] for row in best], [0.4, 0.3])
+        self.assertEqual([row["delta_spoken"] for row in best],
+                         ["0.40秒", "0.30秒"])
+
+    def test_behind_question_selects_behind_target(self):
+        ctx = self._build("跟后车分段差多少", default_model())
+        self.assertEqual(ctx["segments"]["target"]["role"], "behind")
+        self.assertEqual(ctx["segments"]["target"]["car_idx"], 4)
+
+    def test_no_model_means_no_layer(self):
+        ctx = self._build("哪一段慢", None)
+        self.assertNotIn("segments", ctx)
+
+    def test_model_without_player_laps_means_no_layer(self):
+        ctx = self._build("哪一段慢", FakeSegments(player=[]))
+        self.assertNotIn("segments", ctx)
+
+    def test_snapshot_attribute_is_used(self):
+        """引擎把 DerivedTracker.segments 挂在快照上；AI 上下文不需改签名。"""
+        s = snap()
+        s.segments = default_model()
+        ctx = build(s, [], QueryKind.ANALYSIS, "哪一段慢")
+        self.assertIn("segments", ctx)
+
+    def test_allowed_fields_covers_layer_keys(self):
+        ctx = self._build("哪一段慢", default_model())
+        seg = ctx["segments"]
+
+        def walk(node):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    yield key
+                    yield from walk(value)
+            elif isinstance(node, (list, tuple)):
+                for value in node:
+                    yield from walk(value)
+
+        for key in walk(seg):
+            self.assertIn(key, ALLOWED_FIELDS, f"segments.{key} 不在白名单")
+
+    def test_trim_drops_segments_under_tight_budget(self):
+        ctx = self._build("哪一段慢", default_model())
+        tight = trim(ctx, 1)
+        self.assertNotIn("segments", tight)
+
+    def test_number_gate_accepts_model_answer(self):
+        from src.answer_checks import check_numbers
+
+        ctx = self._build("哪一段慢", default_model())
+        self.assertIsNone(check_numbers("第 1 段比前车慢 0.40 秒", ctx, "哪一段慢"))
+        self.assertIsNotNone(check_numbers("第 1 段比前车慢 0.99 秒", ctx, "哪一段慢"))
+
+    def test_data_gate_accepts_segments_paths(self):
+        from src.answer_checks import check_data
+
+        ctx = self._build("哪一段慢", default_model())
+        for name in ("segments", "segments.target", "segments.target.deltas",
+                     "segments.player", "segments.best_loss"):
+            with self.subTest(name=name):
+                self.assertIsNone(check_data([name], ctx), name)
+        self.assertIsNotNone(check_data(["segments.target.tyre"], ctx))
+
+
+class RealSegmentModelContextTests(unittest.TestCase):
+    """联调：race_context 对 T1 真模型的取数路径。"""
+
+    def test_build_with_real_model(self):
+        from src.segments import SegmentModel
+        from tests.test_segments import feed
+
+        model = SegmentModel()
+        feed(model, durations=(80.0, 80.0, 80.0))
+        ctx = build(snap(), [], QueryKind.ANALYSIS, "哪一段慢",
+                    segments=model)
+        self.assertIn("segments", ctx)
+        seg = ctx["segments"]
+        self.assertEqual(seg["count"], 4)
+        self.assertGreaterEqual(len(seg["player"]), 1)
+        latest = seg["player"][-1]
+        self.assertIn("lap", latest)
+        self.assertIn("lap_time", latest)
+        self.assertIn("lap_time_spoken", latest)
+        self.assertEqual(len(latest["sectors"]), 4)
+        # 真模型没有目标车：不硬塞 target
+        self.assertNotIn("target", seg)
 
 
 if __name__ == '__main__':

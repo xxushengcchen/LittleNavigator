@@ -404,5 +404,124 @@ class PackTailTests(unittest.TestCase):
         self.assertLessEqual(abs(int(y[-1])), 1, "结尾必须淡到 0")
 
 
+# v1.5.4 赛段损失拼接件：T2 的 telemetry_answers._sector_answer 用这些 msgId 拼回答。
+# msgId → 预期变体数；AST_SECTOR_TAIL 是单变体纯「段」（拼在句中，不能带句末标点）。
+SECTOR_IDS = {
+    "AST_SECTOR_TAIL": 1,
+    "AST_SECTOR_WORD": 2,
+    "AST_SECTOR_SLOWER_AHEAD": 2,
+    "AST_SECTOR_SLOWER_BEHIND": 2,
+    "AST_SECTOR_FASTER_AHEAD": 2,
+    "AST_SECTOR_FASTER_BEHIND": 2,
+    "AST_SECTOR_BEST": 2,
+    "AST_SECTOR_TIME": 2,
+    "AST_SECTOR_NO_DATA": 2,
+}
+# 「第 N 段」与「0.31 秒」复用现有 atom：主包数字/顺序词 + 助手素材里的整圈片段。
+SECTOR_REUSE_IN_MAIN = ("SPCC_FASTESTCARPOS", "SPCC_POINT", "SPCC_SECOND",
+                        "SPCC_N1", "SPCC_N2", "SPCC_N3", "SPCC_N4")
+SECTOR_REUSE_IN_EXTRA = ("AST_LAST_LAP_LEAD", "AST_GAP_AHEAD_LEAD", "AST_GAP_BEHIND_LEAD")
+MAIN_PACK = ROOT / "build" / "pack" / "Mandarin-CNTW-Xusheng_Chen"
+
+
+class SectorVoiceContentTests(unittest.TestCase):
+    """赛段拼接件的文案契约：T2 拼回答时按 msgId 引用，文案漏一条就静默缺词。"""
+
+    def _items(self):
+        data = json.loads(ACK_CONTENT.read_text(encoding="utf-8"))
+        return data.get("items") or []
+
+    def _sector_items(self):
+        return [it for it in self._items()
+                if str(it.get("msgId", "")).startswith("AST_SECTOR_")]
+
+    def test_sector_msgids_in_content(self):
+        items = {it.get("msgId"): it for it in self._items()}
+        for msg_id, expected_variants in SECTOR_IDS.items():
+            with self.subTest(msgId=msg_id):
+                self.assertIn(msg_id, items,
+                              f"{msg_id} 不在 content/assistant-extra.json："
+                              f"合成后语音包里不会有，赛段回答会缺词")
+                self.assertEqual(len(items[msg_id].get("variants") or []),
+                                 expected_variants)
+        self.assertEqual({it["msgId"] for it in self._sector_items()},
+                         set(SECTOR_IDS), "content 里出现了未登记的 AST_SECTOR_* msgId")
+
+    def test_sector_entries_shape(self):
+        for item in self._sector_items():
+            mid = item["msgId"]
+            with self.subTest(msgId=mid):
+                self.assertEqual(item.get("cat"), "assistant")
+                self.assertEqual(item.get("prio"), "normal")
+                self.assertEqual(item.get("frag"), mid != "AST_SECTOR_NO_DATA")
+                self.assertTrue((item.get("instruct") or "").strip(),
+                                f"{mid} 缺 instruct，TTS 语气会跑偏")
+                for text in item["variants"]:
+                    self.assertTrue(text and text.strip(), f"{mid} 有空变体")
+                    self.assertNotIn("{", text)      # 固定话术，不做模板替换
+                self.assertEqual(len(set(item["variants"])), len(item["variants"]),
+                                 f"{mid} 有重复变体：{item['variants']}")
+
+    def test_sector_tail_is_bare_word(self):
+        """「段」会拼在「第2段比前车慢…」句中，带句号会被 TTS 念成句末语调。"""
+        items = {it["msgId"]: it for it in self._items()}
+        self.assertEqual(items["AST_SECTOR_TAIL"]["variants"], ["段"])
+
+    def test_sector_matches_content_loader(self):
+        loader = _load_content_loader()
+        loaded, _instructs = loader.load_items(ROOT, patterns=["content/assistant-extra.json"])
+        got = {it["msgId"]: it["variants"] for it in loaded}
+        for msg_id in SECTOR_IDS:
+            with self.subTest(msgId=msg_id):
+                self.assertIn(msg_id, got)
+        expected_stems = {f"{mid}__{i:02d}" for mid, n in SECTOR_IDS.items()
+                          for i in range(1, n + 1)}
+        self.assertEqual(len(expected_stems), 17,
+                         "赛段拼接件新增音频数变了，Lead 的合成清单与版本说明要同步")
+
+    def test_sector_reuse_atoms_declared_in_content(self):
+        """复用 atom 不在本文件定义，但必须在现有语音包里真实存在（包缺失时跳过）。"""
+        if not (MAIN_PACK / "spmsg.txt").exists() or not (EXTRA_PACK / "spmsg.txt").exists():
+            self.skipTest("本机没有 build/ 语音包（源码 clone 常态）")
+        main = VoicePack.load(MAIN_PACK)
+        extra = VoicePack.load(EXTRA_PACK)
+        for msg_id in SECTOR_REUSE_IN_MAIN:
+            with self.subTest(msgId=msg_id):
+                self.assertTrue(main.has(msg_id), f"主包缺复用 atom：{msg_id}")
+        for msg_id in SECTOR_REUSE_IN_EXTRA:
+            with self.subTest(msgId=msg_id):
+                self.assertTrue(extra.has(msg_id), f"assistant-extra 缺复用 atom：{msg_id}")
+
+
+class SectorVoicePackTests(unittest.TestCase):
+    """赛段拼接件进包校验：Lead 跑完 TTS 后必须 9 个 msgId 齐全、共 17 条可读 WAV。"""
+
+    def _extra_pack(self):
+        if not (EXTRA_PACK / "spmsg.txt").exists():
+            self.skipTest("未生成 build/assistant-extra（需 Lead 跑 synthesize_telemetry --name assistant-extra）")
+        pack = VoicePack.load(EXTRA_PACK)
+        if not any(pack.has(mid) for mid in SECTOR_IDS):
+            self.skipTest("assistant-extra 尚未包含赛段拼接件，需重跑合成/打包")
+        return pack
+
+    def test_sector_msgids_in_extra_pack(self):
+        pack = self._extra_pack()
+        for msg_id, expected_variants in SECTOR_IDS.items():
+            with self.subTest(msgId=msg_id):
+                self.assertTrue(pack.has(msg_id),
+                                f"{msg_id} 文案已加但包内没有：需重跑合成再打包")
+                self.assertEqual(len(pack.variants[msg_id]), expected_variants)
+
+    def test_sector_pack_audio_is_readable(self):
+        pack = self._extra_pack()
+        for msg_id in SECTOR_IDS:
+            for variant in pack.variants.get(msg_id) or []:
+                with self.subTest(msgId=msg_id, file=variant.file):
+                    path = pack.path_of(variant)
+                    self.assertTrue(path.is_file(), f"音频缺失：{variant.file}")
+                    with wave.open(str(path), "rb") as w:
+                        self.assertGreater(w.getnframes(), 0, f"空音频：{variant.file}")
+
+
 if __name__ == '__main__':
     unittest.main()

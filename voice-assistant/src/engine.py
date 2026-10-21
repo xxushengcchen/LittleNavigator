@@ -313,7 +313,8 @@ class Assistant:
 
         rec.update({"intent": tr["intent"], "layer": tr["layer"],
                     "kind": kind.value})
-        dec = router.route(tr["intent"], snap, text)
+        dec = router.route(tr["intent"], snap, text,
+                           segments=self.segments_model())
         p(f"  意图 {tr['intent']}  ← {tr['why']}  ({tr['intent_ms']:.1f} ms)")
         if not dec.ok:
             p(f"  ✗ 答不了：{dec.reason}")
@@ -872,7 +873,8 @@ class Assistant:
         snap = self.snapshot()
         dec = None
         if tr["intent"]:
-            dec = router.route(tr["intent"], snap, text)
+            dec = router.route(tr["intent"], snap, text,
+                               segments=self.segments_model())
         plan = []
         if dec and dec.ok:
             for mid in dec.plan:
@@ -934,8 +936,29 @@ class Assistant:
                      f"{'开' if self.cfg['intent']['l1_keyword']['enabled'] else '关'}")
         return lines
 
+    def segments_model(self):
+        """分段模型（T1 的 `DerivedTracker.segments`）；没接入时返回 None。
+
+        赛段（v1.5.4）的本地回答与 AI 上下文都从这里取同一份数据源：
+        本地经 `router.route(..., segments=...)`，AI 靠 `snapshot()` 挂引用。
+        """
+        return getattr(getattr(self, "derive", None), "segments", None)
+
     def snapshot(self):
-        return self.sampler.read()
+        """读当前遥测快照，并附上分段模型的只读引用。
+
+        为什么挂在快照上：AI 上下文的 `race_context.build` 只收到 Snapshot，
+        不挂上去就得改 AI 流水线的调用签名（本次刻意没动那条链路）。
+        挂的是对象引用而非数据拷贝；dataclass 的字段与相等性都不受影响。
+        """
+        snap = self.sampler.read()
+        segments = self.segments_model()
+        if segments is not None:
+            try:
+                snap.segments = segments
+            except Exception:      # noqa: BLE001 - 展示层增强，不挡主流程
+                pass
+        return snap
 
     def close(self):
         self.player.stop()

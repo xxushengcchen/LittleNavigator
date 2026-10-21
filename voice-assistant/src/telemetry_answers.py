@@ -1,5 +1,6 @@
 """有可靠数据的新问答；动态数值用原数字语音，新回复各六变体。"""
 import math
+import re
 from . import numbers
 from .router import Decision
 
@@ -40,6 +41,140 @@ def _cn_num(t):
         return _CN[t]
     except (KeyError,IndexError):return None
 
+# ---------------------------------------------------------------- 赛段（v1.5.4）
+# 可用语音 atom（T3 定稿，见 tmp/v154-sector-contract.md 与 Lead 2026-10-21 消息）：
+#   SPCC_FASTESTCARPOS="第"、SPCC_N*/SPCC_POINT/SPCC_SECOND、AST_LAST_LAP_LEAD="上一圈"、
+#   AST_SECTOR_TAIL="段"、AST_SECTOR_WORD="分段"、AST_SECTOR_TIME="用了"、
+#   AST_SECTOR_SLOWER_AHEAD/BEHIND="比前车慢/比后车慢"、
+#   AST_SECTOR_FASTER_AHEAD/BEHIND、AST_SECTOR_BEST="比最佳圈慢"、
+#   AST_SECTOR_NO_DATA 整句拒绝。
+# 刻意不做：归因（刹车点/走线/轮胎）与预测；只说观察到的段用时差。
+_SECTOR_POS='SPCC_FASTESTCARPOS'
+_SECTOR_TAIL='AST_SECTOR_TAIL'
+_SECTOR_TIME='AST_SECTOR_TIME'
+_SECTOR_WORD='AST_SECTOR_WORD'
+SECTOR_LOSS_EPS=0.05
+
+def _sector_ids(index):
+    """「第 N 段」：第 + 数字 + 段。"""
+    return [_SECTOR_POS,*numbers.int_to_msgids(index),_SECTOR_TAIL]
+
+def _delta_digits(value):
+    """0.30 念「零点三」（1 位就够）；0.31 保留 2 位。"""
+    return 1 if round(value,1)==round(value,2) else 2
+
+def _sector_delta_ids(rows,word):
+    plan=[]
+    for row in rows:
+        plan+=_sector_ids(row['sector'])
+        plan+=[word,*numbers.decimal_to_msgids(row['delta_s'],_delta_digits(row['delta_s'])),'SPCC_SECOND']
+    return plan
+
+def _sector_reason(rows,phrase):
+    return '；'.join(f"第{row['sector']}段{phrase}{row['delta_s']:.2f}s" for row in rows)
+
+def _sector_own_plan(player):
+    """上一圈逐段用时（最多 5 段）。无对比车时的兜底/「上一圈分段」的正解。"""
+    sectors=(player[-1].get('sectors') or [])[:5] if player else []
+    plan=['AST_LAST_LAP_LEAD',_SECTOR_WORD]
+    parts=[]
+    for index,value in enumerate(sectors):
+        if not valid(value,0,600):continue
+        plan+=_sector_ids(index+1)
+        plan+=[_SECTOR_TIME,*numbers.decimal_to_msgids(value,_delta_digits(value)),'SPCC_SECOND']
+        parts.append(f"第{index+1}段{value:.2f}s")
+    if not parts:
+        return Decision(['AST_SECTOR_NO_DATA'],'上一圈没有完整的分段数据')
+    return Decision(plan,'上一圈分段：'+'，'.join(parts))
+
+def _asks_own_sectors(q):
+    """问的是「各段用时/上一圈分段」，而不是「哪一段慢」。"""
+    targets=('前车','后车','对手','前面','后面','前車','後車')
+    if any(w in q for w in targets):
+        return False
+    if any(w in q for w in ('哪一段','哪段','哪里慢','哪边慢','慢在哪','丢时间',
+                            '丢了时间','掉时间','损失')):
+        return False
+    return any(w in q for w in ('上一圈','上圈','刚才那圈','刚跑完','各段','每段',
+                                '分段圈速','分段用时','赛段用时','分段成绩','第几段',
+                                '分段时间'))
+
+# 「第二段用了多少」这种点名某一段的问法（中文或阿拉伯数字）。
+_SECTOR_NUM_RE=re.compile(r'第\s*([0-9]+|[一二三四五六七八九十]+)\s*段')
+
+def _wanted_sector(q):
+    m=_SECTOR_NUM_RE.search(q or '')
+    if not m:return None
+    raw=m.group(1)
+    if raw.isdigit():return int(raw)
+    return _cn_num(raw)
+
+def _sector_one_plan(player,index):
+    """只报指定段：「上一圈第 2 段用了 25.3 秒」。"""
+    sectors=(player[-1].get('sectors') or []) if player else []
+    value=sectors[index-1] if 0<=index-1<len(sectors) else None
+    if not valid(value,0,600):
+        return Decision(['AST_SECTOR_NO_DATA'],f'上一圈第 {index} 段没有可用分段数据')
+    plan=['AST_LAST_LAP_LEAD',*_sector_ids(index)]
+    plan+=[_SECTOR_TIME,*numbers.decimal_to_msgids(value,_delta_digits(value)),'SPCC_SECOND']
+    return Decision(plan,f'上一圈第{index}段{value:.2f}s')
+
+def _sector_vs_target(view,target,player):
+    """与对比车逐段比：先报落后的段（最多 2），全都不落后再报领先段。"""
+    label='后车' if target['role']=='behind' else '前车'
+    if not any(delta is not None for delta in (target.get('deltas') or [])):
+        # 目标车存在但逐段数据对不上（例如它这轮还没结算）：明确拒答，
+        # 不拿自己的分段用时冒充「跟它的差距」。
+        return refuse(f'读不到{label}的分段数据，现在不能对比')
+    losses=view.losses(target,2)
+    if losses:
+        word='AST_SECTOR_SLOWER_BEHIND' if target['role']=='behind' else 'AST_SECTOR_SLOWER_AHEAD'
+        return Decision(_sector_delta_ids(losses,word),_sector_reason(losses,'比'+label+'慢'))
+    gains=view.gains(target,2)
+    if gains:
+        word='AST_SECTOR_FASTER_BEHIND' if target['role']=='behind' else 'AST_SECTOR_FASTER_AHEAD'
+        return Decision(_sector_delta_ids(gains,word),_sector_reason(gains,'比'+label+'快'))
+    # 逐段都持平：退回自身分段用时，绝不编造损失段。
+    return _sector_own_plan(player)
+
+def _sector_answer(q,segments=None,raw_query=None):
+    from .race_context import SectorView,sector_role
+    view=SectorView(segments)
+    if not view.available:
+        return Decision(['AST_SECTOR_NO_DATA'],'分段模型还没有数据（T1 未接入或本场尚未跨段）')
+    player=view.player_laps(3)
+    if not player:
+        return Decision(['AST_SECTOR_NO_DATA'],'最近没有有效分段圈')
+    raw=raw_query or q
+    ahead=any(w in q for w in ('前车','前面','前方','前車'))
+    behind=any(w in q for w in ('后车','后面','后方','後車'))
+    if (ahead and behind) or '前后车' in q or '前后车' in raw:
+        return refuse('请分别询问前车或后车的分段差')
+    role=sector_role(q)
+    if role is not None:
+        target=view.target(role)
+        if target is None:
+            # 点名了前车/后车但识别不到：明确拒答，不拿最佳圈冒充对手。
+            return refuse('现在识别不到可以对比的前车或后车分段，跑近一点再问')
+        return _sector_vs_target(view,target,player)
+    # 用**原始**问句解析段号：canonicalize 会把「第二段」归一成「第几段」，
+    # 归一化后的文本里已经没有具体段号了。
+    wanted=_wanted_sector(raw)
+    if wanted is not None and any(w in raw for w in ('用了','用','多久','多少','多快','时间','成绩')):
+        return _sector_one_plan(player,wanted)
+    if _asks_own_sectors(q):
+        return _sector_own_plan(player)
+    target=view.target('ahead') or view.target('behind')
+    if target is not None:
+        return _sector_vs_target(view,target,player)
+    # 没有可对比的前后车：与个人最佳圈的逐段中位数比，仍然只报自己观察到的差。
+    best_losses=view.losses_vs_best(2)
+    if best_losses:
+        return Decision(_sector_delta_ids(best_losses,'AST_SECTOR_BEST'),
+                        _sector_reason(best_losses,'比最佳圈慢'))
+    return _sector_own_plan(player)
+
+
 def _interval(s,idx):
     """我与指定车辆索引的赛道间隔（秒）；跨线补一个圈周期，算法与前后车一致。"""
     me,dist,times=s.car_idx,s.car_lap_dist,s.car_est_times
@@ -67,7 +202,9 @@ def _rubber(s):
     if 'high' in low:return state('RUBBER_HIGH',f'橡胶状态 {v}')
     return state('RUBBER_UNKNOWN',f'橡胶状态 {v} 未识别')
 
-def answer(intent,s,q):
+def answer(intent,s,q,segments=None,raw_query=None):
+    if intent=='query_sector_loss':
+        return _sector_answer(q,segments,raw_query)
     if intent=='query_opponent':
         if any(w in q for w in ('这圈','当前圈','差多少','快多少','慢多少','剩几圈','还剩')):
             return refuse('对手目前支持上一完整圈、最佳圈及第一名已完成圈数，请明确查询项目')

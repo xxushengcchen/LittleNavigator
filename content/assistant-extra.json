@@ -1,7 +1,7 @@
 {
   "meta": {
-    "version": "2.2.0",
-    "note": "助手拼接连接件 + 等待应答短句：与数字片段组合成完整句子；AST_ACK_* 在等待 AI 回复时播放。v1.5.2 起等待语音文案统一带中文句号，并用 meta.trim_pad_ms/fade_out_ms 让 build_pack 给 60ms 尾部余量 + 20ms 淡出，避免短句结尾被裁切点硬切。",
+    "version": "2.3.0",
+    "note": "助手拼接连接件 + 等待应答短句：与数字片段组合成完整句子；AST_ACK_* 在等待 AI 回复时播放。v1.5.2 起等待语音文案统一带中文句号，并用 meta.trim_pad_ms/fade_out_ms 让 build_pack 给 60ms 尾部余量 + 20ms 淡出，避免短句结尾被裁切点硬切。v1.5.4 增加 AST_SECTOR_* 赛段损失拼接件：「第 N 段」用 AST_SECTOR_TAIL（单变体纯「段」，不带标点，避免拼在句中时读出句末语调）。",
     "trim_pad_ms": 60,
     "fade_out_ms": 20
   },
@@ -300,6 +300,104 @@
         "马上查喔。"
       ],
       "instruct": "用台灣腔年輕女生的語氣，輕快甜美，帶一點撒嬌的等待感，語尾自然上揚，不要拖長音，不要油膩，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_TAIL",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "段"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_WORD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "分段",
+        "赛段"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_SLOWER_AHEAD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "比前车慢",
+        "比前车慢了"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_SLOWER_BEHIND",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "比后车慢",
+        "比后车慢了"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_FASTER_AHEAD",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "比前车快",
+        "比前车快了"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_FASTER_BEHIND",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "比后车快",
+        "比后车快了"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_BEST",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "比最佳圈慢",
+        "比最快圈慢了"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_TIME",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": true,
+      "variants": [
+        "用了",
+        "用时"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，清楚輕快地唸出這個拼接片段，保留自然甜美音色，不要拖長音，不要自行添加文字"
+    },
+    {
+      "msgId": "AST_SECTOR_NO_DATA",
+      "cat": "assistant",
+      "prio": "normal",
+      "frag": false,
+      "variants": [
+        "现在还没有可用的分段圈，跑完一圈再问。",
+        "还没有分段数据，先跑完一圈。"
+      ],
+      "instruct": "用台灣腔年輕女生的語氣，溫和、清楚地說明還沒有資料，像賽事無線電那樣直接，不要拖長音，不要油膩"
     }
   ]
 }
