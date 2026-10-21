@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import tempfile
@@ -293,6 +294,159 @@ class ConfigV152Tests(unittest.TestCase):
                 self.write_local({"overlay": {"y": bad}})
                 with self.assertRaises(ValueError):
                     self.load()
+
+
+class DisambiguateConfigTests(unittest.TestCase):
+    """v1.5.5 意图仲裁：ai.disambiguate 默认值、校验与只读视图。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name)
+        (self.root / "config.yaml").write_text(yaml.safe_dump({}), encoding="utf-8")
+
+    def load(self):
+        return config.load(self.root / "config.yaml")
+
+    def write_local(self, payload: dict):
+        (self.root / "config.local.yaml").write_text(
+            yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+
+    # ---- 默认值 / 正常路径
+    def test_defaults(self):
+        dis = self.load()["ai"]["disambiguate"]
+        self.assertIs(dis["enabled"], True)
+        self.assertEqual(dis["timeout_s"], 1.0)
+        self.assertEqual(dis["min_confidence"], 0.6)
+
+    def test_full_override_is_accepted(self):
+        self.write_local({"ai": {"disambiguate": {
+            "enabled": False, "timeout_s": 0.3, "min_confidence": 0.0}}})
+        dis = self.load()["ai"]["disambiguate"]
+        self.assertIs(dis["enabled"], False)
+        self.assertEqual(dis["timeout_s"], 0.3)
+        self.assertEqual(dis["min_confidence"], 0.0)
+
+    def test_partial_override_keeps_other_defaults(self):
+        self.write_local({"ai": {"disambiguate": {"timeout_s": 2.0}}})
+        dis = self.load()["ai"]["disambiguate"]
+        self.assertIs(dis["enabled"], True)
+        self.assertEqual(dis["timeout_s"], 2.0)
+        self.assertEqual(dis["min_confidence"], 0.6)
+
+    def test_boundaries_are_accepted(self):
+        self.write_local({"ai": {"disambiguate": {
+            "timeout_s": 3.0, "min_confidence": 1.0}}})
+        dis = self.load()["ai"]["disambiguate"]
+        self.assertEqual(dis["timeout_s"], 3.0)
+        self.assertEqual(dis["min_confidence"], 1.0)
+
+    # ---- 拒绝非法值
+    def test_rejects_non_bool_enabled(self):
+        for bad in ("yes", 1, None):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"disambiguate": {"enabled": bad}}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_rejects_timeout_out_of_range(self):
+        for bad in (0.29, 3.01, -1.0):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"disambiguate": {"timeout_s": bad}}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_rejects_non_numeric_timeout(self):
+        for bad in ("1.0", True, None):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"disambiguate": {"timeout_s": bad}}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_rejects_nan_timeout(self):
+        (self.root / "config.local.yaml").write_text(
+            "ai:\n  disambiguate:\n    timeout_s: .nan\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.load()
+
+    def test_rejects_confidence_out_of_range(self):
+        for bad in (-0.01, 1.01):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"disambiguate": {
+                    "min_confidence": bad}}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_rejects_non_numeric_confidence(self):
+        for bad in ("0.5", True):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"disambiguate": {
+                    "min_confidence": bad}}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    def test_rejects_disambiguate_not_object(self):
+        for bad in (False, [], "on"):
+            with self.subTest(value=bad):
+                self.write_local({"ai": {"disambiguate": bad}})
+                with self.assertRaises(ValueError):
+                    self.load()
+
+    # ---- 只读视图（engine 接线用）
+    def test_view_exposes_three_readonly_fields(self):
+        view = config.ai_disambiguate_view(config.load(
+            self.root / "config.yaml"))
+        self.assertEqual(set(view), {
+            "disambiguate_enabled", "disambiguate_timeout_s",
+            "disambiguate_min_confidence"})
+        self.assertIs(view["disambiguate_enabled"], True)
+        self.assertEqual(view["disambiguate_timeout_s"], 1.0)
+        self.assertEqual(view["disambiguate_min_confidence"], 0.6)
+
+    def test_view_reads_overrides(self):
+        self.write_local({"ai": {"disambiguate": {
+            "enabled": False, "timeout_s": 2.5, "min_confidence": 0.25}}})
+        view = config.ai_disambiguate_view(config.load(
+            self.root / "config.yaml"))
+        self.assertIs(view["disambiguate_enabled"], False)
+        self.assertEqual(view["disambiguate_timeout_s"], 2.5)
+        self.assertEqual(view["disambiguate_min_confidence"], 0.25)
+
+    def test_view_defaults_on_empty_or_broken_cfg(self):
+        for cfg in (None, {}, {"ai": None}, {"ai": {"disambiguate": None}},
+                    {"ai": {"disambiguate": {"enabled": "x",
+                                             "timeout_s": "y",
+                                             "min_confidence": None}}}):
+            with self.subTest(cfg=cfg):
+                view = config.ai_disambiguate_view(cfg)
+                self.assertIs(view["disambiguate_enabled"], True)
+                self.assertEqual(view["disambiguate_timeout_s"], 1.0)
+                self.assertEqual(view["disambiguate_min_confidence"], 0.6)
+
+    def test_view_never_contains_key_material(self):
+        cfg = config.load(self.root / "config.yaml")
+        cfg["ai"]["api_key"] = "sk-SECRET-123"
+        text = json.dumps(config.ai_disambiguate_view(cfg), ensure_ascii=False)
+        self.assertNotIn("SECRET", text)
+
+
+class ShippedConfigDisambiguateTests(unittest.TestCase):
+    """仓库自带的两份配置必须把新段写出来（用户能看见、能改）。"""
+
+    def test_shipped_configs_document_disambiguate(self):
+        for name in ("config.yaml", "config.example.yaml"):
+            with self.subTest(name=name):
+                path = config.ROOT / name
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                dis = data["ai"]["disambiguate"]
+                self.assertIs(dis["enabled"], True)
+                self.assertEqual(dis["timeout_s"], 1.0)
+                self.assertEqual(dis["min_confidence"], 0.6)
+
+    def test_shipped_config_loads_cleanly(self):
+        cfg = config.load(config.ROOT / "config.yaml")
+        dis = cfg["ai"]["disambiguate"]
+        self.assertIn("enabled", dis)
 
 
 if __name__ == '__main__':

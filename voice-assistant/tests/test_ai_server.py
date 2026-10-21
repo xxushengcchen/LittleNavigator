@@ -105,6 +105,24 @@ class ConfigureAckTests(unittest.TestCase):
         self.assertEqual(svc._configure.call_args.args[0],
                          {"ai": {"ack": {"enabled": False}}})
 
+    def test_configure_accepts_disambiguate(self):
+        """v1.5.5：AI 意图仲裁的开关/超时/置信度走同一条配置保存路径。"""
+        svc = self._service()
+        patch = {"ai": {"disambiguate": {"enabled": False,
+                                          "timeout_s": 0.8,
+                                          "min_confidence": 0.7}}}
+        result = svc.configure(patch)
+        self.assertTrue(result["ok"])
+        svc._configure.assert_called_once()
+        self.assertEqual(svc._configure.call_args.args[0], patch)
+
+    def test_configure_rejects_unknown_disambiguate_key(self):
+        svc = self._service()
+        with self.assertRaises(ValueError):
+            svc.configure({"ai": {"disambiguate": {"enabled": True,
+                                                   "temperature": 0}}})
+        svc._configure.assert_not_called()
+
     def test_configure_rejects_unknown_ack_key(self):
         svc = self._service()
         with self.assertRaises(ValueError):

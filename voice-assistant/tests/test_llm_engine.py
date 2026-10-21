@@ -1,6 +1,8 @@
+import json
 import time
 import unittest
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import MagicMock, patch
 
 from src.llm_engine import AdaptiveBreaker, LlmClient, LlmError
 
@@ -308,3 +310,184 @@ class SingleFlightTests(unittest.TestCase):
             t.join(3)
 
         self.assertEqual(errors, [])
+
+
+# ---------------------------------------------------------------- v1.5.5 仲裁
+CANDIDATES = [
+    {"intent": "query_laptime", "label": "圈速",
+     "examples": ["上一圈多少", "圈速多少"]},
+    {"intent": "query_fuel", "label": "油量",
+     "examples": ["还剩多少油", "油还够吗"]},
+]
+
+
+def chat_reply(content):
+    return {"choices": [{"message": {"content": content}}]}
+
+
+class JudgeIntentPayloadTests(unittest.TestCase):
+    """judge_intent 的请求体：只做分类，不带遥测、不带回答模板。"""
+
+    def _call(self, content='{"intent": "query_laptime", "confidence": 0.9}',
+              judge_kwargs=None):
+        captured = {}
+
+        def fake_post(url, body, headers, timeout):
+            captured.update(url=url, body=body, headers=headers, timeout=timeout)
+            return chat_reply(content)
+
+        client = LlmClient("https://api.deepseek.com", "k", "deepseek-chat")
+        with patch("src.llm_engine._post_json", side_effect=fake_post):
+            result = client.judge_intent("上一圈多少", CANDIDATES,
+                                         **(judge_kwargs or {}))
+        return result, captured
+
+    def test_returns_model_dict_as_is(self):
+        result, _ = self._call()
+        self.assertEqual(result, {"intent": "query_laptime", "confidence": 0.9})
+
+    def test_does_not_validate_intent(self):
+        # 候选白名单由上层校验；底层只保证「拿回来是个 dict」。
+        result, _ = self._call('{"intent": "not_in_candidates", "confidence": 0.2}')
+        self.assertEqual(result["intent"], "not_in_candidates")
+
+    def test_request_body_is_classification_only(self):
+        _, captured = self._call()
+        body = captured["body"]
+        self.assertEqual(body["temperature"], 0)
+        self.assertLessEqual(body["max_tokens"], 80)
+        self.assertEqual(body["model"], "deepseek-chat")
+        system = body["messages"][0]["content"]
+        user = body["messages"][1]["content"]
+        self.assertIn("只输出 JSON", system)
+        self.assertIn("confidence", system)
+        self.assertIn("不要回答遥测数据", system)
+        self.assertIn("不要解释", system)
+        for intent in ("query_laptime", "query_fuel"):
+            self.assertIn(intent, user)
+        self.assertIn("上一圈多少", user)
+        self.assertIn("还剩多少油", user)      # 候选示例要交给模型
+        self.assertIn("用户问题：上一圈多少", user)
+
+    def test_no_telemetry_is_sent(self):
+        _, captured = self._call()
+        raw = json.dumps(captured["body"], ensure_ascii=False)
+        for leaked in ("lap_last", "fuel_level", "telemetry", "遥测上下文",
+                       "laps_remain"):
+            self.assertNotIn(leaked, raw)
+
+    def test_no_answer_template_is_injected(self):
+        _, captured = self._call()
+        system = captured["body"]["messages"][0]["content"]
+        for leaked in ("answer", "template", "data_used", "refused"):
+            self.assertNotIn(leaked, system)
+
+    def test_endpoint_and_headers(self):
+        _, captured = self._call()
+        self.assertEqual(captured["url"],
+                         "https://api.deepseek.com/chat/completions")
+        self.assertEqual(captured["headers"]["Authorization"], "Bearer k")
+        self.assertEqual(captured["headers"]["Content-Type"], "application/json")
+
+    def test_default_timeout_is_one_second(self):
+        _, captured = self._call()
+        self.assertEqual(captured["timeout"], 1.0)
+
+    def test_timeout_argument_is_used(self):
+        _, captured = self._call(judge_kwargs={"timeout_s": 0.5})
+        self.assertEqual(captured["timeout"], 0.5)
+
+    def test_timeout_is_capped_and_floored(self):
+        _, captured = self._call(judge_kwargs={"timeout_s": 99})
+        self.assertLessEqual(captured["timeout"], 3.0)
+        _, captured = self._call(judge_kwargs={"timeout_s": 0})
+        self.assertGreaterEqual(captured["timeout"], 0.05)
+
+
+class JudgeIntentErrorTests(unittest.TestCase):
+    """失败面：所有异常都收敛成 LlmError，上层只需 catch 一种。"""
+
+    def _client(self):
+        return LlmClient("https://api.deepseek.com", "k", "deepseek-chat")
+
+    def test_missing_api_key(self):
+        client = LlmClient("https://api.deepseek.com", "", "m")
+        with self.assertRaises(LlmError):
+            client.judge_intent("q", CANDIDATES)
+
+    def test_missing_base_url(self):
+        client = LlmClient("", "k", "m")
+        with self.assertRaises(LlmError):
+            client.judge_intent("q", CANDIDATES)
+
+    def test_invalid_json_content(self):
+        with patch("src.llm_engine._post_json",
+                   return_value=chat_reply("not json")):
+            with self.assertRaises(LlmError):
+                self._client().judge_intent("q", CANDIDATES)
+
+    def test_non_dict_payload(self):
+        with patch("src.llm_engine._post_json",
+                   return_value=chat_reply("[1, 2, 3]")):
+            with self.assertRaises(LlmError):
+                self._client().judge_intent("q", CANDIDATES)
+
+    def test_non_text_content(self):
+        with patch("src.llm_engine._post_json",
+                   return_value={"choices": [{"message": {"content": None}}]}):
+            with self.assertRaises(LlmError):
+                self._client().judge_intent("q", CANDIDATES)
+
+    def test_malformed_envelope(self):
+        with patch("src.llm_engine._post_json", return_value={"nope": 1}):
+            with self.assertRaises(LlmError):
+                self._client().judge_intent("q", CANDIDATES)
+
+    def test_http_error(self):
+        error = urllib.error.HTTPError("http://x", 429, "rate limited", {}, None)
+        with patch("src.llm_engine._post_json", side_effect=error):
+            with self.assertRaises(LlmError) as ctx:
+                self._client().judge_intent("q", CANDIDATES)
+        self.assertIn("HTTP 429", str(ctx.exception))
+
+    def test_timeout(self):
+        with patch("src.llm_engine._post_json", side_effect=TimeoutError("timed out")):
+            with self.assertRaises(LlmError):
+                self._client().judge_intent("q", CANDIDATES)
+
+    def test_url_error(self):
+        with patch("src.llm_engine._post_json",
+                   side_effect=urllib.error.URLError("down")):
+            with self.assertRaises(LlmError):
+                self._client().judge_intent("q", CANDIDATES)
+
+    def test_gate_busy_fails_fast_without_request(self):
+        client = self._client()
+        client._gate = MagicMock()
+        client._gate.acquire.return_value = False
+        started = time.monotonic()
+        with patch("src.llm_engine._post_json") as post:
+            with self.assertRaises(LlmError):
+                client.judge_intent("q", CANDIDATES)
+        self.assertLess(time.monotonic() - started, 0.5)
+        post.assert_not_called()
+        # 抢不到闸门时不能乱 release：acquire 返回 False 就没持有
+        client._gate.release.assert_not_called()
+
+    def test_gate_is_released_after_failure(self):
+        client = self._client()
+        with patch("src.llm_engine._post_json", return_value=chat_reply("nope")):
+            with self.assertRaises(LlmError):
+                client.judge_intent("q", CANDIDATES)
+        # 失败也必须把闸门还回去，否则后续问答会被永久堵住
+        self.assertTrue(client._gate.acquire(timeout=0))
+        client._gate.release()
+
+    def test_gate_is_released_after_success(self):
+        client = self._client()
+        with patch("src.llm_engine._post_json",
+                   return_value=chat_reply('{"intent": "query_fuel", "confidence": 0.8}')):
+            client.judge_intent("q", CANDIDATES)
+        self.assertTrue(client._gate.acquire(timeout=0))
+        client._gate.release()
+

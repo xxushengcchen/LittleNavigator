@@ -1,6 +1,6 @@
 # 小小领航员 使用指南
 
-适用于 **v1.5.4** Windows 桌面版。从安装到日常使用，覆盖十一个页面、常用问法、可选的 AI 与语音改车、文件位置和排错。
+适用于 **v1.5.5** Windows 桌面版。从安装到日常使用，覆盖十一个页面、常用问法、可选的 AI 与语音改车、文件位置和排错。
 
 顺序按「装上 → 说话 → 听见 → 按需扩展」排。只想尽快跑起来，读第 1、2 节就够；遇到问题直接看第 9 节。
 
@@ -21,10 +21,10 @@ Windows 11 通常已自带 WebView2；Windows 10 若缺少，安装程序会调�
 
 ### 下载与校验
 
-在 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases/latest) 页面下载文件名以 `Setup-x64.exe` 结尾的安装包（v1.5.4 约 308 MiB，含完整本地模型与语音）。同一版本页面附 `SHA256SUMS.txt`，可在意完整性时核对：
+在 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases/latest) 页面下载文件名以 `Setup-x64.exe` 结尾的安装包（v1.5.5 约 308 MiB，含完整本地模型与语音）。同一版本页面附 `SHA256SUMS.txt`，可在意完整性时核对：
 
 ```powershell
-Get-FileHash .\LittleNavigator-1.5.4-Setup-x64.exe -Algorithm SHA256
+Get-FileHash .\LittleNavigator-1.5.5-Setup-x64.exe -Algorithm SHA256
 ```
 
 安装包**未做代码签名**，Windows SmartScreen 可能提示「未知发布者」，需要手动选择仍要运行。
@@ -364,7 +364,7 @@ AI 回答有超时、长度和数值来源检查；遥测数据在生成过程�
 - [贡献指南](../../CONTRIBUTING.md)
 - [开发与构建](../../DEVELOPMENT.md)
 - [素材与依赖说明](../../THIRD_PARTY_NOTICES.md)
-- [版本说明](../releases/v1.5.4.md)
+- [版本说明](../releases/v1.5.5.md)
 
 程序源代码采用 [MIT License](../../LICENSE)。预训练模型、第三方依赖、品牌标识与语音资源保留各自来源和使用条件。
 

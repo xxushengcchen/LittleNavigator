@@ -133,6 +133,14 @@ class AdaptiveBreaker:
 class LlmClient:
     """一个可复用的客户端。线程安全：内部用锁保护单飞与取消标志。"""
 
+    # 意图仲裁的默认预算：它只挑一个候选意图，必须比"回答"快得多，
+    # 否则「等它判意图」本身就把用户能接受的延迟吃完了。
+    JUDGE_TIMEOUT_DEFAULT = 1.0
+    # 仲裁结果最多 80 token：一个 intent 名 + 一个置信度，不需要更多。
+    JUDGE_MAX_TOKENS = 80
+    # 闸门最多等 50ms：voice 主线不能为了「判意图」排队。
+    JUDGE_GATE_WAIT_S = 0.05
+
     def __init__(self, base_url: str, api_key: str, model: str,
                  timeout_s: float = 2.0, max_tokens: int = 300,
                  thinking_mode: str = "off"):
@@ -243,6 +251,94 @@ class LlmClient:
                 content = data["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise LlmError(f"响应结构不符：{str(data)[:200]}") from exc
+
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError as exc:
+                raise LlmError(f"模型输出不是合法 JSON：{content[:200]}") from exc
+            if not isinstance(payload, dict):
+                raise LlmError("模型输出不是 JSON 对象")
+            return payload
+        finally:
+            self.last_latency_ms = (time.monotonic() - started) * 1000
+            self._gate.release()
+
+    # ------------------------------------------------------------------
+    def _judge_payload(self, question: str, candidates: list) -> dict:
+        """意图仲裁请求体：只有候选清单 + 问题，**不含任何遥测数据**。
+
+        刻意不复用 `_payload`：回答模板里带着「引用 lap_last_spoken / 给
+        template」这类指令，混进来只会让模型开始写答案。仲裁只做分类，
+        system 里把「只输出 intent+confidence、不许回答数据」说死。
+        """
+        system = (
+            "你是意图分类器。只判断用户这句话属于哪个候选意图。"
+            '只输出 JSON：{"intent": "候选之一", "confidence": 0.0-1.0}。'
+            "只能从候选列表给出的 intent 里选一个；"
+            "不要回答遥测数据，不要解释理由，不要输出其它任何文字。"
+        )
+        user = ("候选意图：\n"
+                + json.dumps(candidates, ensure_ascii=False)
+                + "\n\n用户问题：" + (question or ""))
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": self.JUDGE_MAX_TOKENS,
+            "temperature": 0,
+        }
+
+    def judge_intent(self, question: str, candidates: list,
+                     timeout_s: float = JUDGE_TIMEOUT_DEFAULT) -> dict:
+        """让模型只从候选意图里选一个（v1.5.5 意图仲裁）。
+
+        契约边界（故意做窄）：
+          · 不传遥测上下文，不要求答案，只回 `{"intent", "confidence"}`；
+          · 不校验 intent 是否合法——候选白名单由上层（engine）负责，
+            这里只保证「拿回来的东西是个 dict」；
+          · 单飞闸门只等 50ms：voice 主线不能为了判意图排队，抢不到就
+            明确失败，让上层退回本地低置信度处理；
+          · 超时 / HTTP 错 / 非法 JSON / 非 dict 一律抛 LlmError。
+        """
+        if not self.api_key:
+            raise LlmError("未配置 api_key")
+        # 配置层已限制 0.3–3.0；这里再兜一层硬上限，杜绝 nan/超大值传到 urlopen。
+        timeout = const.clamp(timeout_s, const.LLM_DEADLINE_HARD_MAX,
+                              "ai.disambiguate.timeout_s")
+        timeout = max(0.05, float(timeout))
+
+        acquired = self._gate.acquire(timeout=self.JUDGE_GATE_WAIT_S)
+        if not acquired:
+            raise LlmError("上一个请求还没结束")
+        started = time.monotonic()
+        try:
+            body = self._judge_payload(question, candidates)
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            }
+            try:
+                data = _post_json(self._endpoint(), body, headers, timeout)
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8", "replace")[:200]
+                except Exception:      # noqa: BLE001
+                    pass
+                raise LlmError(f"HTTP {exc.code}: {detail}") from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise LlmError(f"请求失败：{exc}") from exc
+
+            if not isinstance(data, dict):
+                raise LlmError(f"响应结构不符：{str(data)[:200]}")
+            try:
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise LlmError(f"响应结构不符：{str(data)[:200]}") from exc
+            if not isinstance(content, str):
+                raise LlmError(f"响应 content 不是文本：{type(content).__name__}")
 
             try:
                 payload = json.loads(content)

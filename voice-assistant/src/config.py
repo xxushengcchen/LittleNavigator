@@ -155,6 +155,16 @@ DEFAULTS: dict[str, Any] = {
         # 等待语音：真正请求模型前先播一句「稍等我一下」，填补空场。
         # 素材缺失或播放失败都静默跳过，绝不挡住主流程。
         "ack": {"enabled": True},
+        # 意图仲裁（v1.5.5）：本地匹配器低置信度 / 两个意图分数接近时，
+        # 让模型只从候选意图里挑一个，再由本地规则回答遥测——模型不接触
+        # 遥测数值。默认开启，但 ai.enabled 默认 false，所以不配 AI 不生效。
+        # timeout_s：只判一次意图，必须远短于回答预算（0.3–3.0 秒）。
+        # min_confidence：低于它视为「没判出来」，上层退回本地处理。
+        "disambiguate": {
+            "enabled": True,
+            "timeout_s": 1.0,
+            "min_confidence": 0.6,
+        },
         "whitelist_intents": [
             "query_laptime", "query_pit", "query_fuel", "query_gap",
             "query_opponent", "query_weather", "query_damage",
@@ -452,9 +462,55 @@ def _validate_ai(cfg: dict) -> None:
         raise ValueError("ai.ack 必须为配置对象")
     if not isinstance(ack.get("enabled"), bool):
         raise ValueError("ai.ack.enabled 必须为布尔值")
+
+    # 意图仲裁（v1.5.5）：仲裁只判一次意图，预算必须比回答短；
+    # min_confidence 是「判不出来」的阈值，0–1 之外没有语义。
+    disambiguate = ai.get("disambiguate")
+    if not isinstance(disambiguate, dict):
+        raise ValueError("ai.disambiguate 必须为配置对象")
+    if not isinstance(disambiguate.get("enabled"), bool):
+        raise ValueError("ai.disambiguate.enabled 必须为布尔值")
+    judge_timeout = disambiguate.get("timeout_s")
+    if isinstance(judge_timeout, bool) or not isinstance(judge_timeout, (int, float)) \
+            or not 0.3 <= judge_timeout <= 3.0:
+        raise ValueError("ai.disambiguate.timeout_s 必须在 0.3–3.0 秒内")
+    min_confidence = disambiguate.get("min_confidence")
+    if isinstance(min_confidence, bool) \
+            or not isinstance(min_confidence, (int, float)) \
+            or not 0.0 <= min_confidence <= 1.0:
+        raise ValueError("ai.disambiguate.min_confidence 必须在 0–1 之间")
     if tts.get("adapter") not in _TTS_ADAPTERS:
         raise ValueError(f"ai.tts.adapter 必须是 {_TTS_ADAPTERS} 之一")
     for key in ("base_url", "api_key", "model", "voice", "speaker",
                 "resource_id", "format"):
         if not isinstance(tts.get(key), str):
             raise ValueError(f"ai.tts.{key} 必须为字符串")
+
+
+def ai_disambiguate_view(cfg: dict | None) -> dict:
+    """AI 意图仲裁的三个**只读**配置值（给 engine.ai_config_view 用）。
+
+    返回键名与 `ai_config_view` 的对外字段一致（`disambiguate_*`），
+    调用方直接 `view.update(ai_disambiguate_view(cfg))` 即可。
+    只派生布尔/数值，不读取也不包含任何密钥；坏值/缺字段用默认值兜底，
+    保证界面永远读得出来（validate 已保证正常路径不会走到兜底）。
+    """
+    ai = (cfg or {}).get("ai") if isinstance(cfg, dict) else None
+    ai = ai if isinstance(ai, dict) else {}
+    raw = ai.get("disambiguate")
+    raw = raw if isinstance(raw, dict) else {}
+    defaults = {"enabled": True, "timeout_s": 1.0, "min_confidence": 0.6}
+
+    def number(key: str) -> float:
+        value = raw.get(key, defaults[key])
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return float(defaults[key])
+        return float(value)
+
+    enabled = raw.get("enabled")
+    return {
+        "disambiguate_enabled": enabled if isinstance(enabled, bool)
+        else defaults["enabled"],
+        "disambiguate_timeout_s": number("timeout_s"),
+        "disambiguate_min_confidence": number("min_confidence"),
+    }

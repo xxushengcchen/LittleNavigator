@@ -254,23 +254,177 @@ class Assistant:
         return should_engage(kind, self.ai.mode, rule_ok, intent,
                              self.ai.whitelist)
 
+    def _disambiguation_settings(self) -> tuple[bool, float, float]:
+        """读 AI 仲裁配置；老配置没有这一段时按默认值工作。"""
+        ai = (self.cfg or {}).get("ai") or {}
+        d = ai.get("disambiguate") or {}
+        try:
+            timeout = float(d.get("timeout_s", 1.0))
+        except (TypeError, ValueError):
+            timeout = 1.0
+        try:
+            min_conf = float(d.get("min_confidence", 0.6))
+        except (TypeError, ValueError):
+            min_conf = 0.6
+        return bool(d.get("enabled", True)), timeout, min_conf
+
+    @staticmethod
+    def _intent_candidates(hit) -> list[dict]:
+        """把匹配器已经算好的 top 候选整理成给 AI 的短清单。
+
+        只带意图名、中文标签和命中的示例问法；**不带遥测数值**。
+        """
+        ranked = list(getattr(hit, "ranked", []) or [])
+        if not ranked:
+            return []
+        try:
+            from .knowledge import INTENT_LABELS
+        except Exception:  # noqa: BLE001
+            INTENT_LABELS = {}
+        out: list[dict] = []
+        seen: set[str] = set()
+        for intent, score, phrase in ranked:
+            if intent in seen:
+                continue
+            seen.add(intent)
+            out.append({
+                "intent": intent,
+                "label": INTENT_LABELS.get(intent, intent),
+                "examples": [str(phrase)],
+                "score": round(float(score), 3),
+            })
+            if len(out) >= 4:
+                break
+        return out
+
+    def _disambiguation_request(self, tr: dict, kind: QueryKind,
+                                text: str) -> dict | None:
+        """判断这句话是否需要 AI 在候选意图间仲裁。
+
+        触发条件刻意保守：
+          · AI 已配置且可用；ai.disambiguate.enabled 为真；
+          · 不是安全/操作类，且普通 AI 路径不会接管；
+          · 至少有两个候选意图；
+          · 未命中（intent=None），或已命中的分数/领先幅度不够高。
+        """
+        enabled, _timeout, _min_conf = self._disambiguation_settings()
+        if not enabled or self.ai is None:
+            return None
+        if not getattr(self.ai, "available", False):
+            return None
+        if kind in (QueryKind.SAFETY, QueryKind.OPERATION):
+            return None
+        # 改车指令必须留在本地确定性匹配里，不能被 AI 仲裁抢走。
+        try:
+            if self.peek_car_command(text) is not None:
+                return None
+        except Exception:  # noqa: BLE001
+            pass
+        if self._ai_should_engage(kind, text, tr.get("intent"), False):
+            return None
+        if tr.get("layer") == "l1_keyword":
+            return None
+        hit = tr.get("_hit")
+        if hit is None:
+            return None
+        candidates = self._intent_candidates(hit)
+        if len(candidates) < 2:
+            return None
+        score = float(getattr(hit, "score", 0.0) or 0.0)
+        margin = float(getattr(hit, "margin", 0.0) or 0.0)
+        if tr.get("intent") is not None and score >= 0.90 and margin >= 0.10:
+            return None
+        return {
+            "candidates": candidates,
+            "score": round(score, 3),
+            "margin": round(margin, 3),
+            "phrase": str(getattr(hit, "phrase", "") or ""),
+        }
+
+    def judge_intent(self, text: str, candidates: list[dict]) -> str | None:
+        """锁外调用 AI 只做意图选择；返回候选内的 intent，失败/越界返回 None。"""
+        enabled, timeout, min_conf = self._disambiguation_settings()
+        if not enabled or self.ai is None or not candidates:
+            return None
+        if not getattr(self.ai, "available", False):
+            return None
+        try:
+            judge = getattr(self.ai, "judge_intent", None)
+            if callable(judge):
+                result = judge(text, candidates, timeout_s=timeout)
+            else:
+                client = getattr(self.ai, "client", None)
+                result = client.judge_intent(text, candidates,
+                                             timeout_s=timeout)
+        except Exception as exc:  # noqa: BLE001 - 仲裁失败不拖垮主流程
+            try:
+                self._log(self.miss_log, {"q": text, "ai_judge_error": str(exc)[:200]})
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+        if not isinstance(result, dict):
+            return None
+        intent = str(result.get("intent") or "")
+        valid = {str(c.get("intent")) for c in candidates if isinstance(c, dict)}
+        try:
+            confidence = float(result.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if intent not in valid or confidence < min_conf:
+            return None
+        return intent
+
     @exclusive
     def ask(self, text: str, *, source: str = "keyboard",
-            extra: dict[str, Any] | None = None) -> dict:
+            extra: dict[str, Any] | None = None,
+            forced_intent: str | None = None,
+            allow_disambiguate: bool = True,
+            force_refuse: bool = False) -> dict:
         """规则层问答。**不含模型调用**——那是 ask_ai()，它不持锁。
 
         为什么必须拆开：`@exclusive` 会持 `_operation_lock` 且把 `busy` 置真，
         而 `busy` 会让 PTT 监听丢弃按键。若模型调用留在这里，等模型的
         1~2 秒里麦克风全程是聋的，「新问题取消旧问题」根本触发不了。
+
+        v1.5.5：`forced_intent` 是 Service 在锁外拿到 AI 仲裁结果后回填的
+        意图；`allow_disambiguate=False` 用于仲裁失败后走普通拒绝，避免
+        再次返回同一个仲裁请求。
         """
         p = lambda s: print(s, file=self.out)  # noqa: E731
         extra = dict(extra or {})
         # 入口先记「听到什么」：后面无论走规则还是 AI，Overlay 第一行都要有。
         self.set_heard(text)
         tr = self._resolve(text, strict=self._strict_for(source))
+        if forced_intent:
+            tr = dict(tr)
+            tr["intent"] = forced_intent
+            tr["layer"] = "ai_disambiguate"
+            tr["why"] = f"AI 意图仲裁 → {forced_intent}"
         snap = self.snapshot()
         rec: dict = {"q": text, "source": source, **extra}
         kind = classify(text, tr["intent"])
+
+        if force_refuse:
+            rec.update({"ok": False, "intent": tr.get("intent"),
+                        "kind": kind.value,
+                        "reason": "意图接近，但没能判断成可回答的问题"})
+            if not self.global_stop_local:
+                self._say_refusal(kind)
+            self._log(self.miss_log, rec)
+            return rec
+
+        # v1.5.5：低置信度/候选接近时先不播，锁外让 Service 问 AI 选意图。
+        # 必须是「不会走普通 AI 分析」的情况，否则全量 AI 档已经在等模型回答，
+        # 再仲裁一次只会多花一次请求。
+        if allow_disambiguate and not forced_intent:
+            request = self._disambiguation_request(tr, kind, text)
+            if request is not None:
+                rec.update({"ok": False, "intent": tr.get("intent"),
+                            "kind": kind.value, "ai_disambiguate": request,
+                            "reason": "意图接近，等待 AI 判定"})
+                self._live(state="thinking", answer="", error="")
+                self._log(self.miss_log, rec)
+                return rec
 
         # 会走 AI 的问题立刻进「思考中」：规则层这一段（尤其改车指令）
         # 可能还要几十毫秒，但用户松键后马上的视觉反馈应当是思考中。
@@ -801,6 +955,10 @@ class Assistant:
             "analysis_key_bound": bool(ai.get("analysis_key")),
             # 等待语音开关（Overlay/设置页读取；默认开）。
             "ack_enabled": bool((ai.get("ack") or {}).get("enabled", True)),
+            # v1.5.5 AI 意图仲裁：只读展示，不暴露 key。
+            "disambiguate_enabled": self._disambiguation_settings()[0],
+            "disambiguate_timeout_s": self._disambiguation_settings()[1],
+            "disambiguate_min_confidence": self._disambiguation_settings()[2],
             "tts": {
                 "adapter": tts.get("adapter") or "off",
                 "base_url": tts.get("base_url") or "",

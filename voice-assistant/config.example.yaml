@@ -130,6 +130,12 @@ ai:
   # 等待语音：请求模型前先播一句「稍等我一下」（素材缺失时自动跳过）
   ack:
     enabled: true
+  # 意图仲裁（v1.5.5）：本地意图分数低/接近时，让 AI 只从候选意图里选一个，
+  # 再由本地规则回答遥测（AI 不接触遥测数值）。未配置 AI 时不生效。
+  disambiguate:
+    enabled: true
+    timeout_s: 1.0             # 0.3–3.0 秒，必须远短于回答预算
+    min_confidence: 0.6        # 0–1，低于它视为没判出来
   tts:
     adapter: "off"             # off | doubao | openai
     timeout_s: 2.5

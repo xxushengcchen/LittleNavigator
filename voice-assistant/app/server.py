@@ -224,6 +224,7 @@ class Service:
 
         def on_result(text: str, meta: dict) -> None:
             rec = self.asst.ask(text, source="voice", extra=meta)
+            rec = self._maybe_disambiguate(rec, text, "voice", meta)
             self.last_ask = rec
             self._maybe_ai(rec, text, source="voice")
 
@@ -264,6 +265,31 @@ class Service:
         except Exception as exc:       # noqa: BLE001
             self.log.write(f"AI 转交失败：{exc}\n")
             return rec
+
+    def _maybe_disambiguate(self, rec: dict, text: str, source: str,
+                            extra: dict | None) -> dict:
+        """v1.5.5：规则层低置信度时，在锁外让 AI 只做意图选择。
+
+        `Assistant.ask()` 已经释放了操作锁，这一步才发网络请求；选中的
+        意图再回填给 `Assistant.ask(forced_intent=...)`，由本地规则回答
+        遥测。AI 不接触遥测数值，也不直接生成答案。
+        """
+        request = rec.get("ai_disambiguate")
+        if not isinstance(request, dict):
+            return rec
+        candidates = request.get("candidates") or []
+        judged = self.asst.judge_intent(text, candidates)
+        meta = dict(extra or {})
+        meta["ai_disambiguate"] = request
+        meta["ai_disambiguate_intent"] = judged
+        if judged:
+            out = self.asst.ask(text, source=source, extra=meta,
+                                forced_intent=judged)
+        else:
+            out = self.asst.ask(text, source=source, extra=meta,
+                                allow_disambiguate=False, force_refuse=True)
+        self.last_ask = out
+        return out
 
     def stop_listener(self) -> dict:
         with self.listener_lock:
@@ -598,6 +624,7 @@ class Service:
             tr = self.asst.explain(text, strict=False)
             if play:
                 rec = self.asst.ask(text)
+                rec = self._maybe_disambiguate(rec, text, "keyboard", None)
                 self.last_ask = rec
                 rec = self._maybe_ai(rec, text, source="keyboard")
                 tr["playback"] = rec
@@ -828,6 +855,8 @@ class Service:
                           "api_key", "timeout_s", "max_tokens",
                           "max_answer_chars", "rate_limit_per_min",
                           "analysis_key", "whitelist_intents", "tts", "ack",
+                          # v1.5.5：AI 意图仲裁（只判意图，不改回答数值）
+                          "disambiguate",
                           # v1.5.2：全局停止本地播报 + 思考模式
                           "global_stop_local", "thinking_mode"},
                    "ptt": {"vk", "binding", "min_hold_ms", "max_hold_s", "poll_ms", "input_device"},
@@ -845,6 +874,8 @@ class Service:
         for section, key, keys in [("intent", "l1_keyword", {"enabled"}),
                                    ("playback", "ducking", {"enabled", "amount_db", "processes"}),
                                    ("ai", "ack", {"enabled"}),
+                                   ("ai", "disambiguate", {"enabled", "timeout_s",
+                                                           "min_confidence"}),
                                    ("ai", "tts", {"adapter", "base_url", "api_key",
                                                   "model", "voice", "speaker",
                                                   "resource_id", "format",

@@ -185,6 +185,14 @@ ai:
   # 素材来自 assistant-extra 包的 AST_ACK_01..20；缺失时自动跳过。
   ack:
     enabled: true
+  # 意图仲裁（v1.5.5）：本地短语分数低或两个意图分数接近时，
+  # 让模型只从候选意图里挑一个，再由本地规则回答遥测——模型不接触遥测数值。
+  # timeout_s 只判一次意图，必须远短于回答预算（范围 0.3–3.0 秒）；
+  # min_confidence 以下视为「没判出来」，退回本地处理（0–1）。
+  disambiguate:
+    enabled: true
+    timeout_s: 1.0
+    min_confidence: 0.6
   # 分析键：默认不绑。首次启用 AI 时界面会引导采集一次，
   # 避免与游戏内按键冲突。vk 是 Windows 虚拟键码。
   analysis_key: null
