@@ -42,7 +42,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
   </picture>
 </p>
 
-🤝 赞助支持：**MoonDrop、IFP Wargame**；车队：**Drag-On XTT Racing**。感谢他们对项目的支持。
+🤝 赞助支持：**@oo**；**MoonDrop、IFP Wargame**；车队：**Drag-On XTT Racing**。感谢他们对项目的支持。
 
 ## 开车时，直接开口问
 
