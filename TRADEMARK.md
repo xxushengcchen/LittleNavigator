@@ -28,4 +28,4 @@
 
 本文不表示相关商标已经注册；维护者保留申请注册和追究混淆、假冒、虚假宣传的权利。商业授权（[COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)）不自动授予商标使用权，需另行书面约定。
 
-如对某个具体用法不确定，请先通过 GitHub Issue 联系维护者。
+如对某个具体用法不确定，或需要商业商标许可，请发邮件到 [akaiwakamimeclerc@gmail.com](mailto:akaiwakamimeclerc@gmail.com)，也可先在 GitHub Issue 说明非敏感需求。
