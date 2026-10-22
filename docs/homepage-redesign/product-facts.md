@@ -14,7 +14,7 @@
 | 普通用户安装 exe，无需 Python；`--sim` 为模拟模式参数 | `app/desktop.py`；开发指南；安装脚本 |
 | 当前正式版 v1.4.5，安装附件与校验文件均存在 | GitHub 连接器读取 releases/latest，tag v1.4.5，draft=false，prerelease=false |
 | 现有截图是真实软件截图，但数据为模拟夹具 | `docs/ui-preview/v1.4.5/`；版本说明与截图标注 |
-| 源码 MIT；品牌、模型、语音等不自动适用 MIT | `LICENSE`、`THIRD_PARTY_NOTICES.md` |
+| 源码 PolyForm Noncommercial（商业使用需授权）；品牌、模型、语音等不自动适用代码许可证 | `LICENSE`、`COMMERCIAL-LICENSE.md`、`THIRD_PARTY_NOTICES.md` |
 | 没有多语言 README，仅有根 README 和源码目录说明 | 本地文件清单 |
 
 已阅读根 README、DEVELOPMENT、CONTRIBUTING、版本说明、界面指南，以及入口、引擎、改车与配置相关代码。不宣称实测性能、用户数量、真实赛事验收或任意平台兼容。

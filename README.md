@@ -2,7 +2,9 @@
 
 🏁 给 iRacing 中文玩家的语音助手与 Spotter 语音包。按住按钮说话，松开后听回答，让注意力留在赛道。
 
-Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码 MIT](LICENSE)
+Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码公开 · 个人非商业免费](LICENSE)
+
+> 当前正式版仍是 v1.5.5（MIT）。仓库开发版从 v1.6.0 起切换为 PolyForm Noncommercial；商业使用需单独授权。
 
 [⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [完整使用指南](docs/guide/user-guide.md) · [快速开始](#三步开始使用) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
 
@@ -198,6 +200,12 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 
 ## 许可与致谢
 
-程序源代码采用 [MIT License](LICENSE)。预训练模型、第三方依赖、品牌标识与语音资源保留各自来源和使用条件，详见 [素材与依赖说明](THIRD_PARTY_NOTICES.md)。
+程序源代码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：个人、非商业用途免费；**商业使用需要单独取得 [商业授权](COMMERCIAL-LICENSE.md)**。这是源码公开（source-available）许可，不属于 OSI 定义下的开源许可证。
+
+- [许可证变更说明](LICENSE-CHANGE.md)：v1.5.5 及更早版本仍为 MIT，v1.6.0 起切换
+- [素材、语音与品牌许可](ASSETS-LICENSE.md)：代码许可证不自动覆盖模型、语音、Logo、赞助商标识
+- [商标与品牌使用政策](TRADEMARK.md)：fork 可以，但不能冒充官方
+- [安装包 EULA](INSTALLER-EULA.md)：官方安装包的个人非商业使用边界
+- [第三方依赖说明](THIRD_PARTY_NOTICES.md)：模型、语音、字体与依赖的各自许可
 
 制作：xushengchen from Moondrop-Dox Racing。感谢 IFP Wargame、MoonDrop 的赞助支持，以及 Drag-On XTT 车队的支持。项目由社区维护，**不是 iRacing 官方软件**。

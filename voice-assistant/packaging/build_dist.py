@@ -106,7 +106,9 @@ TTS 在同页的折叠区单独配置、保存；不配 TTS 时 AI 只有文字�
 便携版设置/日志/状态：程序目录；config.local.yaml 覆盖默认配置。
 升级前退出程序，在相同范围和位置安装。升级和卸载保留用户数据。
 intents_examples.yaml 是短语库；models 是本地模型；build 下是语音。
-使用说明、LICENSE、THIRD_PARTY_NOTICES.md 随包提供。
+使用说明、LICENSE、LICENSE-CHANGE.md、ASSETS-LICENSE.md、COMMERCIAL-LICENSE.md、
+TRADEMARK.md、INSTALLER-EULA.md、THIRD_PARTY_NOTICES.md 随包提供。
+个人非商业免费；商业使用需单独取得商业授权（见 COMMERCIAL-LICENSE.md）。
 不要向公开反馈上传 API Key 或完整个人日志。
 
 六、数据范围
@@ -168,7 +170,9 @@ def main() -> int:
     (out_dir / "使用说明.txt").write_text(readme(), encoding="utf-8")
     shutil.copy2(VA / "intents_examples.yaml", out_dir / "intents_examples.yaml")
     shutil.copy2(VA / "VERSION", out_dir / "VERSION")
-    for notice in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+    for notice in ("LICENSE", "LICENSE-CHANGE.md", "ASSETS-LICENSE.md",
+                   "COMMERCIAL-LICENSE.md", "TRADEMARK.md",
+                   "INSTALLER-EULA.md", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(PROJ / notice, out_dir / notice)
     if not args.no_assets:
         print("铺模型与语音包（几百 MB，慢一点）…")

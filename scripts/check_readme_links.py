@@ -7,6 +7,8 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 FILES = [
     'README.md', 'voice-assistant/README.md', 'THIRD_PARTY_NOTICES.md',
+    'LICENSE-CHANGE.md', 'COMMERCIAL-LICENSE.md', 'ASSETS-LICENSE.md',
+    'TRADEMARK.md', 'INSTALLER-EULA.md',
     'assets/readme/README.md', 'docs/guide/spotter-install.md',
     'docs/guide/capabilities-and-limits.md',
     'docs/guide/api-setup.md', 'docs/guide/v1.4.5-interface.md',

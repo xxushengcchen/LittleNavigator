@@ -366,6 +366,6 @@ AI 回答有超时、长度和数值来源检查；遥测数据在生成过程�
 - [素材与依赖说明](../../THIRD_PARTY_NOTICES.md)
 - [版本说明](../releases/v1.5.5.md)
 
-程序源代码采用 [MIT License](../../LICENSE)。预训练模型、第三方依赖、品牌标识与语音资源保留各自来源和使用条件。
+程序源代码采用 [PolyForm Noncommercial License 1.0.0](../../LICENSE)：个人、非商业使用免费；商业使用需要单独取得 [商业授权](../../COMMERCIAL-LICENSE.md)。预训练模型、第三方依赖、品牌标识与语音资源保留各自来源和使用条件，详见 [素材许可](../../ASSETS-LICENSE.md) 与 [第三方说明](../../THIRD_PARTY_NOTICES.md)。
 
 项目由社区维护，**不是 iRacing 官方软件**。
