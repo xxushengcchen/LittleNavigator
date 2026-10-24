@@ -15,6 +15,27 @@ from typing import Any
 
 from .segments import SegmentModel, normalize_sector_starts
 
+
+def _positive(value: Any) -> bool:
+    """有限正数（bool 不算）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value > 0
+    except OverflowError:
+        return False
+
+
+def _nonneg(value: Any) -> bool:
+    """有限非负数（bool 不算）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
+
+
 # iRacing SessionFlags 位定义（只挑用得到的）
 FLAG_BITS = {
     "checkered": 0x00000001,
@@ -678,6 +699,13 @@ class IrsdkTelemetry:
                 s.field_size = len([x for x in arr if x and x > 0])
         except Exception:  # noqa: BLE001
             pass
+        # iRacing 在部分 AI/测试会话里 CarIdxPosition 只给玩家 1，其余为 0，
+        # 但 SessionInfo.ResultsPositions 有完整名次/圈速。用结果页补缺，
+        # 否则「第一名最快圈」会选中玩家自己，前后车也会找不到目标。
+        try:
+            self._apply_session_results(s, ir)
+        except Exception:  # noqa: BLE001
+            pass
         if s.laps_remain is not None and not 0 <= s.laps_remain <= 9999:
             s.laps_remain = None
         for name in ("lap_last", "lap_best", "position",'class_position'):
@@ -685,6 +713,91 @@ class IrsdkTelemetry:
                 setattr(s, name, None)
         self._err = None
         return s
+
+    @staticmethod
+    def _apply_session_results(s: Snapshot, ir) -> None:
+        """用 SessionInfo.ResultsPositions 补 CarIdx* 的空洞。
+
+        真实会话里遇到过：CarIdxPosition 只有玩家是 1，其余 20 辆车全是 0，
+        但结果页有完整 Position/FastestTime/LastTime/LapsComplete。只补缺失值，
+        不覆盖 SDK 已经给出的有效值；没有结果页时保持原样。
+        """
+        sessions = (ir["SessionInfo"] or {}).get("Sessions") or []
+        want = ir["SessionNum"]
+        row = next((r for r in sessions if r.get("SessionNum") == want),
+                   sessions[-1] if sessions else None)
+        results = (row or {}).get("ResultsPositions") or []
+        if not results:
+            return
+        n = max(len(s.car_lap_dist or []),
+                max((int(r.get("CarIdx", -1)) + 1 for r in results
+                     if isinstance(r.get("CarIdx"), int)), default=0))
+
+        def widen(raw):
+            values = list(raw or [])
+            if len(values) < n:
+                values += [None] * (n - len(values))
+            return values
+
+        positions = widen(s.car_positions)
+        class_positions = widen(s.car_class_positions)
+        last_laps = widen(s.car_last_laps)
+        best_laps = widen(s.car_best_laps)
+        completed = widen(s.car_completed_laps)
+        result_positions = [
+            (int(r["CarIdx"]), int(r["Position"]))
+            for r in results
+            if isinstance(r, dict) and isinstance(r.get("CarIdx"), int)
+            and not isinstance(r.get("CarIdx"), bool)
+            and isinstance(r.get("Position"), int)
+            and not isinstance(r.get("Position"), bool) and r["Position"] > 0
+        ]
+        # CarIdxPosition 在该会话里只有玩家有值（其余全 0），此时以结果页
+        # 的完整名次为准；正常会话 CarIdxPosition 有效时只补缺，不覆盖。
+        if len(result_positions) >= 2 and sum(1 for p in positions if _positive(p)) < 2:
+            positions = [0] * n
+            for idx, pos in result_positions:
+                if 0 <= idx < n:
+                    positions[idx] = pos
+        got_positions = 0
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            idx = result.get("CarIdx")
+            if not isinstance(idx, int) or isinstance(idx, bool) or not 0 <= idx < n:
+                continue
+            pos = result.get("Position")
+            if isinstance(pos, int) and not isinstance(pos, bool) and pos > 0:
+                if not _positive(positions[idx]):
+                    positions[idx] = pos
+                got_positions += 1
+            cpos = result.get("ClassPosition")
+            if isinstance(cpos, int) and not isinstance(cpos, bool) and cpos > 0 \
+                    and not _positive(class_positions[idx]):
+                class_positions[idx] = cpos
+            fast = result.get("FastestTime")
+            if _positive(fast) and not _positive(best_laps[idx]):
+                best_laps[idx] = fast
+            last = result.get("LastTime")
+            if _positive(last) and not _positive(last_laps[idx]):
+                last_laps[idx] = last
+            laps = result.get("LapsComplete")
+            if isinstance(laps, int) and not isinstance(laps, bool) and laps >= 0 \
+                    and not _nonneg(completed[idx]):
+                completed[idx] = laps
+        if got_positions:
+            s.car_positions = positions
+            s.car_class_positions = class_positions
+            s.car_last_laps = last_laps
+            s.car_best_laps = best_laps
+            s.car_completed_laps = completed
+            # field_size 以结果页的有效名次为准；pace car 不应算入。
+            pace = set(s.pace_car_indices or [])
+            s.field_size = len([
+                r for r in results
+                if isinstance(r.get("Position"), int) and r["Position"] > 0
+                and r.get("CarIdx") not in pace
+            ]) or s.field_size
 
     def _session_sector_starts(self, ir, session_key) -> tuple[float, ...]:
         """读 SplitTimeInfo.Sectors[].SectorStartPct，按 session 缓存。

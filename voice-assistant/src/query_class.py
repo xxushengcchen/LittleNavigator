@@ -123,9 +123,18 @@ def classify(text: str, intent: str | None) -> QueryKind:
 
     has_analysis = any(word in q for word in ANALYSIS_WORDS)
 
-    # 3) 分析类先于**弱**操作词：避免把「我调整了刹车之后为什么推头」
-    #    这种最该交给模型的问题当成操作请求拒掉。强操作词已在第 2 步截获。
+    # 「刚才那个弯为什么慢」是分析题，不能因为带「弯」就降级成本地拒答。
     if has_analysis:
+        return QueryKind.ANALYSIS
+
+    # 分段问题统一走 AI 分析路径；具体怎么答由 AI 结合 segments 上下文组织。
+    # 全量分段问题会在 engine 入口先被拦成 AST_REFUSE_LATER，不会请求模型。
+    from .segment_rules import is_corner_question, is_segment_question
+    if is_corner_question(q):
+        # 只有官方赛段数据，没有弯道几何；纯事实型弯道问题留给本地明确拒答，
+        # 不能交给模型凭空猜哪个弯。
+        return QueryKind.KNOWN
+    if is_segment_question(q):
         return QueryKind.ANALYSIS
 
     # 4) 没有分析意图，弱操作词才按操作请求处理

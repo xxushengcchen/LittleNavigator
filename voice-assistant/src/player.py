@@ -1,4 +1,4 @@
-"""播一个 wav：可指定输出设备、可调音量、播报时压低游戏音量。
+"""播一个 wav：可指定输出设备、可调音量。
 
 默认后端 sounddevice（能选设备、能控音量）；环境缺 PortAudio 时退回
 Windows 自带的 winsound（只能播到系统默认设备，零依赖兜底）。
@@ -55,11 +55,10 @@ def _read_wav_bytes(blob: bytes) -> tuple[np.ndarray, int]:
 
 class Player:
     def __init__(self, enabled: bool = True, device=None, volume: float = 1.0,
-                 ducker=None, out=sys.stdout):
+                 out=sys.stdout):
         self.enabled = enabled
         self.device = device
         self.volume = float(volume)
-        self.ducker = ducker
         self.out = out
         self._backend = "none"
         self._sd = None
@@ -98,19 +97,13 @@ class Player:
         if not p.exists():
             raise FileNotFoundError(f"音频不存在：{p}")
 
-        if self.ducker is not None:
-            self.ducker.duck()
-        try:
-            if self._sd is not None:
-                x, sr = _read_wav(p)
-                if self.volume != 1.0:
-                    x = x * self.volume
-                self._sd.play(x, sr, device=self.device, blocking=True)
-            elif self._winsound is not None:
-                self._winsound.PlaySound(str(p), self._winsound.SND_FILENAME)
-        finally:
-            if self.ducker is not None:
-                self.ducker.restore()
+        if self._sd is not None:
+            x, sr = _read_wav(p)
+            if self.volume != 1.0:
+                x = x * self.volume
+            self._sd.play(x, sr, device=self.device, blocking=True)
+        elif self._winsound is not None:
+            self._winsound.PlaySound(str(p), self._winsound.SND_FILENAME)
         return time.perf_counter() - t0
 
     def play_bytes(self, blob: bytes) -> float:
@@ -122,34 +115,28 @@ class Player:
         t0 = time.perf_counter()
         if not self.enabled or not blob:
             return 0.0
-        if self.ducker is not None:
-            self.ducker.duck()
-        try:
-            if self._sd is not None:
-                x, sr = _read_wav_bytes(blob)
-                if self.volume != 1.0:
-                    x = x * self.volume
-                self._sd.play(x, sr, device=self.device, blocking=True)
-            elif self._winsound is not None:
-                # winsound 只认文件；临时文件是这个后端的唯一出路
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
-                    fh.write(blob)
-                    tmp = fh.name
+        if self._sd is not None:
+            x, sr = _read_wav_bytes(blob)
+            if self.volume != 1.0:
+                x = x * self.volume
+            self._sd.play(x, sr, device=self.device, blocking=True)
+        elif self._winsound is not None:
+            # winsound 只认文件；临时文件是这个后端的唯一出路
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
+                fh.write(blob)
+                tmp = fh.name
+            try:
+                self._winsound.PlaySound(tmp, self._winsound.SND_FILENAME)
+            finally:
                 try:
-                    self._winsound.PlaySound(tmp, self._winsound.SND_FILENAME)
-                finally:
-                    try:
-                        pathlib.Path(tmp).unlink()
-                    except OSError:
-                        pass
-        finally:
-            if self.ducker is not None:
-                self.ducker.restore()
+                    pathlib.Path(tmp).unlink()
+                except OSError:
+                    pass
         return time.perf_counter() - t0
 
     def play_many(self, paths, gap_ms=60, on_start=None):
-        """整句一次提交，避免片段之间反复打开设备和恢复游戏音量。"""
+        """整句一次提交，避免片段之间反复打开音频设备。"""
         if not self.enabled:
             return 0.0
         if self._sd is None:
@@ -168,15 +155,9 @@ class Player:
             parts.append(data)
         data = np.clip(np.concatenate(parts) * self.volume, -1, 1)
         started = time.perf_counter()
-        if self.ducker:
-            self.ducker.duck()
-        try:
-            if on_start:
-                on_start()
-            self._sd.play(data, rate, device=self.device, blocking=True)
-        finally:
-            if self.ducker:
-                self.ducker.restore()
+        if on_start:
+            on_start()
+        self._sd.play(data, rate, device=self.device, blocking=True)
         return time.perf_counter() - started
 
     def stop(self) -> None:
@@ -184,5 +165,3 @@ class Player:
             self._sd.stop()
         if self._winsound is not None:
             self._winsound.PlaySound(None, self._winsound.SND_PURGE)
-        if self.ducker is not None:
-            self.ducker.restore()

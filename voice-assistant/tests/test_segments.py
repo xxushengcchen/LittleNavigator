@@ -339,6 +339,74 @@ class InterpolationTests(unittest.TestCase):
 
 
 class LapValidationTests(unittest.TestCase):
+    def test_official_lap_missing_uses_car_last_laps(self):
+        """在线/重连时 lap_last 可能短暂为 None，但逐车数组有成绩。"""
+        from dataclasses import replace
+        model = SegmentModel()
+        durations = (80.0, 80.0)
+        t = 0.0
+        while t < sum(durations) - 1e-9:
+            snap = frame(t, durations)
+            model.update(replace(snap, lap_last=None))
+            t += 0.25
+        model.update(replace(frame(sum(durations), durations), lap_last=None))
+        self.assertEqual(len(model.player_recent(1)), 1)
+
+    def test_official_lap_arrives_one_frame_after_crossing(self):
+        """跨线帧 LapLastLapTime 还没更新，下一帧到达时必须补结算。"""
+        from dataclasses import replace
+        model = SegmentModel()
+        durations = (80.0, 80.0, 80.0)
+        t = 0.0
+        while t < sum(durations) - 1e-9:
+            snap = frame(t, durations)
+            if abs(t - 160.0) < 1e-9:      # 第二圈跨线帧：官方圈速暂缺
+                snap = replace(snap, lap_last=None)
+            model.update(snap)
+            t += 0.25
+        model.update(frame(sum(durations), durations))
+        valid = [lap for lap in model.player_recent(5) if lap.valid]
+        self.assertIn(2, [lap.lap for lap in valid])
+
+    def test_stale_official_lap_waits_for_matching_time(self):
+        """官方圈速先报上一圈：Σ 对不上时暂缓，等它真的更新。"""
+        from dataclasses import replace
+        model = SegmentModel()
+        durations = (80.0, 90.0, 100.0)
+        t = 0.0
+        while t < sum(durations) - 1e-9:
+            snap = frame(t, durations)
+            if abs(t - 170.0) < 1e-9:
+                snap = replace(snap, lap_last=None)   # 跨线帧
+            elif abs(t - 170.25) < 1e-9:
+                snap = replace(snap, lap_last=80.0)   # 还停在上上圈
+            elif abs(t - 170.5) < 1e-9:
+                snap = replace(snap, lap_last=90.0)   # 真正更新
+            model.update(snap)
+            t += 0.25
+        model.update(frame(sum(durations), durations))
+        valid = [lap for lap in model.player_recent(5) if lap.valid]
+        self.assertIn(2, [lap.lap for lap in valid])
+
+    def test_stale_official_at_crossing_also_waits(self):
+        from dataclasses import replace
+        model = SegmentModel()
+        durations = (80.0, 90.0, 100.0)
+        t = 0.0
+        while t < sum(durations) - 1e-9:
+            snap = frame(t, durations)
+            if abs(t - 170.0) < 1e-9:
+                snap = replace(snap, lap_last=80.0)   # 跨线帧本身是上一圈
+            elif abs(t - 170.25) < 1e-9:
+                snap = replace(snap, lap_last=80.0)
+            elif abs(t - 170.5) < 1e-9:
+                snap = replace(snap, lap_last=90.0)
+            model.update(snap)
+            t += 0.25
+        model.update(frame(sum(durations), durations))
+        valid = [lap for lap in model.player_recent(5) if lap.valid]
+        self.assertIn(2, [lap.lap for lap in valid])
+
     def test_clean_lap_is_valid_and_complete(self):
         model = SegmentModel()
         feed(model)

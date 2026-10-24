@@ -285,6 +285,15 @@ def _check_segments(text: str, stripped: str, ctx: dict) -> tuple[str | None, st
         return "回答引用了分段数据，但本次上下文没有 segments 层", stripped
     deltas = _segment_deltas(ctx)
 
+    # 硬边界：模型也不能把整圈所有分段逐条念完；全量请求在入口已拦成
+    # AST_REFUSE_LATER，这里兜住模型自由发挥。
+    referenced = {
+        _sector_number(m.group(1)) for m in _SECTOR_REF_RE.finditer(text)
+    }
+    referenced.discard(None)
+    if len(referenced) >= count:
+        return "不能播报全部分段", stripped
+
     # 先处理「段差」整段：它的文本里包含「第 N 段」，先摘掉才不会把
     # 「比前车慢 0.20 秒」里的 0.20 留到普通数字闸去误杀。
     for match in _SECTOR_DELTA_RE.finditer(text):

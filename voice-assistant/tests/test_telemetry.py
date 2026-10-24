@@ -274,5 +274,56 @@ class DerivedTrackerSegmentsTests(unittest.TestCase):
                                places=2)
 
 
+class SessionResultsFallbackTests(unittest.TestCase):
+    """v1.5.5 实测：CarIdxPosition 只给玩家 1，其余为 0。
+
+    结果页有完整名次/圈速时必须补缺，否则「第一名最快圈」会选中玩家，
+    「前车/后车」会找不到目标；正常会话则不能覆盖 SDK 的有效值。
+    """
+
+    def _snap(self, positions):
+        return Snapshot(connected=True, car_idx=0,
+                        car_lap_dist=[0.1, 0.2, 0.3],
+                        car_positions=positions,
+                        car_last_laps=[None, None, None],
+                        car_best_laps=[None, None, None],
+                        car_completed_laps=[None, None, None],
+                        field_size=1)
+
+    def test_fills_positions_and_laps_from_results(self):
+        tel, fake = make_irsdk({
+            "SessionNum": 0,
+            "SessionInfo": {"Sessions": [{
+                "SessionNum": 0,
+                "ResultsPositions": [
+                    {"CarIdx": 2, "Position": 1, "ClassPosition": 1,
+                     "FastestTime": 80.0, "LastTime": 81.0, "LapsComplete": 5},
+                    {"CarIdx": 1, "Position": 2, "ClassPosition": 2,
+                     "FastestTime": 82.0, "LastTime": 83.0, "LapsComplete": 5},
+                ],
+            }]},
+        })
+        s = self._snap([1, 0, 0])
+        tel._apply_session_results(s, fake)
+        self.assertEqual(s.field_size, 2)
+        self.assertEqual(s.car_positions[2], 1)
+        self.assertEqual(s.car_positions[1], 2)
+        self.assertEqual(s.car_best_laps[2], 80.0)
+        self.assertEqual(s.car_last_laps[1], 83.0)
+        self.assertEqual(s.car_completed_laps[2], 5)
+
+    def test_does_not_override_valid_sdk_positions(self):
+        tel, fake = make_irsdk({
+            "SessionNum": 0,
+            "SessionInfo": {"Sessions": [{
+                "SessionNum": 0,
+                "ResultsPositions": [{"CarIdx": 2, "Position": 9}],
+            }]},
+        })
+        s = self._snap([2, 1, 3])
+        tel._apply_session_results(s, fake)
+        self.assertEqual(s.car_positions, [2, 1, 3])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,8 +10,6 @@ numpy>=1.24
 sherpa-onnx>=1.13.8
 opencc-python-reimplemented>=0.1.7
 pypinyin>=0.55
-pycaw>=20260927; sys_platform == 'win32'
-comtypes>=1.4.17; sys_platform == 'win32'
 pywebview>=6.2.1
 
 # 构建发行版

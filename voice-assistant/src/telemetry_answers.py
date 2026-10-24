@@ -87,6 +87,17 @@ def _sector_own_plan(player):
         return Decision(['AST_SECTOR_NO_DATA'],'上一圈没有完整的分段数据')
     return Decision(plan,'上一圈分段：'+'，'.join(parts))
 
+def _is_loss_question(q):
+    """问「哪一段慢/损失/丢时间」，不能把整圈分段全部念一遍。"""
+    return any(w in (q or '') for w in (
+        '哪一段', '哪段', '哪一断', '哪断', '哪里慢', '哪边慢', '慢在哪',
+        '丢时间', '丢了时间', '掉时间', '损失', '最慢', '慢的段', '哪个赛段慢',
+        '赛段情况', '分段情况'))
+
+def _is_corner_question(q):
+    """「哪个弯慢」超出官方赛段数据能力，必须明确拒，不能拿赛段清单冒充。"""
+    return '弯' in (q or '') or '彎' in (q or '')
+
 def _asks_own_sectors(q):
     """问的是「各段用时/上一圈分段」，而不是「哪一段慢」。"""
     targets=('前车','后车','对手','前面','后面','前車','後車')
@@ -119,7 +130,7 @@ def _sector_one_plan(player,index):
     plan+=[_SECTOR_TIME,*numbers.decimal_to_msgids(value,_delta_digits(value)),'SPCC_SECOND']
     return Decision(plan,f'上一圈第{index}段{value:.2f}s')
 
-def _sector_vs_target(view,target,player):
+def _sector_vs_target(view,target,player,loss_question=False):
     """与对比车逐段比：先报落后的段（最多 2），全都不落后再报领先段。"""
     label='后车' if target['role']=='behind' else '前车'
     if not any(delta is not None for delta in (target.get('deltas') or [])):
@@ -134,6 +145,10 @@ def _sector_vs_target(view,target,player):
     if gains:
         word='AST_SECTOR_FASTER_BEHIND' if target['role']=='behind' else 'AST_SECTOR_FASTER_AHEAD'
         return Decision(_sector_delta_ids(gains,word),_sector_reason(gains,'比'+label+'快'))
+    if loss_question:
+        # 「哪一段慢」问的不是逐段清单；持平就明确说没有慢段。
+        return refuse(f'各段跟{label}持平，没有可指出的慢段',
+                      f'跟{label}各段差不多，没有明显慢的赛段。')
     # 逐段都持平：退回自身分段用时，绝不编造损失段。
     return _sector_own_plan(player)
 
@@ -144,8 +159,13 @@ def _sector_answer(q,segments=None,raw_query=None):
         return Decision(['AST_SECTOR_NO_DATA'],'分段模型还没有数据（T1 未接入或本场尚未跨段）')
     player=view.player_laps(3)
     if not player:
-        return Decision(['AST_SECTOR_NO_DATA'],'最近没有有效分段圈')
+        return Decision(['AST_SECTOR_NO_DATA'],
+                        '还没有完整干净圈（刚启动、进站/出站圈不计），跑完一整圈后再问')
     raw=raw_query or q
+    if _is_corner_question(q) or _is_corner_question(raw):
+        return refuse('分段只到官方赛段级，不能定位到具体弯道',
+                      '现在只能按官方赛段分析，还不能判断具体是哪一个弯。')
+    loss_question=_is_loss_question(q) or _is_loss_question(raw)
     ahead=any(w in q for w in ('前车','前面','前方','前車'))
     behind=any(w in q for w in ('后车','后面','后方','後車'))
     if (ahead and behind) or '前后车' in q or '前后车' in raw:
@@ -156,22 +176,29 @@ def _sector_answer(q,segments=None,raw_query=None):
         if target is None:
             # 点名了前车/后车但识别不到：明确拒答，不拿最佳圈冒充对手。
             return refuse('现在识别不到可以对比的前车或后车分段，跑近一点再问')
-        return _sector_vs_target(view,target,player)
+        return _sector_vs_target(view,target,player,loss_question)
     # 用**原始**问句解析段号：canonicalize 会把「第二段」归一成「第几段」，
     # 归一化后的文本里已经没有具体段号了。
     wanted=_wanted_sector(raw)
     if wanted is not None and any(w in raw for w in ('用了','用','多久','多少','多快','时间','成绩')):
         return _sector_one_plan(player,wanted)
-    if _asks_own_sectors(q):
+    if _asks_own_sectors(q) and not loss_question:
         return _sector_own_plan(player)
     target=view.target('ahead') or view.target('behind')
     if target is not None:
-        return _sector_vs_target(view,target,player)
+        return _sector_vs_target(view,target,player,loss_question)
     # 没有可对比的前后车：与个人最佳圈的逐段中位数比，仍然只报自己观察到的差。
     best_losses=view.losses_vs_best(2)
     if best_losses:
         return Decision(_sector_delta_ids(best_losses,'AST_SECTOR_BEST'),
                         _sector_reason(best_losses,'比最佳圈慢'))
+    if loss_question:
+        # 只有一圈时没有「最佳圈」可比；不要用逐段用时冒充哪段慢。
+        if len(player)<2:
+            return refuse('目前只有一圈有效分段，还比较不出哪一段慢',
+                          '现在只有一圈有效分段，还比较不出哪一段慢；跑完下一圈再问我。')
+        return refuse('最近几圈各段都没有明显损失',
+                      '最近几圈各段都没有明显损失，暂时没有慢的赛段。')
     return _sector_own_plan(player)
 
 
@@ -204,6 +231,10 @@ def _rubber(s):
 
 def answer(intent,s,q,segments=None,raw_query=None):
     if intent=='query_sector_loss':
+        from .segment_rules import is_full_split
+        if is_full_split(raw_query or q):
+            # 全部分段成绩一律不报，使用 voice pack 的 AST_REFUSE_LATER 内容。
+            return Decision(['AST_REFUSE_LATER'],'分段全量不播报：专心开车')
         return _sector_answer(q,segments,raw_query)
     if intent=='query_opponent':
         if any(w in q for w in ('这圈','当前圈','差多少','快多少','慢多少','剩几圈','还剩')):
@@ -214,7 +245,11 @@ def answer(intent,s,q,segments=None,raw_query=None):
         if '第一名' in q or '领跑' in q:
             leaders=[i for i,pos in enumerate(s.car_positions or []) if pos==1 and i not in s.pace_car_indices]
             targets.append(('LEADER',leaders[0] if len(leaders)==1 else None))
-        if len(targets)!=1 or targets[0][1] is None:return refuse('没有唯一且有效的目标车辆')
+        if len(targets)!=1 or targets[0][1] is None:
+            if (s.on_pit_road or s.in_pit_stall) and any(
+                    w in q for w in ('前车','前車','后车','後車')):
+                return refuse('你在维修区，暂时识别不到前车或后车，出站后再问')
+            return refuse('没有唯一且有效的目标车辆')
         code,idx=targets[0]
         completed=any(w in q for w in ('完成','圈数')) and '圈速' not in q
         best=any(w in q for w in ('最佳','最快'))

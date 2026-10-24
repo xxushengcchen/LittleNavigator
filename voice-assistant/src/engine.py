@@ -83,20 +83,13 @@ class Assistant:
         self.matcher = PhraseMatcher()
         self.tel, self.tel_warn = telemetry.build(cfg, force_sim=force_sim, sim_advance=sim_advance)
         self.derive = telemetry.DerivedTracker(cfg["telemetry"]["ring_buffer"]["keep_laps"])
-        from .duck import GameDucker
         from .listener import resolve_device
 
         pb = cfg.get("playback", {})
-        duck_cfg = pb.get("ducking", {}) or {}
-        ducker = GameDucker(enabled=duck_cfg.get("enabled", False),
-                                processes=duck_cfg.get("processes"),
-                                amount_db=duck_cfg.get("amount_db", -12.0),
-                                out=out)
-        self.ducker = ducker
         self.player = Player(enabled=pb.get("enabled", True) and not no_play,
                              device=resolve_device(pb.get("device")),
                              volume=pb.get("volume", 1.0),
-                             ducker=ducker, out=out)
+                             out=out)
         self.log_dir = cfg_mod.resolve(cfg, cfg["logging"]["dir"])
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.qa_log = cfg_mod.resolve(cfg, cfg["logging"]["qa_log"])
@@ -403,6 +396,25 @@ class Assistant:
         snap = self.snapshot()
         rec: dict = {"q": text, "source": source, **extra}
         kind = classify(text, tr["intent"])
+
+        # 分段硬边界（底层写死，任何档位/AI 都不能绕过）：
+        # 问全部分段成绩时不报数据，直接用 AST_REFUSE_LATER（“专心开车…”）。
+        from .segment_rules import is_full_split
+        if is_full_split(text):
+            rec.update({
+                "ok": True, "intent": tr.get("intent"),
+                "layer": "segment_full_split", "kind": kind.value,
+                "plan": ["AST_REFUSE_LATER"],
+                "reason": "分段全量不播报：专心开车",
+            })
+            # 全量分段是底层硬边界，即使“全量 AI 档”也播这句固定话术；
+            # 否则用户问全部分段会得不到任何回答。
+            self._say("AST_REFUSE_LATER")
+            self._live(state="answer",
+                       answer="专心开车，杂事交给我就好。", error="")
+            self._log(self.qa_log, rec)
+            return rec
+
 
         if force_refuse:
             rec.update({"ok": False, "intent": tr.get("intent"),
@@ -898,7 +910,6 @@ class Assistant:
                 "enabled": bool(c["playback"]["enabled"]),
                 "device": c["playback"].get("device"),
                 "volume": c["playback"].get("volume", 1.0),
-                "ducking": dict(c["playback"].get("ducking", {})),
             },
             "telemetry": {"provider": c["telemetry"]["provider"]},
             "voice_pack": {"cooldown": c["voice_pack"]["cooldown"],
@@ -979,11 +990,6 @@ class Assistant:
             self.player.device = resolve_device(patch["output_device"])
         if "enabled" in patch:
             self.player.enabled = bool(patch["enabled"])
-        if "ducking" in patch and self.ducker is not None:
-            on = bool(patch["ducking"])
-            if not on:
-                self.ducker.restore()
-            self.ducker.enabled = on
 
     # ------------------------------------------------------------------
     def _resolve(self, text: str, strict: bool) -> dict:

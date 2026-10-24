@@ -237,6 +237,23 @@
   }
 
   /* ---------- 问答记录 ---------- */
+  // v1.6.0：日志里的 layer 是内部代号，界面一律显示中文；后端字段名保持不变。
+  // 新代号漏配时宁可显示「其他」，也不要把内部代号漏到用户眼前。
+  var LAYER_LABELS = {
+    phrase: "短语库",
+    l1_keyword: "关键词兜底",
+    ai_disambiguate: "AI 意图仲裁",
+    refuse: "未识别（已拒绝）",
+    segment_full_split: "分段全量（固定话术）",
+    miss: "未识别",
+    l2: "关键词兜底",
+    l3: "遥测路由",
+    "?": "旧记录（未分类）"
+  };
+  function layerLabel(code) {
+    if (code === undefined || code === null || code === "") { return "本地规则"; }
+    return LAYER_LABELS[code] || "其他";
+  }
   var logFilter = "all";
   var logCache = null;
 
@@ -289,7 +306,7 @@
           '<span class="ira-logtime ira-num">' + esc(r.time) + "</span>" +
           '<div><div class="ira-logq">「' + esc(r.q) + '」</div>' +
           '<div class="ira-loga">' + esc(r.a) + "</div></div>" +
-          '<div class="ira-logside">' + badge(cls, esc(r.path)) +
+          '<div class="ira-logside">' + badge(cls, esc(layerLabel(r.path))) +
           '<span class="ira-num">' + esc(r.ms) + "</span></div></div>";
       }).join("");
     }
@@ -360,7 +377,7 @@
     // 判定结果
     var badgeEl = $("[data-dbg-intent]", panel);
     badgeEl.textContent = tr.kind === "operation" ? "改车 · " + ((tr.cc_action || {}).kind || "")
-      : tr.intent ? tr.intent + " · " + (tr.layer || "") : "拒绝";
+      : tr.intent ? tr.intent + " · " + layerLabel(tr.layer) : "拒绝";
     badgeEl.className = "ira-badge " + (tr.intent ? "l1" : "l3");
     setText("[data-dbg-totaltime]", "判定耗时 " + tr.intent_ms + " ms", panel);
 
@@ -445,10 +462,11 @@
     var buckets = s.buckets || [0, 0, 0, 0];
     var maxB = Math.max(1, Math.max.apply(null, buckets));
     var totalLayers = Object.keys(s.layers || {}).reduce(function (a, k) { return a + s.layers[k]; }, 0) || 1;
-    var cls = { phrase: "var(--accent)", l1_keyword: "var(--muted)", refuse: "var(--faint)",
+    // v1.6.0：颜色按内部代号取，文案统一走 layerLabel()，不再直接展示代号。
+    var cls = { phrase: "var(--accent)", l1_keyword: "var(--muted)",
+                ai_disambiguate: "var(--warn)", refuse: "var(--faint)",
+                segment_full_split: "var(--control)", miss: "var(--faint)",
                 "?": "var(--control)" };
-    var label = { phrase: "短语库", l1_keyword: "关键词兜底", refuse: "拒绝",
-                  "?": "旧记录（未分类）" };
 
     var grid = $(".ira-statgrid", panel);
     if (grid) {
@@ -476,7 +494,7 @@
     if (legend) {
       legend.innerHTML = Object.keys(s.layers || {}).map(function (k) {
         return "<span><span class='ira-swatch' style='background:" + (cls[k] || "#1A6FE0") +
-          "'></span>" + (label[k] || k) + " " + Math.round(s.layers[k] / totalLayers * 100) + "%</span>";
+          "'></span>" + layerLabel(k) + " " + Math.round(s.layers[k] / totalLayers * 100) + "%</span>";
       }).join("") || "<span>还没有数据</span>";
     }
     var missCard = $("[data-misscard]", panel);
@@ -683,6 +701,61 @@
     }).join("");
   }
 
+  // ---------------------------------------------------------------- 模型名拉取
+  // v1.6.0：GET /api/ai/models 用「已保存的」接口地址与密钥拉模型列表。
+  // 列表只放在内存里（不落盘、不写日志），key 永远不进 DOM。
+  // 拉取失败不阻塞手填：下拉收起，输入框照常可用。
+  var aiModelCache = null;
+
+  function aiModelsError(error) {
+    var msg = String((error && error.message) || error || "").trim();
+    var tail = "；可以直接手动填写模型名。";
+    if (/401|403|unauthor|auth|invalid[ _-]?key/i.test(msg)) {
+      return "拉取失败：密钥无效或没有权限" + tail;
+    }
+    if (/404|not[ _-]?found|no[ _-]?such/i.test(msg)) {
+      return "拉取失败：这个接口地址不提供模型列表" + tail;
+    }
+    if (/超时|timeout|timed out|连接失败|network/i.test(msg)) {
+      return "拉取失败：连接超时或网络不可达" + tail;
+    }
+    return "拉取失败：" + (msg || "未知错误") + tail;
+  }
+
+  function applyAiModelOptions(panel, current) {
+    var select = $("#ira-ai-model-select", panel);
+    var input = $("#ira-ai-model", panel);
+    if (!select || !input) { return; }
+    if (!aiModelCache || !aiModelCache.length) {
+      select.hidden = true;
+      select.innerHTML = "";
+      input.hidden = false;
+      return;
+    }
+    var wanted = String(current || "").trim();
+    var selected = aiModelCache.indexOf(wanted) >= 0 ? wanted : "__custom__";
+    select.innerHTML = '<option value="__custom__">手动填写 / 自定义模型</option>' +
+      aiModelCache.map(function (id) {
+        return '<option value="' + esc(id) + '">' + esc(id) + "</option>";
+      }).join("");
+    select.value = selected;
+    select.hidden = false;
+    input.hidden = selected !== "__custom__";
+    if (selected !== "__custom__") { input.value = selected; }
+    select.onchange = function () {
+      var value = select.value;
+      if (value === "__custom__") {
+        input.hidden = false;
+        input.focus();
+        return;
+      }
+      input.hidden = true;
+      input.value = value;
+      pendingDrafts["ira-ai-model"] = value;
+      setText("[data-savehint]", "已选择模型，点「保存模型设置」生效", panel);
+    };
+  }
+
   function renderAiPanel(st) {
     var panel = $('[data-view-panel="ai"]');
     if (!panel) return;
@@ -726,7 +799,7 @@
       field('响应方式','<select class="ira-select" id="ira-ai-mode"><option value="whitelist"'+(aiMode==='whitelist'?' selected':'')+'>白名单 · 推荐</option><option value="analysis_key"'+(aiMode==='analysis_key'?' selected':'')+'>分析键触发</option><option value="full"'+(aiMode==='full'?' selected':'')+'>规则答不上就接管</option><option value="all"'+(aiMode==='all'?' selected':'')+'>全部交给 AI · 最像真人</option></select>','「全部交给 AI」连规则答得上的也交给模型；安全、处罚、改车仍走本地规则（只显示文字）；需配好语音合成才听得到回答。')+
       field('思考模式','<select class="ira-select" id="ira-ai-thinking"><option value="off"'+(thinkingOff?' selected':'')+'>关闭 · 最快</option><option value="low"'+(thinkingOff?'':' selected')+'>不关闭 · 最低思考强度</option></select>','关闭最快；不关闭时使用最低思考强度。')+
       field('服务预设','<select class="ira-select" id="ira-ai-preset">'+aiPresetOptions(a.provider)+'</select>','选择服务商后可继续修改地址和模型名。')+
-      field('模型名','<input class="ira-input" id="ira-ai-model" value="'+esc(a.model || '')+'" placeholder="服务商提供的模型名">','与接口服务中开放的名称一致。')+
+      field('模型名','<div class="ira-model-pick"><select class="ira-select" id="ira-ai-model-select" aria-label="已拉取的模型" hidden></select><input class="ira-input" id="ira-ai-model" aria-label="模型名（可手动填写）" value="'+esc(a.model || '')+'" placeholder="服务商提供的模型名"><button class="ira-btn" type="button" id="ira-ai-models">拉取模型</button></div><span class="ira-model-out" id="ira-ai-models-out" role="status"></span>','用已保存的接口地址与密钥拉取；拉取失败也能直接手填模型名。')+
       field('接口地址','<input class="ira-input" id="ira-ai-url" value="'+esc(a.base_url || '')+'" placeholder="https://api.deepseek.com">','使用兼容 Chat Completions 的接口。')+
       field('API Key','<input class="ira-input" id="ira-ai-key" type="password" autocomplete="off" placeholder="'+(a.api_key_set?'已配置，留空不修改':'粘贴你的密钥')+'">','密钥仅保存在本机，不随安装包发布。')+
       '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" id="ira-ai-save" type="button">保存模型设置</button><button class="ira-btn" id="ira-ai-test" type="button">测试连接</button><span class="ira-savehint" id="ira-ai-testout" role="status"></span></div>'+
@@ -753,6 +826,7 @@
       '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" type="button" id="ira-ov-save">保存 Overlay 设置</button><button class="ira-btn" type="button" id="ira-ov-toggle">立即显示/隐藏</button><button class="ira-btn" type="button" id="ira-ov-reset">恢复默认位置与尺寸</button><span class="ira-savehint" id="ira-ov-out" role="status"></span></div></details>';
 
     bindAiPanel(panel, hint);
+    applyAiModelOptions(panel, a.model || "");
     bindOverlaySettings(panel, ov);
     renderAiReview();
   }
@@ -947,6 +1021,43 @@
         if (!p) return;
         if (p.url) $("#ira-ai-url", panel).value = p.url;
         if (p.model) $("#ira-ai-model", panel).value = p.model;
+        // 换服务商后模型列表不再可信：收起下拉，回到手填。
+        aiModelCache = null;
+        applyAiModelOptions(panel, $("#ira-ai-model", panel).value);
+      });
+    }
+    var urlInput = $("#ira-ai-url", panel);
+    if (urlInput) {
+      urlInput.addEventListener("change", function () {
+        aiModelCache = null;
+        applyAiModelOptions(panel, $("#ira-ai-model", panel).value);
+      });
+    }
+    var modelsBtn = $("#ira-ai-models", panel);
+    if (modelsBtn) {
+      modelsBtn.addEventListener("click", async function () {
+        var out = $("#ira-ai-models-out", panel);
+        var input = $("#ira-ai-model", panel);
+        modelsBtn.disabled = true;
+        if (out) { out.textContent = "正在拉取模型列表…"; }
+        try {
+          var r = await api("/api/ai/models");
+          var list = ((r && r.models) || []).map(function (m) {
+            if (!m) { return ""; }
+            if (typeof m === "string") { return m; }
+            return m.id || m.name || m.model || "";
+          }).filter(function (id) { return !!id; });
+          if (!r || r.ok === false) { throw new Error((r && r.error) || "服务商没有返回模型列表"); }
+          if (!list.length) { throw new Error("服务商返回的模型列表是空的"); }
+          // 只留内存缓存；不写 localStorage，也不把 key 带进任何展示。
+          aiModelCache = list;
+          applyAiModelOptions(panel, input ? input.value : "");
+          if (out) { out.textContent = "已拉取 " + list.length + " 个模型；选择后点「保存模型设置」生效。"; }
+        } catch (e) {
+          if (out) { out.textContent = aiModelsError(e); }
+        } finally {
+          modelsBtn.disabled = false;
+        }
       });
     }
     var saveBtn = $("#ira-ai-save", panel);
@@ -1112,17 +1223,14 @@
   function renderRoutePanel(st, dev) {
     var panel = $('[data-view-panel="route"]');
     var pb = st.config.playback;
-    var duck = (pb.ducking || {});
     var hint = $("[data-savehint]", panel);
     var card = $(".ira-card", panel);
+    // v1.6.0：已删除「压低游戏音量」功能；前端不再展示、也不再保存
+    // playback.ducking。
     card.innerHTML = '<div class="ira-form">' +
       field("播报输出设备", '<select class="ira-select" id="ira-outdev2">' +
         deviceOptions(dev.outputs, pb.device, "系统默认") + "</select>",
         "换成耳机 / 声卡都行；和游戏同一路输出最省事") +
-      field("压低游戏音量", '<select class="ira-select" id="ira-duck2">' +
-        '<option value="1"' + (duck.enabled ? " selected" : "") + ">开</option>" +
-        '<option value="0"' + (duck.enabled ? "" : " selected") + ">关</option></select>",
-        "播报时把 iRacing 的音量降 " + Math.abs(duck.amount_db || 12) + " dB，播完还原") +
       "</div><hr class='ira-hr'>" +
       "<div class='ira-flow'><span class='ira-node hot'>PTT 按住</span>" +
       "<span class='ira-arrow'>→</span><span class='ira-node'>开麦收音</span>" +
@@ -1140,10 +1248,103 @@
       save({ playback: { device: this.value === "" ? null : parseInt(this.value, 10) } },
         hint);
     };
-    $("#ira-duck2", panel).onchange = function () {
-      save({ playback: { ducking: { enabled: this.value === "1" } } }, hint);
-    };
   }
+
+  /* ---------- 关闭询问（v1.6.0） ---------- */
+  // 点标题栏 × 或 Alt+F4 时先问一句：隐藏到托盘 / 直接退出 / 取消。
+  // 桌面端由 app/desktop.py 的 closing 事件兜底（窗口被系统关闭时也会叫出这个框）。
+  var closeDialogEl = null;
+  function ensureCloseDialog() {
+    if (closeDialogEl) { return closeDialogEl; }
+    var layer = document.createElement("div");
+    layer.id = "ln-close-layer";
+    layer.className = "ln-close-layer";
+    layer.hidden = true;
+    layer.innerHTML =
+      '<div class="ln-close-dialog" role="dialog" aria-modal="true" aria-labelledby="ln-close-title" aria-describedby="ln-close-desc">' +
+      '<h2 id="ln-close-title">要关闭小小领航员吗？</h2>' +
+      '<p id="ln-close-desc" class="ira-hint">隐藏到系统托盘后继续在后台待命，双击托盘图标就能恢复窗口；直接退出会停掉监听、播报与 Overlay。</p>' +
+      '<p class="ira-hint ln-close-note" id="ln-close-note" role="status" hidden></p>' +
+      '<div class="ln-close-actions">' +
+      '<button class="ira-btn ira-btn-primary" type="button" id="ln-close-tray">隐藏到系统托盘</button>' +
+      '<button class="ira-btn" type="button" id="ln-close-quit">直接退出</button>' +
+      '<button class="ira-btn" type="button" id="ln-close-cancel">取消</button>' +
+      "</div></div>";
+    document.body.appendChild(layer);
+    closeDialogEl = layer;
+    // 点遮罩 = 取消（和 Esc 一致），避免误点把窗口关掉。
+    layer.addEventListener("mousedown", function (event) {
+      if (event.target === layer) { closeCloseDialog(); }
+    });
+    $("#ln-close-cancel", layer).onclick = function () { closeCloseDialog(); };
+    $("#ln-close-quit", layer).onclick = async function () {
+      var note = $("#ln-close-note", layer);
+      var btn = this;
+      btn.disabled = true;
+      if (note) { note.hidden = false; note.textContent = "正在退出…"; }
+      try {
+        // 沿用既有退出接口：/api/quit 只置 quit_requested，由桌面端收尾。
+        await api("/api/quit", {});
+      } catch (e) {
+        btn.disabled = false;
+        if (note) { note.textContent = "退出失败：" + e.message; }
+      }
+    };
+    $("#ln-close-tray", layer).onclick = async function () {
+      var note = $("#ln-close-note", layer);
+      var btn = this;
+      btn.disabled = true;
+      try {
+        if (!(window.pywebview && window.pywebview.api && window.pywebview.api.hide_to_tray)) {
+          throw new Error("当前是浏览器预览模式，系统托盘只在桌面版可用；可以改选「直接退出」。");
+        }
+        var r = await window.pywebview.api.hide_to_tray();
+        if (!r || r.ok === false) { throw new Error((r && r.error) || "系统托盘不可用"); }
+        closeCloseDialog();
+      } catch (e) {
+        if (note) { note.hidden = false; note.textContent = "无法隐藏到托盘：" + e.message; }
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    // Esc = 取消；Tab 只在对话框内循环，避免焦点跑到底层页面。
+    layer.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCloseDialog();
+        return;
+      }
+      if (event.key !== "Tab") { return; }
+      var focusable = $$("button", layer).filter(function (b) { return !b.disabled; });
+      if (!focusable.length) { return; }
+      var first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus();
+      }
+    });
+    return layer;
+  }
+  function openCloseDialog() {
+    var layer = ensureCloseDialog();
+    layer.hidden = false;
+    document.body.classList.add("ln-close-open");
+    var primary = $("#ln-close-tray", layer);
+    if (primary) { primary.focus(); }
+  }
+  function closeCloseDialog() {
+    if (!closeDialogEl) { return; }
+    closeDialogEl.hidden = true;
+    document.body.classList.remove("ln-close-open");
+    var closeBtn = $('#window-close');
+    if (closeBtn) { closeBtn.focus(); }
+  }
+  // 桌面端 closing 事件会调到这个钩子；返回 true 表示选择框已经叫出来了。
+  window.__lnClosePrompt = function () {
+    openCloseDialog();
+    return true;
+  };
 
   /* ---------- 启动 ---------- */
   var pendingDrafts={};
@@ -1161,7 +1362,7 @@
   $('#ira-export-logs').onclick=async function(){var b=this;b.disabled=true;b.textContent='导出中…';try{var r=await api('/api/export-logs');if(!r.ok)throw new Error(r.error||'导出失败');reportError({message:'日志已导出：'+r.path});}finally{b.disabled=false;b.textContent='导出日志';}};
   $('#dashboard-listen').onclick=async function(){var b=this;b.disabled=true;b.textContent='处理中…';try{await api(window.__state && window.__state.ptt.running?'/api/ptt/stop':'/api/ptt/start',{});await poll();}finally{b.disabled=false;b.textContent=window.__state && window.__state.ptt.running?'暂停监听':'开启监听';}};
   bindDebug();
-  $('#window-close').onclick=async function(){await api('/api/quit',{});};
+  $('#window-close').onclick=function(){openCloseDialog();};
   $('#window-minimize').onclick=function(){if(window.pywebview){window.pywebview.api.minimize();}};
   bindPttButtons();
   relabelFunnel();

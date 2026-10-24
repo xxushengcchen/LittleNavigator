@@ -16,7 +16,8 @@ v1.5.2 起 Overlay 可自由摆放：
   POST /api/overlay/layout 落到 controller.set_bounds()，退出后恢复穿透；
 - 卡片改为贴合内容（fit-content），窗口其余区域全透明。
 
-关窗 = 退出：会顺手停掉 PTT 监听、关掉 HTTP 服务。
+关窗 = 先问：隐藏到系统托盘 / 直接退出 / 取消（v1.6.0）。直接退出会顺手
+停掉 PTT 监听、关掉 HTTP 服务；隐藏到托盘时进程继续在后台待命，从托盘图标恢复。
 """
 from __future__ import annotations
 
@@ -1087,6 +1088,246 @@ def _port_free(port: int) -> bool:
             return False
 
 
+# ---------------------------------------------------------------- 关闭询问 / 托盘
+# v1.6.0：点 × 不再直接静默退出。关闭时先问「隐藏到系统托盘 / 直接退出 / 取消」。
+# 托盘没用 pystray/Pillow：pywebview 在 Windows 上本来就依赖 pythonnet，直接用
+# 它调 WinForms 的 NotifyIcon（System.Windows.Forms 随 pywebview 一起可用），
+# 因此不新增依赖、也不改打包清单。非 Windows 或托盘建不起来时优雅降级：
+# 「隐藏到托盘」返回明确错误，用户仍可「直接退出」。
+TRAY_TITLE = "iRacing 小小领航员"
+
+
+def _tray_asset_icon():
+    """托盘图标：优先用界面里的头像 PNG，取不到再退到 exe 自带图标。
+
+    返回 (Icon, 需要保持引用的对象)。GetHicon 的句柄交给 GDI，进程生命周期内不释放。
+    """
+    from System.Drawing import Bitmap, Icon
+
+    png = pathlib.Path(__file__).resolve().parent / "static" / "avatar.png"
+    if png.is_file():
+        bitmap = Bitmap(str(png))
+        return Icon.FromHandle(bitmap.GetHicon()), bitmap
+    return Icon.ExtractAssociatedIcon(sys.executable), None
+
+
+class TrayIcon:
+    """WinForms 系统托盘（独立 STA 线程 + 自己的消息循环）。
+
+    只做三件事：恢复主窗口、隐藏主窗口、退出程序。任何一步失败只记日志，不能
+    影响主窗口和退出流程——托盘是便利功能，不是必需路径。
+    """
+
+    def __init__(self, window, quit_request, log=print):
+        self._window = window
+        self._quit_request = quit_request
+        self.log = log
+        self._thread = None
+        self._ready = threading.Event()
+        self._stop = threading.Event()
+        self._ok = False
+        self._balloon = None
+        self._notify = None
+        self._timer = None
+        self._application = None
+        self._keep = []
+
+    @property
+    def running(self):
+        thread = self._thread
+        try:
+            return bool(self._ok and thread is not None and thread.IsAlive)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def start(self, timeout=8.0):
+        if sys.platform != "win32":
+            self.log("⚠ 系统托盘仅支持 Windows，已跳过")
+            return False
+        if self._thread is not None:
+            return self.running
+        try:
+            import clr
+            clr.AddReference("System.Threading")
+            from System.Threading import ApartmentState, Thread as NetThread, ThreadStart
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"⚠ 系统托盘初始化失败：{type(exc).__name__}: {exc}")
+            return False
+
+        def entry():
+            try:
+                self._run_ui()
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"⚠ 系统托盘不可用：{type(exc).__name__}: {exc}")
+                self._ok = False
+                self._ready.set()
+
+        self._thread = NetThread(ThreadStart(entry))
+        self._thread.SetApartmentState(ApartmentState.STA)
+        self._thread.IsBackground = True
+        self._thread.Start()
+        self._ready.wait(timeout)
+        if not self.running:
+            self.log("⚠ 系统托盘启动失败（关闭时仍可选「直接退出」）")
+        return self.running
+
+    def _run_ui(self):
+        import clr
+        clr.AddReference("System.Windows.Forms")
+        clr.AddReference("System.Drawing")
+        from System.Windows.Forms import (Application, ContextMenuStrip, NotifyIcon,
+                                          Timer, ToolStripMenuItem, ToolTipIcon)  # noqa: F401
+
+        icon, keep_bitmap = _tray_asset_icon()
+        notify = NotifyIcon()
+        notify.Text = TRAY_TITLE
+        notify.Icon = icon
+        menu = ContextMenuStrip()
+        items = []
+        for label, handler in (("显示主窗口", self._restore),
+                               ("隐藏到托盘", self._hide),
+                               ("退出", self._request_quit)):
+            item = ToolStripMenuItem(label)
+            item.Click += (lambda _sender, _args, action=handler: self._spawn(action))
+            items.append(item)
+            menu.Items.Add(item)
+        notify.ContextMenuStrip = menu
+        notify.DoubleClick += (lambda _sender, _args: self._spawn(self._restore))
+        timer = Timer()
+        timer.Interval = 250
+        timer.Tick += (lambda _sender, _args: self._tick())
+        timer.Start()
+        self._notify = notify
+        self._timer = timer
+        self._application = Application
+        self._keep = [icon, keep_bitmap, menu, items, notify, timer]
+        notify.Visible = True
+        self._ok = True
+        self._ready.set()
+        Application.Run()
+        self._ok = False
+
+    def stop(self, timeout=3.0):
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread.IsAlive:
+            try:
+                thread.Join(int(timeout * 1000))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def show_balloon(self, text):
+        """下次 UI 心跳时弹一条托盘气泡（真正显示必须在托盘线程里做）。"""
+        self._balloon = text
+
+    def _tick(self):
+        if self._balloon is not None and self._notify is not None:
+            text, self._balloon = self._balloon, None
+            try:
+                from System.Windows.Forms import ToolTipIcon
+                self._notify.ShowBalloonTip(2500, TRAY_TITLE, text, ToolTipIcon.Info)
+            except Exception:  # noqa: BLE001
+                pass
+        if self._stop.is_set():
+            self._shutdown()
+
+    def _shutdown(self):
+        self._stop.set()
+        notify, self._notify = self._notify, None
+        if notify is not None:
+            try:
+                notify.Visible = False
+                notify.Dispose()
+            except Exception:  # noqa: BLE001
+                pass
+        timer, self._timer = self._timer, None
+        if timer is not None:
+            try:
+                timer.Stop()
+                timer.Dispose()
+            except Exception:  # noqa: BLE001
+                pass
+        application, self._application = self._application, None
+        if application is not None:
+            try:
+                application.ExitThread()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _spawn(self, action):
+        threading.Thread(target=self._safe, args=(action,), daemon=True).start()
+
+    def _safe(self, action):
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"⚠ 托盘操作失败：{type(exc).__name__}: {exc}")
+
+    def _restore(self):
+        window = self._window
+        if window is None:
+            return
+        window.restore()
+        window.show()
+
+    def _hide(self):
+        if self._window is not None:
+            self._window.hide()
+
+    def _request_quit(self):
+        self._quit_request()
+
+
+def build_close_prompt(window, svc, ensure_tray, log=print):
+    """窗口被关闭时：叫出页面里的选择框；页面没就绪则退化为托盘/退出。"""
+
+    def prompt():
+        if window is None:
+            return
+        try:
+            window.show()
+        except Exception:  # noqa: BLE001
+            pass
+        ready = False
+        try:
+            ready = bool(window.evaluate_js('typeof window.__lnClosePrompt === "function"'))
+        except Exception:  # noqa: BLE001
+            ready = False
+        if ready:
+            try:
+                window.evaluate_js("window.__lnClosePrompt()")
+                return
+            except Exception as exc:  # noqa: BLE001
+                log(f"⚠ 关闭选择框调用失败：{type(exc).__name__}: {exc}")
+        tray = ensure_tray() if ensure_tray is not None else None
+        if tray is not None and getattr(tray, "running", False):
+            try:
+                window.hide()
+                tray.show_balloon("仍在后台运行，双击托盘图标恢复窗口。")
+                return
+            except Exception as exc:  # noqa: BLE001
+                log(f"⚠ 隐藏到托盘失败：{type(exc).__name__}: {exc}")
+        svc.quit_requested = True
+
+    return prompt
+
+
+def build_close_handler(window, svc, prompt, log=print):
+    """pywebview closing 事件的拦截器：返回 False = 取消关闭，先问用户。"""
+
+    def on_closing(*_args, **_kwargs):
+        if getattr(svc, "quit_requested", False):
+            return True                     # 真正退出/冒烟测试收尾：允许关闭
+        try:
+            threading.Thread(target=prompt, name="close-prompt", daemon=True).start()
+        except Exception as exc:  # noqa: BLE001
+            log(f"⚠ 关闭拦截失败：{type(exc).__name__}: {exc}")
+            return True
+        return False
+
+    return on_closing
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1180,6 +1421,24 @@ def main(argv: list[str] | None = None) -> int:
     stop_hotkey = threading.Event()
     smoke_holder: dict = {"result": None}
     smoke_path: dict = {"path": None}
+    tray_holder: dict = {"tray": None}
+
+    def request_quit() -> None:
+        svc.quit_requested = True
+
+    def ensure_tray():
+        """懒启动系统托盘：只有真的要用「隐藏到托盘」时才建图标。"""
+        existing = tray_holder.get("tray")
+        if existing is not None and existing.running:
+            return existing
+        if (sys.platform != "win32" or args.window_smoke_test
+                or args.overlay_smoke_test):
+            return None
+        tray = TrayIcon(window, request_quit, log=print)
+        if tray.start():
+            tray_holder["tray"] = tray
+            return tray
+        return None
 
     class WindowControls:
         def __init__(self):
@@ -1190,7 +1449,25 @@ def main(argv: list[str] | None = None) -> int:
                 self._window.minimize()
 
         def close(self):
+            # 兼容旧调用：等价于「直接退出」。
             svc.quit_requested = True
+
+        def hide_to_tray(self):
+            """v1.6.0 关闭询问：隐藏到系统托盘，进程继续在后台待命。"""
+            tray = ensure_tray()
+            if tray is None or not tray.running:
+                return {"ok": False,
+                        "error": "系统托盘不可用（仅 Windows 桌面版支持）"}
+            try:
+                self._window.hide()
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": f"隐藏窗口失败：{exc}"}
+            tray.show_balloon("仍在后台运行，双击托盘图标恢复窗口。")
+            return {"ok": True}
+
+        def quit_app(self):
+            svc.quit_requested = True
+            return {"ok": True}
 
     def watch() -> None:
         """等界面里的「退出程序」按钮；窗口被关掉时也会走到这里。"""
@@ -1280,6 +1557,12 @@ def main(argv: list[str] | None = None) -> int:
             shadow=False, js_api=controls, background_color="#FFFFFF",
             hidden=bool(args.overlay_smoke_test))
         controls._window = window
+        # v1.6.0：Alt+F4 / 任务栏关闭先问用户；真正的退出（quit_requested）
+        # 才会放行 closing，watch() 的 destroy 不会被拦。
+        window.events.closing += build_close_handler(
+            window, svc,
+            build_close_prompt(window, svc, ensure_tray, log=print),
+            log=print)
         overlay = webview.create_window(
             OVERLAY_TITLE, url + "overlay",
             width=int(override["width"]), height=int(override["height"]),
@@ -1312,6 +1595,9 @@ def main(argv: list[str] | None = None) -> int:
         webview.start(after_start)
     finally:
         stop_hotkey.set()
+        tray = tray_holder.get("tray")
+        if tray is not None:
+            tray.stop()
         svc.overlay_controller = None
         svc.close()
         httpd.shutdown()

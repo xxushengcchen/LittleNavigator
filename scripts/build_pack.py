@@ -11,6 +11,13 @@ spmsg.txt 格式（官方 spmsg02）：
 重要設計：對於我們還沒寫文案的 msgId，預設寫入 NULL 把它們靜音。
 理由：若不寫，遊戲可能回退去播內建的英文語音，中英夾雜比靜音更糟。
 用 --no-null 可關掉這個行為。
+
+輸出規格（v1.6.0 起三個語音包統一）：24 kHz / 16-bit PCM / 單聲道。
+採樣率由 --rate 控制；響度正規化目標 RMS -17 dBFS，且峰值上限
+--peak-ceiling-db（預設 -1.5 dBFS）優先於 RMS，避免樣本削波。
+母帶保留 24 kHz；發行包若需縮小體積，另用 scripts/resample_pack.py
+派生 16 kHz 版本，不要直接改這份母帶。
+
 用法：
     python scripts/build_pack.py --content content/messages.json \
         --audio build/zh-pack --out build/pack --name Mandarin-TW-Xiaohe
@@ -28,6 +35,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from content_loader import count_sound_variants, load_items  # noqa: E402
 
 DEFAULT_MSGIDS = "reference/msgids-from-engine.txt"
+# 峰值上限（dBFS）：正規化時優先保證峰值不超過它，避免重採樣/拼接後削波。
+# 與 v1.5.x 寫死的 -1.5 相同，只是抽成常數並可由命令列覆寫。
+PEAK_CEILING_DB = -1.5
 
 
 def ffmpeg(*args: str) -> None:
@@ -60,7 +70,8 @@ def decode_mono(src: pathlib.Path, rate: int, tempo: float = 1.0):
 
 def trim_and_normalize(x, rate: int, *, rel_db: float, pad_ms: float,
                        target_rms_db: float, do_trim: bool, do_norm: bool,
-                       fade_out_ms: float = 0.0):
+                       fade_out_ms: float = 0.0,
+                       peak_ceiling_db: float = PEAK_CEILING_DB):
     """裁掉頭尾靜音並做響度正規化。
     為何不用 ffmpeg 的 silenceremove：它的判定與保留量難以精準控制，
     實測會過度裁切（把單音節字砍掉一半）。這裡改用包絡偵測，
@@ -70,6 +81,10 @@ def trim_and_normalize(x, rate: int, *, rel_db: float, pad_ms: float,
     fade_out_ms > 0 時最後再疊一段線性淡出（見 _fade_out）。預設 0＝不做，
     主包行為完全不變；等待語音（assistant-extra）用 60ms 餘量 + 20ms 淡出，
     解決「很短的一句被裁切點硬切、聽起來像被截斷」的問題。
+
+    peak_ceiling_db：峰值上限（預設 -1.5 dBFS）。即使 RMS 已經達標，
+    只要峰值會超過上限就按峰值壓低，保證不削波；這是三個語音包統一的
+    母帶規格之一（見模組 docstring）。
     """
     import numpy as np
 
@@ -91,7 +106,7 @@ def trim_and_normalize(x, rate: int, *, rel_db: float, pad_ms: float,
         f = x.astype(np.float32) / 32768.0
         rms_db = 20 * np.log10(np.sqrt((f ** 2).mean()) + 1e-9)
         peak_db = 20 * np.log10(np.abs(f).max() + 1e-9)
-        gain_db = min(target_rms_db - rms_db, -1.5 - peak_db)
+        gain_db = min(target_rms_db - rms_db, peak_ceiling_db - peak_db)
         x = np.clip(f * (10 ** (gain_db / 20.0)), -1.0, 1.0)
         x = (x * 32767.0).astype(np.int16)
 
@@ -225,6 +240,9 @@ def main() -> int:
                         "再省略才用 0（不做淡出）")
     p.add_argument("--target-rms", type=float, default=-17.0,
                    help="目標 RMS 音量（dBFS），預設 -17")
+    p.add_argument("--peak-ceiling-db", type=float, default=PEAK_CEILING_DB,
+                   help=f"峰值上限（dBFS），預設 {PEAK_CEILING_DB}；"
+                        "正規化優先保證不超過它，避免削波")
     p.add_argument("--frag-tempo", type=float, default=1.25,
                    help="數字與拼接碎片的變速倍率（保持音高），1.0 表示不變速")
     p.add_argument("--msgids", default=DEFAULT_MSGIDS, help="完整 msgId 清單（用於補 NULL）")
@@ -249,7 +267,10 @@ def main() -> int:
         meta_fade if meta_fade is not None else 0.0)
     if trim_pad < 0 or fade_out_ms < 0:
         p.error("--trim-pad / --fade-out-ms 不能為負")
-    print(f"  尾部處理：裁切餘量 {trim_pad:.0f}ms，淡出 {fade_out_ms:.0f}ms")
+    if not -12.0 <= args.peak_ceiling_db <= 0.0:
+        p.error("--peak-ceiling-db 必須在 -12 ~ 0 dBFS 之間")
+    print(f"  尾部處理：裁切餘量 {trim_pad:.0f}ms，淡出 {fade_out_ms:.0f}ms；"
+          f"峰值上限 {args.peak_ceiling_db:.1f} dBFS")
 
     audio_dir = root / args.audio
     pack_dir = root / args.out / args.name
@@ -267,6 +288,7 @@ def main() -> int:
         "do_trim": not args.no_trim,
         "do_norm": not args.no_normalize,
         "fade_out_ms": fade_out_ms,
+        "peak_ceiling_db": args.peak_ceiling_db,
     }
 
     for item in items:

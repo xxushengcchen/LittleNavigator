@@ -94,12 +94,6 @@ playback:
   enabled: true            # false = 只打印不发声，方便无音频设备时调逻辑
   device: null             # null = 系统默认输出；也可填设备序号/名称（--list-devices 查）
   volume: 1.0
-  # 播报时把游戏音量压低 —— 用 Windows 按应用音量（pycaw），
-  # 只动 iRacing 自己的会话，不碰系统总音量。iRacing 没在跑时自动跳过。
-  ducking:
-    enabled: true
-    processes: ["iRacingSim64DX11.exe"]
-    amount_db: -12.0
 
 # ---------------------------------------------------------------------------
 #  防音频回环 —— 最危险的坑：播出的声音被麦克风收回去会形成「自己问自己答」

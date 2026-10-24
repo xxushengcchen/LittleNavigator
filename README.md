@@ -4,7 +4,7 @@
 
 Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码公开 · 个人非商业免费](LICENSE)
 
-> 当前正式版仍是 v1.5.5（MIT）。仓库开发版从 v1.6.0 起切换为 PolyForm Noncommercial；商业使用需单独授权。
+> **当前正式版为 v1.6.0。** 从 v1.6.0 起，本项目源代码改为 PolyForm Noncommercial：个人、非商业用途免费，商业使用需单独取得[商业授权](COMMERCIAL-LICENSE.md)。v1.5.5 及更早版本仍按 MIT 授权。
 
 [⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [完整使用指南](docs/guide/user-guide.md) · [快速开始](#三步开始使用) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
 
@@ -49,6 +49,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 ## 开车时，直接开口问
 
 - **少找一次黑框。** 查询油量、剩余时间、名次、圈速和前后车信息，再用中文语音回答。
+- **赛段损失也能问。** 哪一段慢、跟前车分段差多少，按官方赛段报时间差；整份分段清单不会逐段念。
 - **日常问答留在本机。** 本地语音识别、规则匹配与录音播报，不要求接入大模型或语音服务。
 - **需要时再扩展。** AI 分析、全局交给 AI、思考模式、AI 回答的语音合成（TTS）、游戏内 Overlay、语音进站控制分别启用，默认关闭。
 - **语音包也能独立使用。** 只安装中文 Spotter，由 iRacing 触发原有播报，不必启动助手。
@@ -59,9 +60,9 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
 2. 打开软件，在「语音输入」选择麦克风，采集键盘或方向盘上的说话键，然后开启监听。
 3. 进入 iRacing，按住绑定键说「还剩多少时间」，松开后等待回答。
 
-当前正式版为 [v1.5.5](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.5.5)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.5.5.md)。
+当前正式版为 [v1.6.0](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.6.0)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.6.0.md)。
 
-> **从 v1.5.1 升级。** 直接安装 v1.5.2 覆盖即可；用户配置会保留。
+> **从 v1.5.5 升级。** 直接安装 v1.6.0 覆盖即可；用户配置、日志与语音包会保留。
 
 <details>
 <summary>不开游戏试用、升级与安装问题</summary>
@@ -93,10 +94,11 @@ Get-FileHash .\LittleNavigator-<版本>-Setup-x64.exe -Algorithm SHA256
 | 比赛进度 | 还剩多少时间；比赛还剩几圈；我已经跑完几圈 |
 | 自己与对手的圈速 | 我上一圈多少；最佳圈速多少；前车上一圈多少 |
 | 位置与前后车 | 现在第几名；同组第几名；前车多远；后车多远 |
+| 赛段与分段 | 我上一圈哪一段慢；第 2 段用了多少；跟前车分段差多少 |
 | 维修与天气 | 还剩几次快修；必修还剩多久；气温多少；路面温度多少 |
 | 进站服务，需先启用 | 帮我取消换胎；只换左侧轮胎；帮我加10升油；勾上快修 |
 
-一次询问一个具体项目。全场第一名、赛道前后车与自己的车辆是不同对象；普通圈速问题默认读取上一完整圈。
+一次询问一个具体项目。全场第一名、赛道前后车与自己的车辆是不同对象；普通圈速问题默认读取上一完整圈。赛段问题只到官方分段级；整份分段清单（如「全部分段」「上一圈分段用时」）不会逐段播报，具体某一段用时可以问。
 
 ## 实际软件界面
 
@@ -116,7 +118,7 @@ v1.5.0 新增「知识库」页面：把「问法 → 意图 → 遥测字段 �
 
 不配置以下功能，也能使用本地规则问答与中文录音播报。
 
-- **AI 分析：** 在「AI 工程师」填写模型接口、模型名和自己的 API Key，通过兼容 Chat Completions 的接口调用，费用由所接服务决定。响应方式可选「全部交给 AI」，让日常问题也交给模型回答。
+- **AI 分析：** 在「AI 工程师」填写模型接口、模型名和自己的 API Key，通过兼容 Chat Completions 的接口调用，费用由所接服务决定。填好接口与 Key 后可拉取模型列表并选择，也可手动填写。响应方式可选「全部交给 AI」，让日常问题也交给模型回答。
 - **AI 回答语音合成：** 在同页的 TTS 区域单独配置与保存；不配置时 AI 只有文字，不影响规则问题的录音播报。AI 思考时先播的等待语也在这里开关。
 - **游戏内 Overlay：** 同页开启后，用半透明浮层在游戏画面上显示识别文字与最近回答；默认关闭，保存后立即生效。
 - **语音进站控制：** 在「进站控制」单独启用并保存，可设置换胎、加油、快修、清洁挡风，或取消、清空进站服务。
@@ -143,6 +145,8 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 | API Key | 自己在 DeepSeek 开放平台创建的密钥 |
 
 **v1.4.5 的 DeepSeek 预设仍会填入旧模型名 `deepseek-chat`，选择预设后请手动改为上表名称。** 之后如服务商更新模型，按 [DeepSeek 官方接入文档](https://api-docs.deepseek.com/zh-cn/) 填写当前可用名称。接口地址不需要填写网页聊天地址，也不需要自己追加 `/chat/completions`。
+
+v1.6.0 起，保存接口地址与 Key 后可以点「拉取模型」从服务商返回的列表里选择模型；服务商不支持模型列表时仍可手动填写。
 
 **2. 申请豆包语音 API，让 AI 回答能听见**
 
@@ -178,6 +182,7 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 - 规则问答依赖短语和意图匹配。AI 为可选补充，目前是一问一答，不支持多轮追问或主动工程师提醒。
 - 没有可靠遥测时会说明读不到；事故点不能用来判断具体车损，也不能用秒差代替圈差。
 - 前后车秒差是估计值；冷胎压是设定值，胎温和磨损来自有效进站检测，不能当作持续更新的胎面数据。
+- 赛段用时是插值估算，只到官方赛段级；整份分段清单不会逐段播报，具体弯道也无法定位。
 - 支持的字段与赛车有关。真实麦克风、方向盘、AI/TTS 接口和比赛场景仍需要在实际使用中验证。
 
 更多数据范围、操作边界与后续计划见 [能力与限制](docs/guide/capabilities-and-limits.md)。
@@ -188,7 +193,7 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 
 - 入门：[安装与启动](docs/guide/user-guide.md#1-安装与启动) · [首次设置](docs/guide/user-guide.md#2-首次设置能说话能听见) · [十一个页面](docs/guide/user-guide.md#3-十一个页面) · [怎么问](docs/guide/user-guide.md#4-怎么问) · [排错](docs/guide/user-guide.md#9-排错)
 - 专题：[API 接入](docs/guide/api-setup.md) · [能力与限制](docs/guide/capabilities-and-limits.md) · [Spotter 安装](docs/guide/spotter-install.md) · [知识库说明](docs/knowledge-base.md)
-- 版本：[v1.5.5 更新说明](docs/releases/v1.5.5.md) · [旧版界面指南](docs/guide/v1.4.5-interface.md)
+- 版本：[v1.6.0 更新说明](docs/releases/v1.6.0.md) · [旧版界面指南](docs/guide/v1.4.5-interface.md)
 
 ## 开发和参与
 
@@ -200,7 +205,7 @@ DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来
 
 ## 许可与致谢
 
-程序源代码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：个人、非商业用途免费；**商业使用需要单独取得 [商业授权](COMMERCIAL-LICENSE.md)**。这是源码公开（source-available）许可，不属于 OSI 定义下的开源许可证。
+从 v1.6.0 起，程序源代码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：个人、非商业用途免费；**商业使用需要单独取得 [商业授权](COMMERCIAL-LICENSE.md)**（联系邮箱：**[akaiwakamimeclerc@gmail.com](mailto:akaiwakamimeclerc@gmail.com)**）。这是源码公开（source-available）许可，不属于 OSI 定义下的开源许可证。**v1.5.5 及更早版本仍按 MIT License 授权**，已经发布的旧版本、旧 tag 和旧 fork 不受本次变更影响。
 
 - [许可证变更说明](LICENSE-CHANGE.md)：v1.5.5 及更早版本仍为 MIT，v1.6.0 起切换
 - [素材、语音与品牌许可](ASSETS-LICENSE.md)：代码许可证不自动覆盖模型、语音、Logo、赞助商标识

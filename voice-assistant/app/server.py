@@ -682,6 +682,21 @@ class Service:
                 "console": self.log.tail(60)}
 
     # ------------------------------------------------------------------ AI
+    def ai_models(self, base_url: str | None = None,
+                  api_key: str | None = None) -> dict:
+        """GET /api/ai/models：拉取 OpenAI 兼容服务的模型列表。
+
+        默认只用**已保存**的 base_url/api_key；可选参数给「改了但还没保存，
+        先试一下」的界面用。api_key 不写日志、不回显——下层 list_models
+        还会再脱敏一次，这里只做来源选择。
+        """
+        from src.llm_engine import list_models
+
+        ai = (getattr(self, "cfg", {}) or {}).get("ai") or {}
+        base = base_url if base_url not in (None, "") else ai.get("base_url")
+        key = api_key if api_key not in (None, "") else ai.get("api_key")
+        return list_models(str(base or ""), str(key or ""))
+
     def ai_test(self) -> dict:
         """测试大模型连通性：连通性 + 往返延迟。"""
         if self.asst.ai is None or self.asst.ai.client is None:
@@ -860,7 +875,7 @@ class Service:
                           # v1.5.2：全局停止本地播报 + 思考模式
                           "global_stop_local", "thinking_mode"},
                    "ptt": {"vk", "binding", "min_hold_ms", "max_hold_s", "poll_ms", "input_device"},
-                   "playback": {"enabled", "volume", "device", "ducking"},
+                   "playback": {"enabled", "volume", "device"},
                    "overlay": {"enabled", "opacity", "corner", "margin",
                                "width", "height", "toggle_key",
                                # v1.5.2：绝对坐标（布局模式写回）
@@ -872,7 +887,6 @@ class Service:
             if section not in allowed or not isinstance(values, dict) or set(values) - allowed[section]:
                 raise ValueError(f"不支持的配置项：{section}")
         for section, key, keys in [("intent", "l1_keyword", {"enabled"}),
-                                   ("playback", "ducking", {"enabled", "amount_db", "processes"}),
                                    ("ai", "ack", {"enabled"}),
                                    ("ai", "disambiguate", {"enabled", "timeout_s",
                                                            "min_confidence"}),
@@ -929,8 +943,6 @@ class Service:
                     live[mapped] = pb[key]
             if "enabled" in pb:
                 live["enabled"] = pb["enabled"]
-            if "ducking" in pb:
-                live["ducking"] = (pb["ducking"] or {}).get("enabled", True)
         # 写回内存配置，state() 立即可见
         self.cfg = cfg_mod.load(self.cfg_path)
         self.asst.cfg = self.cfg
@@ -938,9 +950,6 @@ class Service:
         with self.asst._operation_lock:
             self.asst.apply_live(live)
             self.asst.picker.cooldown = self.cfg["voice_pack"]["cooldown"]
-            duck = self.cfg["playback"]["ducking"]
-            self.asst.ducker.amount_db = duck["amount_db"]
-            self.asst.ducker.procs = [p.lower() for p in duck["processes"]]
             # 与正在执行的改车互斥，避免热重载关闭其 SDK 连接。
             if "ai" in patch or "car_control" in patch:
                 switched = self.asst.reload_switchables(self.cfg)
@@ -1045,6 +1054,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.service.log_data(int(q.get("limit", ["80"])[0])))
             elif u.path == "/api/ai/review":
                 self._json(self.service.ai_review())
+            elif u.path == "/api/ai/models":
+                # 默认无参：用已保存配置。可选 base_url/api_key 仅给
+                # 「填了还没保存」的界面用；本服务只监听 127.0.0.1，且
+                # 响应/日志都不回显密钥（见 Service.ai_models）。
+                self._json(self.service.ai_models(
+                    (q.get("base_url") or [None])[0],
+                    (q.get("api_key") or [None])[0]))
             elif u.path == "/api/stats":
                 self._json(self.service.stats())
             elif u.path == "/api/knowledge":

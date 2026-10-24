@@ -114,3 +114,16 @@
 .ira-segbtn:hover{color:var(--ink)}
 .ira-segbtn.is-active{background:var(--raised);color:var(--ink);box-shadow:inset 0 0 0 1px var(--border)}
 .kb-view svg .kb-node.off.linked{opacity:.72}
+
+/* v1.6.0：关闭询问对话框 + 模型拉取下拉（沿用现有色板与圆角，不新造视觉体系） */
+.ln-close-layer{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(10,10,12,.68)}
+.ln-close-dialog{width:min(440px,100%);background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.55)}
+.ln-close-dialog h2{font-size:17px;margin-bottom:10px}
+.ln-close-note{margin-top:12px;color:var(--warn)}
+.ln-close-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+.ln-close-actions .ira-btn{flex:1 1 140px;min-height:40px}
+.ira-model-pick{display:flex;align-items:center;gap:8px;min-width:0}
+.ira-model-pick .ira-select,.ira-model-pick .ira-input{flex:1 1 0;min-width:0}
+.ira-model-pick .ira-btn{flex:none}
+.ira-model-out{display:block;margin-top:6px;font-size:13px;color:var(--faint);overflow-wrap:anywhere}
+@media(max-width:600px){.ln-close-actions .ira-btn{flex-basis:100%}}

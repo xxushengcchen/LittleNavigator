@@ -214,21 +214,18 @@ class NumberAndAudioTests(unittest.TestCase):
             self.assertEqual(data[1],0)
             self.assertEqual(data[0],-1)
 
-    def test_two_files_one_audio_submission_and_duck(self):
+    def test_two_files_one_audio_submission(self):
+        # v1.6.0 移除游戏音量压低（ducking）后，只需保证「整句一次提交」：
+        # 两个片段合成一次播放，避免片段间反复打开设备。
         class Audio:
             calls = 0
             def play(self,*a,**kw): self.calls += 1
-        class Duck:
-            ducked = restored = 0
-            def duck(self): self.ducked += 1
-            def restore(self): self.restored += 1
         player = Player()
-        player._sd, player.ducker = Audio(), Duck()
+        player._sd = Audio()
+        self.assertFalse(hasattr(player, 'ducker'))
         with patch('src.player._read_wav', return_value=(np.zeros(100,dtype=np.float32),16000)):
             player.play_many(['one','two'])
         self.assertEqual(player._sd.calls,1)
-        self.assertEqual(player.ducker.ducked,1)
-        self.assertEqual(player.ducker.restored,1)
 
 
 class ListenerTests(unittest.TestCase):
@@ -297,16 +294,54 @@ class ServiceTests(unittest.TestCase):
     def test_relative_paths_use_config_directory(self):
         self.assertEqual(config.resolve(config.load(self.path),'logs').parent,self.path.parent.resolve())
 
-    def test_deep_config_merge_preserves_duck_fields(self):
+    def test_deep_config_merge_preserves_playback_fields(self):
+        # 音量压低链路删除后，播放配置的深合并/热生效必须照旧。
         svc = self.service
-        svc.configure({'playback':{'ducking':{'amount_db':-18}}})
-        svc.configure({'playback':{'ducking':{'enabled':False}}})
-        self.assertEqual(svc.cfg['playback']['ducking']['amount_db'],-18)
-        self.assertEqual(svc.asst.ducker.amount_db,-18)
+        svc.configure({'playback':{'volume':0.6}})
+        svc.configure({'playback':{'enabled':False}})
+        self.assertEqual(svc.cfg['playback']['volume'],0.6)
+        self.assertFalse(svc.cfg['playback']['enabled'])
+        self.assertEqual(svc.asst.player.volume,0.6)
 
-    def test_duck_enable_after_disabled_boot(self):
-        self.service.configure({'playback':{'ducking':{'enabled':True}}})
-        self.assertTrue(self.service.asst.ducker.enabled)
+    def test_legacy_ducking_patch_rejected(self):
+        # 旧前端仍在发 ducking 时，要明确拒绝而不是静默写盘
+        with self.assertRaises(ValueError):
+            self.service.configure({'playback':{'ducking':{'enabled':True}}})
+
+    def test_http_ai_models_endpoint(self):
+        """GET /api/ai/models 默认无参，用已保存配置；错误也走 200+JSON。"""
+        class ModelsHandler(Handler):
+            pass
+
+        ModelsHandler.service = self.service
+        server = Server(('127.0.0.1', 0), ModelsHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f'http://127.0.0.1:{server.server_port}'
+
+        def get_models() -> tuple[int, dict]:
+            with urllib.request.urlopen(url + '/api/ai/models') as resp:
+                return resp.status, json.loads(resp.read())
+
+        try:
+            with patch('src.llm_engine.list_models',
+                       return_value={'ok': True,
+                                     'models': [{'id': 'deepseek-chat'}]}) as fake:
+                status, payload = get_models()
+            self.assertEqual(status, 200)
+            self.assertEqual(payload['ok'], True)
+            self.assertEqual(payload['models'], [{'id': 'deepseek-chat'}])
+            self.assertNotIn('api_key', payload)
+            fake.assert_called_once()
+            # 未配置 base_url/key：返回可读错误，而不是 500
+            status, payload = get_models()
+            self.assertEqual(status, 200)
+            self.assertFalse(payload['ok'])
+            self.assertIn('接口地址', payload['error'])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     def test_invalid_config_not_saved(self):
         local = self.path.parent/'config.local.yaml'
@@ -382,6 +417,38 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(request('/api/ask',json.dumps({'text':'还剩几圈'}).encode(),headers)[0],200)
         finally:
             server.shutdown();server.server_close();thread.join()
+
+
+class LegacyDuckingConfigTests(unittest.TestCase):
+    """v1.6.0 删掉「播报时压低游戏音量」后，旧配置必须仍能加载。"""
+
+    def test_defaults_no_longer_define_ducking(self):
+        self.assertNotIn('ducking', config.DEFAULTS['playback'])
+
+    def test_old_config_yaml_with_ducking_loads(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / 'config.yaml'
+            path.write_text(yaml.safe_dump({
+                'playback': {'volume': 0.6,
+                             'ducking': {'enabled': True, 'amount_db': -18,
+                                         'processes': ['iRacingSim64DX11.exe']}},
+            }), encoding='utf-8')
+            cfg = config.load(path)
+            self.assertEqual(cfg['playback']['volume'], 0.6)
+            self.assertTrue(cfg['playback']['enabled'])
+            # 残留键原样合并但不再校验/读取（不报错就是兼容目标）
+            self.assertIn('ducking', cfg['playback'])
+
+    def test_old_config_local_override_with_ducking_loads(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / 'config.yaml').write_text(yaml.safe_dump({}), encoding='utf-8')
+            (root / 'config.local.yaml').write_text(yaml.safe_dump({
+                'playback': {'ducking': {'enabled': False}},
+            }), encoding='utf-8')
+            cfg = config.load(root / 'config.yaml')
+            self.assertTrue(cfg['playback']['enabled'])
+            self.assertEqual(cfg['playback']['volume'], 1.0)
 
 
 if __name__ == '__main__':

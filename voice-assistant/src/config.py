@@ -103,11 +103,6 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "device": None,            # null = 系统默认输出
         "volume": 1.0,
-        "ducking": {
-            "enabled": True,
-            "processes": ["iRacingSim64DX11.exe"],
-            "amount_db": -12.0,
-        },
     },
     "audio_guard": {"ptt_only": True, "mute_mic_while_playing": True},
     "asr": {
@@ -304,22 +299,18 @@ def validate(cfg: dict) -> None:
     for section in DEFAULTS:
         if not isinstance(cfg.get(section), dict):
             raise ValueError(f"{section} 必须是配置对象")
-    for section, key in [("playback", "ducking"), ("intent", "l1_keyword"),
+    # v1.6.0 起 playback.ducking（播报时压低游戏音量）已整体移除：
+    # 这里不再校验它，旧配置里的残留键会被原样合并但不读不用——加载不报错。
+    for section, key in [("intent", "l1_keyword"),
                          ("intent", "miss_log"), ("telemetry", "ring_buffer")]:
         if not isinstance(cfg[section].get(key), dict):
             raise ValueError(f"{section}.{key} 必须为对象")
     for section, key in [("playback", "enabled"), ("intent", "voice_strict")]:
         if not isinstance(cfg[section][key], bool):
             raise ValueError(f"{section}.{key} 必须为布尔值")
-    for section, key in [("playback", "ducking"), ("intent", "l1_keyword"), ("intent", "miss_log")]:
+    for section, key in [("intent", "l1_keyword"), ("intent", "miss_log")]:
         if not isinstance(cfg[section][key]["enabled"], bool):
             raise ValueError(f"{section}.{key}.enabled 必须为布尔值")
-    duck = cfg["playback"]["ducking"]
-    db = duck["amount_db"]
-    if isinstance(db, bool) or not isinstance(db, (int, float)) or not math.isfinite(db) or not -60 <= db <= 0:
-        raise ValueError("压低音量幅度必须为 -60–0 dB")
-    if not isinstance(duck["processes"], list) or not all(isinstance(p, str) and p for p in duck["processes"]):
-        raise ValueError("游戏进程列表无效")
     checks = [
         ("playback", "volume", 0, 1), ("asr", "num_threads", 1, 16),
         ("ptt", "poll_ms", 1, 1000), ("ptt", "min_hold_ms", 50, 8000),

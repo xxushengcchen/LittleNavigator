@@ -375,3 +375,185 @@ class LlmClient:
         except Exception as exc:       # noqa: BLE001
             return {"ok": False, "latency_ms": round((time.monotonic() - started) * 1000),
                     "error": str(exc)[:200]}
+
+
+# ---------------------------------------------------------------- 模型列表（v1.6.0）
+# 设置页「拉取模型」：调 OpenAI 兼容的 GET {base}/models。
+# 刻意不走 LlmClient：那条链路是比赛问答用的，带熔断/单飞/3 秒硬截止；
+# 列模型是配置期操作，可以慢一点，也不该占用/干扰问答预算。
+MODELS_TIMEOUT_S = 8.0
+
+
+def _redact(text: str, secret: str) -> str:
+    """把密钥从任何对外文本里抹掉。
+
+    错误信息会拼 HTTP body / 异常文本，服务端有可能回显请求头或 URL。
+    宁可把整段替换成 ***，也不赌「它不会回显 key」。
+    """
+    if not secret:
+        return text
+    return text.replace(secret, "***")
+
+
+def _models_url_candidates(base_url: str) -> list[str]:
+    """把用户填的 base_url 变成 GET /models 的候选地址（按可能性排序）。
+
+    用户可能填 `https://api.deepseek.com`、`.../v1`、甚至误填完整的
+    `.../v1/chat/completions`。先按最可能的形式请求；只有 404 时才换
+    `/v1/models` 再试一次——401/403 之类换路径也不会变好。
+    """
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        return []
+    if base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")].rstrip("/")
+    if base.endswith("/models"):
+        return [base]
+    candidates = [base + "/models"]
+    if not base.endswith("/v1"):
+        candidates.append(base + "/v1/models")
+    return candidates
+
+
+def _get_json(url: str, headers: dict, timeout: float) -> dict:
+    """GET 一次并解析 JSON。抽成模块级函数便于测试替换（与 _post_json 同思路）。"""
+    req = urllib.request.Request(url, method="GET")
+    for key, value in headers.items():
+        req.add_header(key, value)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", "replace")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise LlmError(f"接口返回的不是合法 JSON：{raw[:160]}") from exc
+
+
+def _parse_models(payload) -> list[dict]:
+    """从各家「模型列表」响应里抽出 [{id, ...}]。
+
+    OpenAI / DeepSeek / 多数兼容服务都是 {"data": [{"id": ...}]}；
+    也顺手兼容 {"models": [...]} 与裸 list，避免因为外壳差异误报「不支持」。
+    """
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = payload.get("data")
+        if not isinstance(items, list):
+            items = payload.get("models")
+    else:
+        items = None
+    if not isinstance(items, list):
+        return []
+    models: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, str):
+            model_id = item
+        elif isinstance(item, dict):
+            model_id = item.get("id") or item.get("name")
+        else:
+            continue
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        model_id = model_id.strip()
+        if model_id in seen:          # 有的服务会把同一模型列两次
+            continue
+        seen.add(model_id)
+        entry: dict = {"id": model_id}
+        if isinstance(item, dict):
+            owner = item.get("owned_by")
+            if isinstance(owner, str) and owner.strip():
+                entry["owned_by"] = owner.strip()[:80]
+            created = item.get("created")
+            if isinstance(created, int) and not isinstance(created, bool):
+                entry["created"] = created
+        models.append(entry)
+    return models
+
+
+def _http_error_message(exc: urllib.error.HTTPError) -> str:
+    """把 HTTP 错误翻译成用户能看懂的中文，并带上该服务的原始片段。"""
+    code = exc.code
+    hints = {
+        401: "API Key 无效或没有权限（HTTP 401），请检查密钥是否正确",
+        403: "服务拒绝访问（HTTP 403），请确认 Key 有访问该接口的权限",
+        404: "接口不支持模型列表（HTTP 404），可在设置里手动填写模型名",
+        405: "接口不支持模型列表（HTTP 405），可在设置里手动填写模型名",
+        429: "请求过于频繁（HTTP 429），请稍后再试",
+    }
+    hint = hints.get(code, f"接口返回错误（HTTP {code}）")
+    detail = ""
+    try:
+        body = exc.read().decode("utf-8", "replace")
+        body = " ".join(body.split())
+        if body:
+            detail = f"；服务返回：{body[:160]}"
+    except Exception:      # noqa: BLE001
+        detail = ""
+    return hint + detail
+
+
+def list_models(base_url: str, api_key: str,
+                timeout: float = MODELS_TIMEOUT_S) -> dict:
+    """拉取 OpenAI 兼容的模型列表，永远返回可序列化 dict、永不抛异常。
+
+    成功：{"ok": True, "models": [{"id": "...", ...}, ...]}
+    失败：{"ok": False, "error": "中文可读原因"}
+
+    安全边界：返回体与错误信息里都不能出现 api_key（内部再脱敏一次）。
+    """
+    base = (base_url or "").strip()
+    key = (api_key or "").strip()
+    if not base:
+        return {"ok": False,
+                "error": "未配置接口地址（base_url），请先填写并保存接口地址"}
+    if any(char in base for char in ("\n", "\r", " ")):
+        return {"ok": False, "error": "接口地址包含空白字符，请检查"}
+    if not key:
+        return {"ok": False,
+                "error": "未配置 API Key，请先填写并保存密钥"}
+    if any(char in key for char in ("\n", "\r")):
+        return {"ok": False, "error": "API Key 含非法字符，请重新填写"}
+    candidates = _models_url_candidates(base)
+    if not candidates:
+        return {"ok": False,
+                "error": "接口地址无效，例如 https://api.deepseek.com/v1"}
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {key}",
+    }
+    last_http_error = ""
+    for index, url in enumerate(candidates):
+        try:
+            payload = _get_json(url, headers, timeout)
+        except urllib.error.HTTPError as exc:
+            message = _http_error_message(exc)
+            # 只有 404/405（路径不对）值得换 /v1 形式再试；其他 4xx 换路径无益
+            if exc.code in (404, 405) and index + 1 < len(candidates):
+                last_http_error = message
+                continue
+            return {"ok": False, "error": _redact(message, key)}
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, TimeoutError):
+                return {"ok": False,
+                        "error": f"连接超时（{timeout:.0f} 秒），请检查接口地址和网络"}
+            return {"ok": False,
+                    "error": _redact(f"无法连接接口：{reason}", key)}
+        except TimeoutError:
+            return {"ok": False,
+                    "error": f"连接超时（{timeout:.0f} 秒），请检查接口地址和网络"}
+        except LlmError as exc:
+            return {"ok": False, "error": _redact(str(exc), key)}
+        except Exception as exc:       # noqa: BLE001
+            return {"ok": False,
+                    "error": _redact(f"拉取模型失败：{exc}", key)}
+        models = _parse_models(payload)
+        if not models:
+            return {"ok": False,
+                    "error": "接口没有返回模型列表（该服务可能不支持 /models），"
+                             "可在设置里手动填写模型名"}
+        return {"ok": True, "models": models}
+    return {"ok": False,
+            "error": _redact(last_http_error or "接口不支持模型列表，"
+                             "可在设置里手动填写模型名", key)}

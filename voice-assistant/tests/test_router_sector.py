@@ -16,7 +16,7 @@ SECTOR_ATOMS = {
     "AST_LAST_LAP_LEAD", "AST_SECTOR_TAIL", "AST_SECTOR_WORD",
     "AST_SECTOR_TIME", "AST_SECTOR_SLOWER_AHEAD", "AST_SECTOR_SLOWER_BEHIND",
     "AST_SECTOR_FASTER_AHEAD", "AST_SECTOR_FASTER_BEHIND",
-    "AST_SECTOR_BEST", "AST_SECTOR_NO_DATA",
+    "AST_SECTOR_BEST", "AST_SECTOR_NO_DATA", "AST_REFUSE_LATER",
 }
 
 
@@ -188,32 +188,45 @@ class LocalLossAnswerTests(unittest.TestCase):
             ahead=[FakeLap(12, (25.0, 25.0, 25.0, 25.0), 100.0)],
             behind=[])
         decision = route("哪一段慢", model)
-        # 没有损失就退回「上一圈分段用时」，不编造落后段。
-        self.assertIn("AST_LAST_LAP_LEAD", decision.plan)
+        # 「哪段慢」不是「报全部段落」；持平就明确说没有慢段。
+        self.assertFalse(decision.ok)
+        self.assertNotIn("AST_LAST_LAP_LEAD", decision.plan)
         self.assertNotIn("AST_SECTOR_SLOWER_AHEAD", decision.plan)
-        self.assertNotIn("AST_SECTOR_BEST", decision.plan)
+
+    def test_corner_question_refuses_instead_of_listing_sectors(self):
+        decision = route("我上一圈哪个弯慢了", default_model())
+        self.assertFalse(decision.ok)
+        self.assertEqual(decision.plan, [])
+        self.assertIn("弯", decision.reason)
+
+    def test_asr_duan_variant_is_loss_not_own_list(self):
+        model = FakeSegments(
+            player=[FakeLap(12, (25.0, 25.0, 25.0, 25.0), 100.0)],
+            ahead=[], behind=[])
+        decision = route("我上一圈哪一断慢了", model)
+        self.assertFalse(decision.ok)
+        self.assertNotIn("AST_LAST_LAP_LEAD", decision.plan)
+
+    def test_loss_phrase_canonicalized_as_own_sectors_still_uses_loss_path(self):
+        decision = route("塞段损失多少", default_model())
+        self.assertNotEqual(decision.plan[:2], ["AST_LAST_LAP_LEAD", "AST_SECTOR_WORD"])
+
+    def test_one_lap_loss_question_refuses_instead_of_listing_all(self):
+        model = FakeSegments(
+            player=[FakeLap(12, (25.0, 25.0, 25.0, 25.0), 100.0)],
+            ahead=[], behind=[])
+        decision = route("哪一段慢", model)
+        self.assertFalse(decision.ok)
+        self.assertEqual(decision.plan, [])
+        self.assertNotIn("AST_LAST_LAP_LEAD", decision.plan)
 
 
 class LocalOwnSectorAnswerTests(unittest.TestCase):
-    def test_last_lap_sector_times(self):
+    def test_full_split_request_uses_drive_focus(self):
         decision = route("上一圈分段", default_model())
         self.assertTrue(decision.ok)
-        self.assertEqual(decision.plan[:2], ["AST_LAST_LAP_LEAD", "AST_SECTOR_WORD"])
-        self.assertEqual(decision.plan.count("AST_SECTOR_TIME"), 4)
-        # 最近一圈（lap 12）第 1 段 25.4s
-        self.assertEqual(decision.plan[2:],
-                         ["SPCC_FASTESTCARPOS", "SPCC_N1", "AST_SECTOR_TAIL",
-                          "AST_SECTOR_TIME", "SPCC_N25", "SPCC_POINT",
-                          "SPCC_N4", "SPCC_SECOND",
-                          "SPCC_FASTESTCARPOS", "SPCC_N2", "AST_SECTOR_TAIL",
-                          "AST_SECTOR_TIME", "SPCC_N24", "SPCC_POINT",
-                          "SPCC_N9", "SPCC_SECOND",
-                          "SPCC_FASTESTCARPOS", "SPCC_N3", "AST_SECTOR_TAIL",
-                          "AST_SECTOR_TIME", "SPCC_N30", "SPCC_POINT",
-                          "SPCC_N0", "SPCC_SECOND",
-                          "SPCC_FASTESTCARPOS", "SPCC_N4", "AST_SECTOR_TAIL",
-                          "AST_SECTOR_TIME", "SPCC_N22", "SPCC_POINT",
-                          "SPCC_N2", "SPCC_SECOND"])
+        self.assertEqual(decision.plan, ["AST_REFUSE_LATER"])
+        self.assertIn("专心", decision.reason)
 
     def test_specific_sector_question_reports_only_that_sector(self):
         decision = route("第二段用了多少", default_model())
@@ -231,7 +244,7 @@ class LocalOwnSectorAnswerTests(unittest.TestCase):
                           "AST_SECTOR_TIME", "SPCC_N30", "SPCC_POINT",
                           "SPCC_N0", "SPCC_SECOND"])
 
-    def test_own_question_ignores_invalid_and_pit_laps(self):
+    def test_full_split_refuses_even_with_valid_laps(self):
         player = [
             FakeLap(10, (10.0, 10.0, 10.0, 10.0), 40.0, valid=False),
             FakeLap(11, (25.2, 24.7, 29.9, 21.9), 101.8),
@@ -239,9 +252,8 @@ class LocalOwnSectorAnswerTests(unittest.TestCase):
         ]
         decision = route("上一圈分段", FakeSegments(player=player))
         self.assertTrue(decision.ok)
-        # 用的是有效 lap 11，不是被过滤掉的 10/12
-        self.assertIn("SPCC_N25", decision.plan)
-        self.assertNotIn("SPCC_N99", decision.plan)
+        self.assertEqual(decision.plan, ["AST_REFUSE_LATER"])
+        self.assertNotIn("SPCC_N25", decision.plan)
 
 
 class NoDataTests(unittest.TestCase):
@@ -348,9 +360,7 @@ class RealSegmentModelTests(unittest.TestCase):
         decision = router.route("query_sector_loss", snapshot(), "上一圈分段",
                                 segments=self._model())
         self.assertTrue(decision.ok)
-        self.assertEqual(decision.plan[:2], ["AST_LAST_LAP_LEAD", "AST_SECTOR_WORD"])
-        # 每段 20s：数字是「二十点零」
-        self.assertIn("SPCC_N20", decision.plan)
+        self.assertEqual(decision.plan, ["AST_REFUSE_LATER"])
 
 
 if __name__ == "__main__":

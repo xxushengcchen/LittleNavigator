@@ -131,7 +131,7 @@ class _CarState:
 
     __slots__ = ("last_pct", "last_t", "lap", "lap_start_t", "sector_start_t",
                  "sectors", "in_pit", "off_track_s", "torn", "laps",
-                 "best_sectors")
+                 "best_sectors", "pending")
 
     def __init__(self, num_sectors: int):
         self.last_pct: float | None = None
@@ -147,6 +147,9 @@ class _CarState:
         self.off_track_s = 0.0
         # 观测到跳变（重置/传送/重连）：本圈分段已不可信，结算时作废
         self.torn = False
+        # iRacing 在跨线当帧可能还没更新 LapLastLapTime；先存下本圈，
+        # 下一帧拿到官方圈速再结算，不能当场作废。
+        self.pending: dict | None = None
         self.laps: deque[SectorLap] = deque(maxlen=KEEP_LAPS)
         # 本场最佳分段（只统计有效圈 = clean best；借鉴 irdashies 的 session best）
         self.best_sectors: list[float | None] = [None] * num_sectors
@@ -250,11 +253,51 @@ class SegmentModel:
                 self._track_car(index, state, float(pct), snapshot, starts)
 
     # ------------------------------------------------------------------ 内部
+    def _flush_pending(self, index: int, state: "_CarState",
+                       snapshot: "Snapshot") -> None:
+        """官方圈速晚一帧到达时，补结算上一圈。"""
+        pending = state.pending
+        if pending is None:
+            return
+        reported = self._reported_lap_time(snapshot, index)
+        if reported is None:
+            return
+        # LapLastLapTime 可能还停在上上圈： Σ 对不上时先别结算，再等一帧。
+        measured = (pending["t_end"] - pending["start"]
+                    if pending.get("start") is not None else None)
+        if (measured is not None
+                and abs(measured - reported) > LAP_TIME_TOLERANCE_S):
+            pending["tries"] = pending.get("tries", 0) + 1
+            if pending["tries"] <= 120:      # 约 2 秒@60Hz
+                return
+            # 官方值一直对不上：放弃这条，宁可不报也不拿错圈速自证。
+            state.pending = None
+            return
+        state.pending = None
+        live = (
+            state.lap, state.lap_start_t, state.sector_start_t,
+            state.sectors, state.in_pit, state.off_track_s, state.torn,
+        )
+        try:
+            state.lap = pending["lap"]
+            state.lap_start_t = pending["start"]
+            state.sectors = list(pending["sectors"])
+            state.in_pit = pending["in_pit"]
+            state.off_track_s = pending["off_track_s"]
+            state.torn = pending["torn"]
+            self._settle_lap(state, index, pending["t_end"], snapshot)
+        finally:
+            (state.lap, state.lap_start_t, state.sector_start_t,
+             state.sectors, state.in_pit, state.off_track_s,
+             state.torn) = live
+
     def _track_car(self, index: int, state: _CarState | None, pct: float,
                    snapshot: "Snapshot", starts: tuple[float, ...]) -> None:
         if state is None:
             state = _CarState(len(starts))
             self._cars[index] = state
+        # 上一圈跨线时 iRacing 的 LapLastLapTime 可能还没更新；本帧再补。
+        self._flush_pending(index, state, snapshot)
         clock = self._clock if self._clock is not None else 0.0
         reported = self._reported_lap(snapshot, index)
         in_pit, off_track = self._car_flags(snapshot, index)
@@ -341,7 +384,27 @@ class SegmentModel:
                 if state.sector_start_t is not None:
                     state.sectors[len(starts) - 1] = \
                         t_cross - state.sector_start_t
-                self._settle_lap(state, index, t_cross, snapshot)
+                reported = self._reported_lap_time(snapshot, index)
+                measured = (t_cross - state.lap_start_t
+                            if state.lap_start_t is not None else None)
+                stale = (reported is not None and measured is not None
+                         and abs(measured - reported) > LAP_TIME_TOLERANCE_S)
+                if state.lap_start_t is not None and (reported is None or stale):
+                    # 跨线当帧官方圈速还没刷新/还是上一圈：先暂存，下一帧补结算。
+                    # 没有圈首的半圈直接走 _settle_lap 作废，不暂存。
+                    if state.pending is None:
+                        state.pending = {
+                            "lap": state.lap,
+                            "start": state.lap_start_t,
+                            "sectors": tuple(state.sectors),
+                            "t_end": t_cross,
+                            "in_pit": state.in_pit,
+                            "off_track_s": state.off_track_s,
+                            "torn": state.torn,
+                            "tries": 0,
+                        }
+                else:
+                    self._settle_lap(state, index, t_cross, snapshot)
                 state.lap_start_t = t_cross
                 state.sector_start_t = t_cross
                 state.sectors = [None] * len(starts)
@@ -432,6 +495,12 @@ class SegmentModel:
     def _reported_lap_time(self, snapshot: "Snapshot", index: int) -> float | None:
         if self._player_idx is not None and index == self._player_idx:
             value = getattr(snapshot, "lap_last", None)
+            # 在线/重连场景实测过 lap_last 暂时为 None，但 CarIdxLastLapTime
+            # 仍有上一圈成绩。逐车数组是同一份数据，缺主字段时用它兜底，
+            # 否则整圈分段会因为拿不到官方圈速而全部作废。
+            if not _finite(value) or value <= 0:
+                laps = getattr(snapshot, "car_last_laps", None)
+                value = laps[index] if isinstance(laps, list) and index < len(laps) else None
         else:
             laps = getattr(snapshot, "car_last_laps", None)
             value = laps[index] if isinstance(laps, list) and index < len(laps) else None

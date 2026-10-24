@@ -22,18 +22,17 @@ hiddenimports = [
     # 都是运行时才 import 的，PyInstaller 静态分析看不到
     "app.server", "src.config", "src.engine", "src.voicepack", "src.phrase_match",
     "src.listener", "src.telemetry", "src.router", "src.numbers", "src.player",
-    "src.duck", "src.intents", "tools.asr_models", "tools.audio_io",
+    "src.intents", "tools.asr_models", "tools.audio_io",
     "irsdk", "yaml",
     "src.wheel", "sdl2", "sdl2dll",
     "src.telemetry_answers", "src.question_forms",
     "sounddevice", "sherpa_onnx", "pypinyin", "opencc",
-    "pycaw", "pycaw.pycaw", "pycaw.api", "comtypes", "comtypes.client",
     # 原生窗口（WebView2）
     "app.desktop", "webview", "webview.platforms.edgechromium", "clr", "pythonnet",
 ]
 
 binaries = []
-for pkg in ("sherpa_onnx", "sounddevice", "opencc", "pypinyin", "pycaw", "comtypes",
+for pkg in ("sherpa_onnx", "sounddevice", "opencc", "pypinyin",
             "webview", "pythonnet", "clr_loader", "sdl2", "sdl2dll"):
     d, b, h = collect_all(pkg)
     datas += d

@@ -1,6 +1,6 @@
 # AI 与语音 API 接入
 
-面向 v1.5.2。先按 [首页完整步骤](../../README.md#获取-api以-deepseek-和豆包语音为例) 申请 DeepSeek 与豆包语音密钥，再分别保存模型与语音设置。官方网页和参数核对日期：2026-10-20。
+面向 v1.6.0。先按 [首页完整步骤](../../README.md#获取-api以-deepseek-和豆包语音为例) 申请 DeepSeek 与豆包语音密钥，再分别保存模型与语音设置。官方网页和参数核对日期：2026-10-20。
 
 ## 三个环节分别做什么
 
@@ -14,7 +14,7 @@
 
 ## 参数怎样对应代码
 
-模型接口地址对应 `ai.base_url`，模型名对应 `ai.model`，模型 Key 对应 `ai.api_key`。软件在基础地址后补 `/chat/completions`，发送 Bearer 鉴权的非流式请求。旧版 DeepSeek 预设可能包含旧模型名，按首页提示手动修改；模型预设不是实时模型目录。
+模型接口地址对应 `ai.base_url`，模型名对应 `ai.model`，模型 Key 对应 `ai.api_key`。软件在基础地址后补 `/chat/completions`，发送 Bearer 鉴权的非流式请求。v1.6.0 起，保存接口地址与 Key 后可以拉取服务商返回的模型列表并选择；拉取失败时可手动填写模型名。旧版 DeepSeek 预设可能包含旧模型名，按首页提示手动修改。
 
 豆包模式对应 `ai.tts.adapter: doubao`，音色 ID 对应 `ai.tts.speaker`，语音 Key 对应 `ai.tts.api_key`。软件内置 HTTP 单向流式地址 `https://openspeech.bytedance.com/api/v3/tts/unidirectional`，使用 `X-Api-Key` 和 `X-Api-Resource-Id` 鉴权；默认资源 `seed-tts-2.0`。当前界面不提供资源 ID 选择，因此首页步骤使用语音合成 2.0 公版音色。不要照抄旧版 AppID/Access Token 教程到此界面。
 

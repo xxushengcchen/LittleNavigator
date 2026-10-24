@@ -118,24 +118,34 @@ class LocalSectorPlaybackTests(unittest.TestCase):
         a.player.play_many.assert_called_once()
 
     def test_ai_all_mode_holds_sector_answer_for_model(self):
-        # all 档原有语义不变：规则答案不先播，只作为 AI 失败兜底。
+        # 分段问题已统一走 AI 分析路径：all 档不再先播本地赛段答案。
         a = make_playable(make_engine(self.root, ai_enabled=True, mode="all"),
                           self.root)
         a.derive.segments = default_model()
         rec = a.ask("哪一段慢", source="keyboard")
         self.assertTrue(rec["ai_eligible"])
-        self.assertIn("AST_SECTOR_SLOWER_AHEAD", rec["fallback_plan"])
+        self.assertNotIn("fallback_plan", rec)
         a.player.play_many.assert_not_called()
         self.assertEqual(a.live["state"], "thinking")
 
-    def test_non_all_mode_plays_sector_answer_immediately(self):
+    def test_non_all_mode_routes_sector_question_to_ai(self):
         a = make_playable(make_engine(self.root, ai_enabled=True, mode="full"),
                           self.root)
         a.derive.segments = default_model()
         rec = a.ask("哪一段慢", source="keyboard")
+        self.assertTrue(rec["ai_eligible"])
+        self.assertFalse(rec["ok"])
+        a.player.play_many.assert_not_called()
+
+    def test_full_split_request_is_hard_refused_before_ai(self):
+        a = make_playable(make_engine(self.root, ai_enabled=True, mode="all"),
+                          self.root)
+        a.derive.segments = default_model()
+        rec = a.ask("上一圈分段", source="keyboard")
         self.assertTrue(rec["ok"])
+        self.assertEqual(rec["plan"], ["AST_REFUSE_LATER"])
         self.assertNotIn("ai_eligible", rec)
-        a.player.play_many.assert_called_once()
+        a.player.play.assert_called_once()
 
 
 if __name__ == "__main__":
