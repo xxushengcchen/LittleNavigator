@@ -17,6 +17,9 @@ import re
 from .race_context import ALLOWED_FIELDS
 
 _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+# 与 ASCII 字母相连的数字是代号的一部分（Q2、V8、SF23），不是计量值。
+_ALNUM_RE = re.compile(r"[A-Za-z]\d|\d[A-Za-z]")
+
 # 中文数字：只把这些当「数值表述」；「上一圈」「一档」这类量词搭配不算。
 # 用前后文排除法而不是维护一份量词白名单——中文里「一」做量词太常见，
 # 逐个列反而更容易漏。
@@ -170,6 +173,10 @@ _UNIT_TOKENS: tuple[tuple[str, str], ...] = (
 _QUESTION_PREMISE_MARKERS = (
     "慢", "快", "差", "落后", "领先", "损失", "丢", "推头", "甩尾",
     "降低", "提高", "增加", "减少", "超过", "不足", "不到", "多了", "少了",
+    # 审计复审：假设题里的数字也是用户给出的前提（「如果我能跑 82.0 秒」），
+    # 不该因为上下文里没有这个数就拒答。注意不要收「能跑」这类泛用词——
+    # 「还能跑 99 圈吗」里的 99 是断言，不能因此豁免。
+    "如果", "假设", "假如", "要是", "跑到", "跑出", "能不能",
 )
 
 
@@ -238,6 +245,8 @@ def _question_premises(question: str) -> set[float]:
     q = question or ""
     out: set[float] = set()
     for match in _NUM_RE.finditer(q):
+        if _ALNUM_RE.search(q[max(0, match.start() - 1):match.end() + 1]):
+            continue      # 「能进 Q2 吗」里的 2 是代号，不是前提数字
         window = q[max(0, match.start() - 12):match.start()]
         if any(marker in window for marker in _QUESTION_PREMISE_MARKERS):
             out.add(float(match.group()))
@@ -518,6 +527,10 @@ def check_numbers(answer: str, ctx: dict, question: str) -> str | None:
     # 审计 A10：旧实现按字面量跳过（consumed），「1 分 23.5 秒」会让答案别处
     # 同字面量的「1 升」一起免检——现在只按文本位置处理。
     for match in _NUM_RE.finditer(stripped):
+        # 「Q2」「V8」这类代号里的数字不是计量值，跳过。
+        neighbour = stripped[max(0, match.start() - 1):match.end() + 1]
+        if _ALNUM_RE.search(neighbour):
+            continue
         literal = match.group()
         unsigned = float(literal)
         # 用户当前提给出的比较数值可以复述（「确实慢了 0.3 秒」）；

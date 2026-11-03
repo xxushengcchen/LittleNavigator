@@ -261,15 +261,19 @@ print('OK')
 
 class Q12AudioContractTests(unittest.TestCase):
     def test_offline_audit_enforces_16k_16bit_mono(self):
+        # 审计复审：随包实际是 24 kHz（官方 1015 源），文档一度写「发行 16k」
+        # 导致审计必红。现在默认按实际发行规格 24k 校验，16k 是可选瘦身路径。
         code = f"""
 import sys
 sys.path.insert(0, r"{TOOLS}")
 import audit_offline as m
-assert m.AUDIO_RATE == 16000 and m.AUDIO_BITS == 16
-assert m.format_errors(16000, 2, 1) == []
-assert m.format_errors(24000, 2, 1), '24k 必须报错'
-assert m.format_errors(16000, 1, 1), '8bit 必须报错'
-assert m.format_errors(16000, 2, 2), '立体声必须报错'
+assert m.AUDIO_RATE == 24000 and m.AUDIO_BITS == 16
+assert m.SLIM_RATE == 16000
+assert m.format_errors(24000, 2, 1) == []
+assert m.format_errors(16000, 2, 1), '默认规格下 16k 必须报错'
+assert m.format_errors(16000, 2, 1, m.SLIM_RATE) == [], '显式 16k 检查应通过'
+assert m.format_errors(24000, 1, 1), '8bit 必须报错'
+assert m.format_errors(24000, 2, 2), '立体声必须报错'
 print('OK')
 """
         r = run([PY, "-c", code], ROOT)

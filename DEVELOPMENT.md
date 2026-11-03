@@ -80,11 +80,18 @@ v1.4.5 本次后端回归 539 项、浏览器回归 16 组通过。原生打包�
 
 先改 `content/assistant-telemetry-v1.1.json`。音频生成工具在 `scripts/`，需要额外安装 `imageio-ffmpeg`，并自行准备可用的豆包语音凭据。`scripts/synthesize_telemetry.py` 从环境变量 `DOUBAO_API_KEY` 或不回显输入中读取密钥。
 
-### 采样率：24 kHz 母带 → 16 kHz 发行包
+### 采样率：当前发行 24 kHz；16 kHz 是可选瘦身路径
 
-语音包母带是 **24 kHz / 16-bit PCM**（`scripts/build_pack.py` 的默认值）。发行版用 **16 kHz** 以减小安装包体积：母带原样保留（另存并在 Release 备份），再用 `scripts/resample_pack.py` 派生 16 kHz 的发行包。脚本用 ffmpeg 带限重采样，逐条校验采样率／位深／声道与数量，不符合即报错退出。
+随包语音实测为 **24 kHz / 16-bit / 单声道**（官方 1015 语音包源本身就是 24 kHz，
+`scripts/build_pack.py` 默认也按 24 kHz 输出）。`tools/audit_offline.py` 默认按
+24 kHz 校验；如果要发布 16 kHz 瘦身包，先用 `scripts/resample_pack.py` 从 24 kHz
+母带派生，再用 `--expect-rate 16000` 复核。两条路径都必须通过位深 16-bit、
+单声道与内容完整性检查。
 
-约定：**16 kHz 发行包放在 `build_dist.py` 读取素材的那三处**——`build/pack/Mandarin-CNTW-Xusheng_Chen`、`build/assistant-extra`、`build/assistant-telemetry`；24 kHz 母带另存别处（如 `build/master-24k/…`），别放这三处，以免被 `build_dist.py` 当作发行素材带上。三份各跑一次，源＝母带、目标＝上述位置：
+约定：`build_dist.py` 读取素材的那三处就是**当前要发行的版本**——
+`build/pack/Mandarin-CNTW-Xusheng_Chen`、`build/assistant-extra`、
+`build/assistant-telemetry`。24 kHz 母带另存（如 `build/master-24k/…`），
+不要在未重新派生的情况下把母带混进这三处。16 kHz 瘦身流程（源＝母带、目标＝上述位置）：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/resample_pack.py --src build/master-24k/pack/Mandarin-CNTW-Xusheng_Chen --dst build/pack/Mandarin-CNTW-Xusheng_Chen

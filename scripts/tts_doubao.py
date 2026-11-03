@@ -215,8 +215,33 @@ def main() -> int:
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     # 只有 MP3 不算完成：缺 WAV 时也要重跑（跳过合成、直接补转换）。
+    # 审计复审 Q07：只看文件存在会让“改了文案/音色/语速”的重跑全部跳过。
+    # 用 sidecar 指纹（text+speaker+resource+instruct+rate）判定是否要重合成。
+    import hashlib as _hashlib
+    import json as _json
+
+    def job_fp(job) -> str:
+        stem, text, instruct, rate = job
+        return _hashlib.sha256(_json.dumps(
+            [text, speaker, resource_id, instruct, rate],
+            ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:32]
+
+    def fp_of(stem: str) -> str | None:
+        sidecar = out / f"{stem}.fp"
+        try:
+            return sidecar.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+
+    def write_fp(stem: str, value: str) -> None:
+        try:
+            (out / f"{stem}.fp").write_text(value, encoding="utf-8")
+        except OSError:
+            pass
+
     todo = [j for j in jobs
             if args.force
+            or fp_of(j[0]) != job_fp(j)
             or not (out / f"{j[0]}.mp3").exists()
             or (not args.no_wav and not (out / f"{j[0]}.wav").exists())]
     print(f"speaker={speaker}  resource={resource_id}  共 {len(jobs)} 句，待處理 {len(todo)}")
@@ -226,10 +251,13 @@ def main() -> int:
 
     def work(job: tuple[str, str, str | None, int | None]) -> None:
         nonlocal failures
-        stem, text, instruct, rate = job
+        _stem, _text, _instruct, _rate = job
+        stem, text, instruct, rate = _stem, _text, _instruct, _rate
+        want_fp = job_fp(job)
         mp3 = out / f"{stem}.mp3"
         wav = out / f"{stem}.wav"
-        need_synth = args.force or not (mp3.exists() and mp3.stat().st_size > 0)
+        need_synth = (args.force or fp_of(stem) != want_fp
+                      or not (mp3.exists() and mp3.stat().st_size > 0))
         size = mp3.stat().st_size if mp3.exists() else 0
         if need_synth:
             try:
@@ -255,6 +283,7 @@ def main() -> int:
                     failures += 1
                     print(f"  FAIL  {stem}: wav 轉換失敗: {exc}")
                 return
+        write_fp(stem, want_fp)
         with lock:
             print(f"  ok    {stem}  {size}B{extra}")
 

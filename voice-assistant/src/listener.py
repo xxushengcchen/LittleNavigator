@@ -258,6 +258,11 @@ class PttListener:
     def start(self) -> None:
         if self.running:
             return
+        # 审计复审 R01：上一次的 worker 可能还卡在识别/模型回调里（stop 只
+        # join 2 秒）。它恢复后会继续消费同一个队列，出现两个消费者。
+        # 用代次令牌让旧 worker 的下一次循环直接退出，新 worker 用新代次。
+        self._work_gen = getattr(self, "_work_gen", 0) + 1
+        gen = self._work_gen
         self._stop.clear()
         # 上一次 stop 之后可能残留音频，重新开始监听时直接丢掉。
         while True:
@@ -265,7 +270,7 @@ class PttListener:
                 self._work_q.get_nowait()
             except queue.Empty:
                 break
-        self._worker = threading.Thread(target=self._work_loop,
+        self._worker = threading.Thread(target=self._work_loop, args=(gen,),
                                         name="ptt-process", daemon=True)
         self._worker.start()
         self._thread = threading.Thread(target=self._loop, name="ptt-listener", daemon=True)
@@ -277,6 +282,8 @@ class PttListener:
 
     def stop(self) -> bool:
         self._stop.set()
+        # 作废旧 worker：即使它还阻塞在回调里，回来也不能再处理/写 state。
+        self._work_gen = getattr(self, "_work_gen", 0) + 1
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=2.0)
         # 让工作线程退出（若正阻塞在外部回调里，join 会超时后自然放弃，
@@ -359,21 +366,30 @@ class PttListener:
                     else self.on_result)
         callback(res.text, {**meta, "source": source})
 
-    def _work_loop(self) -> None:
-        """串行执行识别/回调（审计 R01）。轮询线程只投递录音，不等模型。"""
+    def _work_loop(self, gen: int) -> None:
+        """串行执行识别/回调（审计 R01）。轮询线程只投递录音，不等模型。
+
+        审计复审：gen 是启动代次；stop()/start() 会让它失效，旧 worker
+        恢复后不再消费队列，也不会覆盖新一轮的 state/error。
+        """
         while True:
             item = self._work_q.get()
             if item is None:
+                return
+            if gen != getattr(self, "_work_gen", 0):
                 return
             audio, source = item
             try:
                 self._process(audio, source)
             except Exception as exc:  # noqa: BLE001
+                if gen != getattr(self, "_work_gen", 0):
+                    return
                 self.error = str(exc)
                 print(f"✗ PTT 处理失败：{exc}", file=self.out)
                 self.stats["errors"] += 1
             finally:
-                self.state = "idle"
+                if gen == getattr(self, "_work_gen", 0):
+                    self.state = "idle"
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:

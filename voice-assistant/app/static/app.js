@@ -1230,6 +1230,13 @@
         var input = $("#ira-ai-model", panel);
         var gen = aiModelsGeneration;
         var savedUrl = ($("#ira-ai-url", panel) || {}).value || "";
+        // 审计复审 F06：拉列表用的是服务端**已保存**的地址；表单里改了
+        // 还没保存时点拉取，会把旧地址的列表显示在新地址下。先拦住。
+        var committedUrl = ((((window.__state || {}).config || {}).ai || {}).base_url) || "";
+        if ((savedUrl || "").trim() !== (committedUrl || "").trim()) {
+          if (out) { out.textContent = "地址还没保存：先点保存，再拉取模型列表。"; }
+          return;
+        }
         modelsBtn.disabled = true;
         if (out) { out.textContent = "正在拉取模型列表…"; }
         try {

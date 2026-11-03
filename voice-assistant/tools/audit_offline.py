@@ -12,14 +12,23 @@ sys.path.insert(0,str(ROOT))
 
 # 发行语音包契约（DEVELOPMENT.md）：16 kHz / 16-bit PCM / 单声道。
 # 审计必须真的校验它，而不是只统计采样率；24 kHz 母带不能当发行包通过。
-AUDIO_RATE = 16000
+# 随包实际发行规格：官方 1015 语音包源即 24 kHz；16 kHz 只是可选瘦身路径。
+AUDIO_RATE = 24000
+SLIM_RATE = 16000
 AUDIO_BITS = 16
 
 
-def format_errors(framerate: int, sampwidth: int, nchannels: int) -> list[str]:
+def format_errors(framerate: int, sampwidth: int, nchannels: int,
+                  expect_rate: int = AUDIO_RATE) -> list[str]:
+    """校验发行音频契约。
+
+    审计复审：随包实测是 24 kHz（官方 1015 源即 24k），而文档一度写「发行 16k」，
+    导致审计必红。现在按**实际发行规格**校验（默认 24k），需要验 16k 瘦身包时
+    用 --expect-rate 16000。
+    """
     errs = []
-    if framerate != AUDIO_RATE:
-        errs.append(f'采样率 {framerate}Hz，要求 {AUDIO_RATE}Hz')
+    if framerate != expect_rate:
+        errs.append(f'采样率 {framerate}Hz，要求 {expect_rate}Hz')
     if sampwidth * 8 != AUDIO_BITS:
         errs.append(f'位深 {sampwidth*8}bit，要求 {AUDIO_BITS}bit')
     if nchannels != 1:
@@ -38,6 +47,8 @@ def main():
     ap.add_argument('--bench', type=pathlib.Path)
     ap.add_argument('--samples', type=pathlib.Path)
     ap.add_argument('--out',type=pathlib.Path,default=ROOT.parent/'build'/'offline-audit.json')
+    ap.add_argument('--expect-rate',type=int,default=AUDIO_RATE,
+                    help='期望采样率（随包实测 24000；验 16k 瘦身包时传 16000）')
     args = ap.parse_args()
     cfg = config.load()
     pack = VoicePack.load_many([config.resolve(cfg,cfg['voice_pack'][key]) for key in ('dir','extra_dir','telemetry_dir') if cfg['voice_pack'].get(key)])
@@ -49,7 +60,8 @@ def main():
             try:
                 with wave.open(str(path),'rb') as w:
                     fmt = f'{w.getframerate()}Hz/{w.getsampwidth()*8}bit/{w.getnchannels()}ch'
-                    errs = format_errors(w.getframerate(), w.getsampwidth(), w.getnchannels())
+                    errs = format_errors(w.getframerate(), w.getsampwidth(),
+                                         w.getnchannels(), args.expect_rate)
                     if errs:
                         raise ValueError('不符合发行契约：' + '；'.join(errs))
                     if w.getnframes()==0:
@@ -66,7 +78,7 @@ def main():
             except Exception as exc:
                 result['audio']['errors'].append({'id':mid,'file':str(path),'error':str(exc)})
     result['audio']['seconds'] = round(result['audio']['seconds'],1)
-    result['audio']['peak_max'] = max(peaks)
+    result['audio']['peak_max'] = max(peaks, default=0.0)
     result['numbers_selftest_errors'] = numbers.selftest(pack,verbose=False)
     m = PhraseMatcher()
     coverage = collections.Counter()
@@ -105,6 +117,10 @@ def main():
     args.out.parent.mkdir(parents=True,exist_ok=True)
     args.out.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(result,ensure_ascii=False,indent=2))
-    return int(bool(result['audio']['errors'] or result['numbers_selftest_errors'] or missing))
+    # 审计复审：--bench 的失败与语料覆盖率缺失以前不进退出码，等于白跑。
+    bench_failed = bool((result.get('stored_asr_regression') or {}).get('failures'))
+    coverage_missing = bool(missing)
+    return int(bool(result['audio']['errors'] or result['numbers_selftest_errors']
+                    or coverage_missing or bench_failed))
 
 if __name__=='__main__':raise SystemExit(main())
