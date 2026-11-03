@@ -18,6 +18,8 @@ import json
 import urllib.error
 import urllib.request
 
+from . import http_transport
+
 from . import ai_constants as const
 
 _DOUBAO_ENDPOINT = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
@@ -34,12 +36,18 @@ class TtsError(RuntimeError):
 
 
 def _post(url: str, body: dict, headers: dict, timeout: float) -> bytes:
+    """POST 一次并取回音频字节。
+
+    走 http_transport：不跟随跳转（S02，避免把密钥转发到别的域名）、
+    限 8 MiB、按墙钟返回（A13/A14）。
+    """
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    for key, value in headers.items():
-        req.add_header(key, value)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    try:
+        return http_transport.fetch_bytes(
+            "POST", url, headers, data, deadline_s=timeout,
+            max_bytes=http_transport.DEFAULT_AUDIO_LIMIT)
+    except http_transport.HttpFailure as exc:
+        raise TtsError(exc.message) from None
 
 
 def _parse_doubao(raw: bytes) -> bytes:

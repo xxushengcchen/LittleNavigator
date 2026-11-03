@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import math
 import re
 
 from .numbers import seconds_to_spoken
@@ -94,13 +95,28 @@ def _round(value, digits: int = 1) -> float | None:
     return None if v is None else round(v, digits)
 
 
+# 剩余时间的合法域：本地计时用 0..604799 秒（不足一周）。0 是合法的
+# 「比赛时间正好走完」，而 -1、604800、inf、NaN 都是「没读到 / 读坏了」，
+# 必须整对字段一起省略——只删口播而留着数字，会让数字闸把坏值当成真值。
+_TIME_REMAIN_MAX_S = 604_799
+
+
+def _time_remain_s(s: Snapshot) -> float | None:
+    v = _numeric(s.time_remain_s)
+    if v is None:
+        return None
+    if not math.isfinite(v) or v < 0 or v > _TIME_REMAIN_MAX_S:
+        return None
+    return round(v, 0)
+
+
 def _now_layer(s: Snapshot) -> dict:
     """当前状态。缺字段直接省略，不要塞 None 让模型以为「值是 null」。"""
     raw = {
         "connected": bool(s.connected),
         "lap": s.lap, "lap_completed": s.lap_completed,
         "lap_last": _round(s.lap_last, 3), "lap_best": _round(s.lap_best, 3),
-        "laps_remain": s.laps_remain, "time_remain_s": _round(s.time_remain_s, 0),
+        "laps_remain": s.laps_remain, "time_remain_s": _time_remain_s(s),
         "position": s.position, "class_position": s.class_position,
         "field_size": s.field_size,
         "fuel_level": _round(s.fuel_level, 1),

@@ -682,20 +682,22 @@ class Service:
                 "console": self.log.tail(60)}
 
     # ------------------------------------------------------------------ AI
-    def ai_models(self, base_url: str | None = None,
-                  api_key: str | None = None) -> dict:
-        """GET /api/ai/models：拉取 OpenAI 兼容服务的模型列表。
+    def ai_models(self) -> dict:
+        """拉取 OpenAI 兼容服务的模型列表，只用**已保存**的配置。
 
-        默认只用**已保存**的 base_url/api_key；可选参数给「改了但还没保存，
-        先试一下」的界面用。api_key 不写日志、不回显——下层 list_models
-        还会再脱敏一次，这里只做来源选择。
+        审计 S01：以前这里接受 base_url/api_key 覆盖，任何本机页面都能
+        让服务拿着存好的 Key 去自己指定的地址，等于把 Key 送给第三方。
+        现在覆盖参数在路由层就被 400 掉，这里只读已保存的成对配置。
         """
         from src.llm_engine import list_models
 
         ai = (getattr(self, "cfg", {}) or {}).get("ai") or {}
-        base = base_url if base_url not in (None, "") else ai.get("base_url")
-        key = api_key if api_key not in (None, "") else ai.get("api_key")
-        return list_models(str(base or ""), str(key or ""))
+        base = ai.get("base_url") or ""
+        key = ai.get("api_key") or ""
+        if not base or not key:
+            return {"ok": False, "models": [],
+                    "error": "还没有保存可用的模型地址与密钥"}
+        return list_models(str(base), str(key))
 
     def ai_test(self) -> dict:
         """测试大模型连通性：连通性 + 往返延迟。"""
@@ -982,8 +984,30 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _security_headers(self) -> None:
+        """不许别的页面把本机界面套进 iframe。
+
+        服务只监听回环地址，但任何本机网页都能 frame 它；套住之后
+        一次误点就能触发改车/改配置。这里只限制嵌入，不加会打断现有
+        内联脚本与样式的宽泛 default-src。
+        """
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+
+    @staticmethod
+    def _strict_bool(body: dict, key: str, default=None):
+        """JSON 布尔必须是真布尔；字符串 "false" 之前会被 bool() 当成 True。"""
+        if key not in body:
+            return default
+        value = body.get(key)
+        if not isinstance(value, bool):
+            raise ValueError(f"{key} 必须是布尔值 true/false")
+        return value
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -1021,6 +1045,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         self.wfile.write(data)
 
@@ -1055,12 +1080,15 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/ai/review":
                 self._json(self.service.ai_review())
             elif u.path == "/api/ai/models":
-                # 默认无参：用已保存配置。可选 base_url/api_key 仅给
-                # 「填了还没保存」的界面用；本服务只监听 127.0.0.1，且
-                # 响应/日志都不回显密钥（见 Service.ai_models）。
-                self._json(self.service.ai_models(
-                    (q.get("base_url") or [None])[0],
-                    (q.get("api_key") or [None])[0]))
+                # 模型列表只允许读取**已保存**的配置，而且必须带本机界面凭据。
+                # 以前这里是 GET + 可选 base_url/api_key 覆盖：任何本机页面
+                # 只需诱导一次请求，就能让服务用存着的 Key 去攻击者指定的地址，
+                # 把 Key 送到第三方（审计 S01）。现在改 POST /api/ai/models {},
+                # 不允许任何覆盖参数，旧 GET 直接 405 且不做任何外发。
+                self._method_not_allowed("POST")
+            elif u.path == '/api/export-logs':
+                # 导出会写盘、压缩、生成文件——不能由无凭据 GET 触发（S05）。
+                self._method_not_allowed("POST")
             elif u.path == "/api/stats":
                 self._json(self.service.stats())
             elif u.path == "/api/knowledge":
@@ -1071,14 +1099,40 @@ class Handler(BaseHTTPRequestHandler):
                 from src.wheel import get_input
                 wheel=get_input()
                 self._json({'wheels':wheel.devices(),'wheel_error':wheel.error})
-            elif u.path == '/api/export-logs':
-                self._json(self.service.export_logs())
             else:
                 self.send_error(404)
         except ValueError as exc:
             self._json({"error": str(exc)}, 400)
         except Exception as exc:  # noqa: BLE001
-            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            self._json({"error": self._safe_error(exc)}, 500)
+
+    def _safe_error(self, exc: BaseException) -> str:
+        """错误文本先脱敏再出门。
+
+        审计 S03：上游报错里可能带着请求头/Key 片段，直接塞进响应
+        等于把凭据回显给页面。已知 Key 一律替换掉，长度也截断。
+        """
+        text = f"{type(exc).__name__}: {exc}"
+        try:
+            key = str(((self.service.cfg or {}).get("ai") or {}).get("api_key") or "")
+        except Exception:  # noqa: BLE001
+            key = ""
+        if len(key) >= 8:
+            text = text.replace(key, "***")
+        return text[:300]
+
+    def _method_not_allowed(self, allowed: str) -> None:
+        """405 + Allow。而且**先回绝再做事**：不能先执行了副作用再说方法不对。"""
+        self.send_response(405)
+        self.send_header("Allow", allowed)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        body = json.dumps({"error": f"这个方法不支持，请改用 {allowed}"},
+                          ensure_ascii=False).encode("utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
         if not self._local_request(mutation=True):
@@ -1096,13 +1150,27 @@ class Handler(BaseHTTPRequestHandler):
                 if len(text) > 512:
                     self._json({"error": "text 过长（最长 512 字符）"}, 400)
                     return
-                self._json(self.service.ask(text, play=bool(body.get("play"))))
+                self._json(self.service.ask(
+                    text, play=bool(self._strict_bool(body, "play", False))))
             elif u.path == "/api/play":
                 self._json(self.service.play(str(body.get("msgId") or "")))
             elif u.path == "/api/listen":
-                running = bool(body.get("running"))
+                # 缺字段以前被 bool(None) 当成 False，一次手误就把监听关了；
+                # 字符串 "false" 又被当成 True。这里要求显式真布尔（S08）。
+                if "running" not in body:
+                    raise ValueError("缺少 running")
+                running = self._strict_bool(body, "running")
                 self._json(self.service.start_listener() if running
                            else self.service.stop_listener())
+            elif u.path == "/api/ai/models":
+                # 只读已保存配置，不接受任何覆盖参数（S01）。
+                if body:
+                    raise ValueError("模型列表不接受参数，请先保存配置")
+                self._json(self.service.ai_models())
+            elif u.path == "/api/export-logs":
+                if body:
+                    raise ValueError("日志导出不接受参数")
+                self._json(self.service.export_logs())
             elif u.path == "/api/ptt/simulate":
                 self._json(self.service.simulate_ptt(float(body.get("seconds") or 2.0)))
             elif u.path == "/api/ptt/capture":
@@ -1122,7 +1190,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "enabled" not in body:
                     raise ValueError("缺少 enabled")
                 self._json(self.service.set_overlay_layout_mode(
-                    bool(body.get("enabled"))))
+                    self._strict_bool(body, "enabled")))
             elif u.path == "/api/overlay/layout":
                 self._json(self.service.set_overlay_layout(body))
             elif u.path == "/api/overlay/drag":
@@ -1145,7 +1213,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, UnicodeError, KeyError) as exc:
             self._json({"error": str(exc)}, 400)
         except Exception as exc:  # noqa: BLE001
-            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            self._json({"error": self._safe_error(exc)}, 500)
 
     def _local_request(self, mutation=False):
         port = self.server.server_address[1]
@@ -1196,7 +1264,10 @@ def main(argv: list[str] | None = None) -> int:
 
     Handler.service = svc
     httpd = Server((args.host, args.port), Handler)
-    url = f"http://{args.host}:{args.port}/"
+    # --port 0 时内核会分配临时端口；必须用实际端口拼 URL，
+    # 否则打印/打开的是 http://127.0.0.1:0/（S12）。
+    port = httpd.server_address[1]
+    url = f"http://{args.host}:{port}/"
     print(f"\n界面：{url}   （Ctrl+C 退出）\n")
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

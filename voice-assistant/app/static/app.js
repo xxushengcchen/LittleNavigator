@@ -30,6 +30,18 @@
   }
   window.addEventListener("unhandledrejection", function (event) { event.preventDefault(); reportError(event.reason); });
 
+  /* 监听开关只有一个事实来源：/api/listen 返回的 running。
+     控制台和设置页各有一个按钮，必须同时更新，否则一处显示「暂停监听」、
+     另一处仍显示「启动监听」，用户会按到相反的方向。 */
+  function applyListenRunning(running) {
+    if (typeof running !== 'boolean') return;
+    if (window.__state && window.__state.ptt) window.__state.ptt.running = running;
+    var dash = $('#dashboard-listen');
+    if (dash && !dash.disabled) dash.textContent = running ? '暂停监听' : '开启监听';
+    var settings = $('#ira-listen-toggle');
+    if (settings) settings.textContent = running ? '停止监听' : '启动监听';
+  }
+
   /* ---------- 内联图标 ----------
      原先这里是一句 `i[data-lucide]{display:none}`：把所有图标占位藏起来，
      但项目从没引入 lucide 库，也没有内联 svg，于是顶栏左上角的标记
@@ -411,18 +423,37 @@
         }).join("；")
       : "没有可播的内容";
     setText("[data-dbg-note]", note, panel);
+    // 审计 F02：预览卡是有身份的。问句改过、或已经点过执行，就不能再拿
+    // 这个旧预览去改车——否则用户改完文字随手一点，执行的是上一句。
     var audition = $("[data-audition]", panel);
+    var previewText = tr.text;
+    var previewAt = previewGeneration;
     audition.disabled = false;
     audition.textContent = tr.kind === "operation" ? "执行并播报（更改进站设置）" : "问答并播报";
     audition.onclick = async function () {
+      var input = $("#ira-q");
+      if (executionInFlight) { return; }
+      if (previewAt !== previewGeneration || !input || input.value !== previewText) {
+        audition.disabled = true;
+        setText("[data-dbg-note]", "问句已经改过了：先重新「预览解析」，确认后再执行。", panel);
+        return;
+      }
+      executionInFlight = true;
       audition.disabled = true;
       audition.textContent = "播报中…";
-      try { renderTrace(await api("/api/ask", { text: tr.text, play: true })); }
-      finally { audition.disabled = false; audition.textContent = tr.kind === "operation" ? "执行并播报（更改进站设置）" : "问答并播报"; }
+      try { renderTrace(await api("/api/ask", { text: previewText, play: true })); }
+      finally {
+        executionInFlight = false;
+        audition.disabled = false;
+        audition.textContent = tr.kind === "operation" ? "执行并播报（更改进站设置）" : "问答并播报";
+      }
     };
   }
 
   var previewRequest = 0;
+  // 预览代次与「执行中」互斥：任何输入改动都会让旧预览失效（F02）。
+  var previewGeneration = 0;
+  var executionInFlight = false;
   async function runQuery(text) {
     var request=++previewRequest, button=$('#ira-send');
     $('#ira-q').value=text;
@@ -445,7 +476,7 @@
     var form = $("#ira-qform");
     var send = $("#ira-send");
     var input = $("#ira-q");
-    input.addEventListener('input',function(){previewRequest++;send.disabled=false;send.textContent='预览解析';$('[data-audition]').disabled=true;setText('[data-dbg-note]','文字已更改，请重新预览后再执行。');});
+    input.addEventListener('input',function(){previewRequest++;previewGeneration++;send.disabled=false;send.textContent='预览解析';$('[data-audition]').disabled=true;setText('[data-dbg-note]','文字已更改，请重新预览后再执行。');});
     if (form) { form.addEventListener("submit", function (e) { e.preventDefault(); runQuery(input.value); }); }
     if (send) { send.addEventListener("click", function () { runQuery(input.value); }); }
     $$("[data-q]").forEach(function (b) {
@@ -661,8 +692,15 @@
       } finally {btn.disabled=false;btn.textContent='采集方向盘按钮';}
     };
     $("#ira-listen-toggle", panel).onclick = async function () {
+      var btn = this;
       var on = (window.__state.ptt.running);
-      await api("/api/listen", { running: !on });
+      btn.disabled = true;
+      try {
+        var r = await api("/api/listen", { running: !on });
+        if (r && r.error) throw new Error(r.error);
+        applyListenRunning(typeof r.running === 'boolean' ? r.running : !on);
+      } catch (e) { reportError({message: e.message || '切换监听失败'}); }
+      finally { btn.disabled = false; }
       loadSettings();
     };
     $("#ira-simulate", panel).onclick = async function () {
@@ -702,8 +740,8 @@
   }
 
   // ---------------------------------------------------------------- 模型名拉取
-  // v1.6.0：GET /api/ai/models 用「已保存的」接口地址与密钥拉模型列表。
-  // 列表只放在内存里（不落盘、不写日志），key 永远不进 DOM。
+  // v1.6.1：POST /api/ai/models {} 只用「已保存的」接口地址与密钥拉模型列表，
+  // 不接受任何覆盖参数（旧 GET 会 405）。列表只放内存，key 永远不进 DOM。
   // 拉取失败不阻塞手填：下拉收起，输入框照常可用。
   var aiModelCache = null;
 
@@ -1041,7 +1079,7 @@
         modelsBtn.disabled = true;
         if (out) { out.textContent = "正在拉取模型列表…"; }
         try {
-          var r = await api("/api/ai/models");
+          var r = await api("/api/ai/models", {});
           var list = ((r && r.models) || []).map(function (m) {
             if (!m) { return ""; }
             if (typeof m === "string") { return m; }
@@ -1359,8 +1397,8 @@
   $('#dismiss-error').onclick=function(){$('#ira-error').hidden=true;};
   $('#retry-connection').onclick=function(){poll();};
   $('#stats-refresh').onclick=function(){loadStats();};
-  $('#ira-export-logs').onclick=async function(){var b=this;b.disabled=true;b.textContent='导出中…';try{var r=await api('/api/export-logs');if(!r.ok)throw new Error(r.error||'导出失败');reportError({message:'日志已导出：'+r.path});}finally{b.disabled=false;b.textContent='导出日志';}};
-  $('#dashboard-listen').onclick=async function(){var b=this;b.disabled=true;b.textContent='处理中…';try{await api(window.__state && window.__state.ptt.running?'/api/ptt/stop':'/api/ptt/start',{});await poll();}finally{b.disabled=false;b.textContent=window.__state && window.__state.ptt.running?'暂停监听':'开启监听';}};
+  $('#ira-export-logs').onclick=async function(){var b=this;b.disabled=true;b.textContent='导出中…';try{var r=await api('/api/export-logs',{});if(!r.ok)throw new Error(r.error||'导出失败');reportError({message:'日志已导出：'+r.path});}catch(e){reportError({message:e.message||'导出失败'});}finally{b.disabled=false;b.textContent='导出日志';}};
+  $('#dashboard-listen').onclick=async function(){var b=this;b.disabled=true;var old=b.textContent;b.textContent='处理中…';try{var want=!(window.__state&&window.__state.ptt.running);var r=await api('/api/listen',{running:want});if(r&&r.error)throw new Error(r.error);applyListenRunning(typeof r.running==='boolean'?r.running:want);}catch(e){reportError({message:e.message||'切换监听失败'});}finally{b.disabled=false;b.textContent=old;if(window.__state){b.textContent=window.__state.ptt.running?'暂停监听':'开启监听';}await poll();}};
   bindDebug();
   $('#window-close').onclick=function(){openCloseDialog();};
   $('#window-minimize').onclick=function(){if(window.pywebview){window.pywebview.api.minimize();}};

@@ -40,6 +40,11 @@ function merge(a,b){for(const[k,v]of Object.entries(b)){if(v && typeof v==='obje
    merge(state.config,data.patch);if(data.patch.playback)merge(state.config.playback,data.patch.playback);
    return reply({ok:true,restart_hint:[]});
   }
+  if(u.pathname==='/api/listen'){
+   data=r.postDataJSON();writes.push({path:u.pathname,running:data.running});
+   if(typeof data.running!=='boolean')return reply({error:'running 必须是布尔值'},400);
+   state.ptt.running=data.running;return reply({running:state.ptt.running});
+  }
   if(u.pathname.startsWith('/api/ptt/')){writes.push({path:u.pathname});state.ptt.running=u.pathname.endsWith('/start');return reply({running:state.ptt.running});}
   if(u.pathname==='/api/ask'){
    data=r.postDataJSON();writes.push({path:u.pathname,play:data.play,text:data.text});

@@ -19,6 +19,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import http_transport
+
 from . import ai_constants as const
 
 
@@ -83,13 +85,18 @@ def thinking_params(base_url: str, model: str, mode: str) -> dict:
 
 
 def _post_json(url: str, body: dict, headers: dict, timeout: float) -> dict:
-    """一次性 POST 并解析 JSON。抽成模块级函数便于测试替换。"""
+    """一次性 POST 并解析 JSON。抽成模块级函数便于测试替换。
+
+    走 http_transport：不跟随跳转（S02）、限 1 MiB、按墙钟返回（A13/A14）。
+    """
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    for key, value in headers.items():
-        req.add_header(key, value)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", "replace")
+    try:
+        raw_bytes = http_transport.fetch_bytes(
+            "POST", url, headers, data, deadline_s=timeout,
+            max_bytes=http_transport.DEFAULT_JSON_LIMIT)
+    except http_transport.HttpFailure as exc:
+        raise LlmError(exc.message) from None
+    raw = raw_bytes.decode("utf-8", "replace")
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -417,11 +424,13 @@ def _models_url_candidates(base_url: str) -> list[str]:
 
 def _get_json(url: str, headers: dict, timeout: float) -> dict:
     """GET 一次并解析 JSON。抽成模块级函数便于测试替换（与 _post_json 同思路）。"""
-    req = urllib.request.Request(url, method="GET")
-    for key, value in headers.items():
-        req.add_header(key, value)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", "replace")
+    try:
+        raw_bytes = http_transport.fetch_bytes(
+            "GET", url, headers, None, deadline_s=timeout,
+            max_bytes=http_transport.DEFAULT_JSON_LIMIT)
+    except http_transport.HttpFailure as exc:
+        raise LlmError(exc.message) from None
+    raw = raw_bytes.decode("utf-8", "replace")
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:

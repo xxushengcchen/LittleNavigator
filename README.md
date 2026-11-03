@@ -1,12 +1,81 @@
 # 小小领航员 LittleNavigator
 
-🏁 给 iRacing 中文玩家的语音助手与 Spotter 语音包。按住按钮说话，松开后听回答，让注意力留在赛道。
+🏁 iRacing 中文语音助手与 Spotter 语音包。按住说话键问一句，松开后听中文回答——油量、剩余时间、名次、圈速、前后车、分段损失都能问。
 
-Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码公开 · 个人非商业免费](LICENSE)
+Windows 10 2004+ / Windows 11 x64 · 本地规则问答不需要 API Key · [源码公开 · 个人非商业免费](LICENSE)
 
-> **当前正式版为 v1.6.0。** 从 v1.6.0 起，本项目源代码改为 PolyForm Noncommercial：个人、非商业用途免费，商业使用需单独取得[商业授权](COMMERCIAL-LICENSE.md)。v1.5.5 及更早版本仍按 MIT 授权。
+> **当前正式版 v1.6.1。** 从 v1.6.0 起，项目源码改用 PolyForm Noncommercial：个人、非商业用途免费，商业使用需另行取得[商业授权](COMMERCIAL-LICENSE.md)。v1.5.5 及更早版本仍按 MIT 授权。
 
-[⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [完整使用指南](docs/guide/user-guide.md) · [快速开始](#三步开始使用) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
+[⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [完整使用指南](docs/guide/user-guide.md) · [三步开始使用](#三步开始使用) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
+
+## 这是什么
+
+一个跑在你电脑上的 iRacing 副驾：
+
+- **少找一次黑框。** 油量、剩余时间、名次、圈速、前后车距离，用中文问、中文答。
+- **赛段损失也能问。** 哪一段慢、跟前车分段差多少，按官方分段报时间差。
+- **日常问答留在本机。** 本地语音识别 + 规则匹配 + 录音播报，不接大模型也能用。
+- **需要时再扩展。** AI 分析、AI 回答的语音合成、游戏内 Overlay、语音进站控制分别开关，**默认全部关闭**。
+- **语音包可以单独用。** 只想要中文 Spotter？装上语音包由 iRacing 自己触发播报，不必启动助手。
+
+## 三步开始使用
+
+1. 到 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases/latest) 下载 Windows 安装包（文件名以 `Setup-x64.exe` 结尾）并安装，**不需要装 Python**。
+2. 打开软件，在「语音输入」里选麦克风、采集键盘或方向盘上的说话键，然后开启监听。
+3. 进 iRacing，按住绑定键说「还剩多少时间」，松开等回答。
+
+更新内容与升级说明见 [v1.6.1 版本说明](docs/releases/v1.6.1.md)。
+
+## 可以这样问
+
+| 想了解什么 | 试着说 |
+| --- | --- |
+| 燃油与续航 | 油还够吗；目前还有多少油；每圈油耗多少 |
+| 比赛进度 | 还剩多少时间；比赛还剩几圈；我已经跑完几圈 |
+| 圈速 | 我上一圈多少；最佳圈速多少；前车上一圈多少 |
+| 位置与前后车 | 现在第几名；同组第几名；前车多远；后车多远 |
+| 赛段与分段 | 我上一圈哪一段慢；第 2 段用了多少；跟前车分段差多少 |
+| 维修与天气 | 还剩几次快修；必修还剩多久；气温多少；路面温度多少 |
+| 进站服务（需先启用） | 帮我取消换胎；只换左侧轮胎；帮我加10升油；勾上快修 |
+
+一次只问一个具体项目。全场第一名、赛道前后车、自己的车是三个不同对象；普通圈速问题默认读上一完整圈。赛段只到官方分段级，整份分段清单（「全部分段」「上一圈分段用时」）不会逐段念，但可以问具体某一段。
+
+![v1.6.1 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.5.0/dashboard.png)
+
+上图为真实软件界面，遥测使用明确标记的模拟数据。
+
+## 必须知道的几条边界
+
+- **不知道就说不知道。** 读不到的数据不会编：字段缺失、会话不匹配、跨单位换算没有依据时，宁可拒答。
+- **改车之前先练习。** 语音进站控制默认关闭；开启后只接受明确口令，含糊、否定、转述、一次说多个服务都会被拒绝而不是猜着执行。
+- **「加满」不总是自动完成。** iRacing 广播只接受 1–120 的整数升；如果算出来是 20.3 升这类真实小数，软件会告诉你估算值并请你明确说「加 20 升」或「加 21 升」，不会替你取整。
+- **安装包未做代码签名。** 下载页附 `SHA256SUMS.txt`，请先核对哈希再安装。
+- **Spotter 不会自动更新。** 助手升级更新的是它自己那份语音资源；已经复制进 iRacing 安装目录的 Spotter 需要你重新复制一次，见 [Spotter 安装指南](docs/guide/spotter-install.md)。
+- **本项目与 iRacing 官方无关。**
+
+## 参考文档
+
+| 想看什么 | 去哪 |
+| --- | --- |
+| 安装、界面、每一项设置 | [使用指南](docs/guide/user-guide.md) |
+| AI 服务商申请、字段、模型名、排错与费用 | [AI 配置指南](docs/guide/api-setup.md) |
+| 能问什么、哪些做不到、口径怎么定 | [能力与边界](docs/guide/capabilities-and-limits.md) |
+| 只装中文 Spotter | [Spotter 安装指南](docs/guide/spotter-install.md) |
+| 知识库页面怎么读 | [知识库说明](docs/knowledge-base.md) |
+
+安装版把配置、日志与状态放在 `%LOCALAPPDATA%\LittleNavigator`，升级和卸载都会保留。想不开游戏先试界面，可在安装目录运行 `小小领航员.exe --sim`，界面会明确标记模拟数据。
+
+## 隐私与网络
+
+本地识别、规则匹配和录音播报不联网。只有你显式启用 AI 分析或 AI 语音合成后，软件才会访问你自己填写的那家服务商地址；密钥以掩码显示、不写入日志、也不出现在导出的诊断包里。日志导出需要你在界面上手动触发。
+
+## 参与开发
+
+构建、测试、语音包制作与发布流程见 [开发说明](DEVELOPMENT.md) 与 [贡献指南](CONTRIBUTING.md)。源码采用 PolyForm Noncommercial 1.0.0，**不是 OSI 开源许可**：欢迎阅读、修改、自行使用，但再分发与商业用途受条款限制。商标与随包素材的权利归各自权利人，不因源码许可而转授，详见 [第三方说明](THIRD_PARTY_NOTICES.md) 与 [素材许可](ASSETS-LICENSE.md)。
+
+## 致谢
+
+🤝 感谢 **@oo**、**MoonDrop**、**IFP Wargame** 的赞助支持，以及 **Drag-On XTT Racing** 车队的支持。
 
 <p>
   <picture>
@@ -44,173 +113,6 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答无需 API Key · [源码
   </picture>
 </p>
 
-🤝 赞助支持：**@oo**；**MoonDrop、IFP Wargame**；车队：**Drag-On XTT Racing**。感谢他们对项目的支持。
+---
 
-## 开车时，直接开口问
-
-- **少找一次黑框。** 查询油量、剩余时间、名次、圈速和前后车信息，再用中文语音回答。
-- **赛段损失也能问。** 哪一段慢、跟前车分段差多少，按官方赛段报时间差；整份分段清单不会逐段念。
-- **日常问答留在本机。** 本地语音识别、规则匹配与录音播报，不要求接入大模型或语音服务。
-- **需要时再扩展。** AI 分析、全局交给 AI、思考模式、AI 回答的语音合成（TTS）、游戏内 Overlay、语音进站控制分别启用，默认关闭。
-- **语音包也能独立使用。** 只安装中文 Spotter，由 iRacing 触发原有播报，不必启动助手。
-
-## 三步开始使用
-
-1. 在 [Releases](https://github.com/xxushengcchen/LittleNavigator/releases/latest) 下载最新 Windows 安装包（文件名以 `Setup-x64.exe` 结尾）并安装，**无需安装 Python**。
-2. 打开软件，在「语音输入」选择麦克风，采集键盘或方向盘上的说话键，然后开启监听。
-3. 进入 iRacing，按住绑定键说「还剩多少时间」，松开后等待回答。
-
-当前正式版为 [v1.6.0](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.6.0)，包含完整本地识别模型与语音。更新内容见 [版本说明](docs/releases/v1.6.0.md)。
-
-> **从 v1.5.5 升级。** 直接安装 v1.6.0 覆盖即可；用户配置、日志与语音包会保留。
-
-<details>
-<summary>不开游戏试用、升级与安装问题</summary>
-
-在安装目录打开 PowerShell，可用模拟数据启动；界面会明确标记模拟模式：
-
-```powershell
-& ".\小小领航员.exe" --sim
-```
-
-系统缺少 WebView2 时，安装包中的微软官方引导器需要联网补装。项目安装包未代码签名，下载页附 `SHA256SUMS.txt`，用于核对安装文件。
-
-下载后建议先核对哈希，再双击安装（安装包未代码签名，哈希是目前唯一的完整性验证方式）：
-
-```powershell
-Get-FileHash .\LittleNavigator-<版本>-Setup-x64.exe -Algorithm SHA256
-# 与发布页 SHA256SUMS.txt 中对应文件的那一行对比
-```
-
-升级前退出软件，使用与旧版相同的安装范围和目录。安装版配置、日志和状态位于 `%LOCALAPPDATA%\LittleNavigator`，升级和卸载都会保留。旧便携版可在首次启动安装版前，把 `config.local.yaml` 复制到这个目录。
-
-</details>
-
-## 可以这样问
-
-| 想了解什么 | 试着说 |
-| --- | --- |
-| 燃油与续航 | 油还够吗；目前还有多少油；每圈油耗多少 |
-| 比赛进度 | 还剩多少时间；比赛还剩几圈；我已经跑完几圈 |
-| 自己与对手的圈速 | 我上一圈多少；最佳圈速多少；前车上一圈多少 |
-| 位置与前后车 | 现在第几名；同组第几名；前车多远；后车多远 |
-| 赛段与分段 | 我上一圈哪一段慢；第 2 段用了多少；跟前车分段差多少 |
-| 维修与天气 | 还剩几次快修；必修还剩多久；气温多少；路面温度多少 |
-| 进站服务，需先启用 | 帮我取消换胎；只换左侧轮胎；帮我加10升油；勾上快修 |
-
-一次询问一个具体项目。全场第一名、赛道前后车与自己的车辆是不同对象；普通圈速问题默认读取上一完整圈。赛段问题只到官方分段级；整份分段清单（如「全部分段」「上一圈分段用时」）不会逐段播报，具体某一段用时可以问。
-
-## 实际软件界面
-
-![v1.5.0 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.5.0/dashboard.png)
-
-上图来自真实软件，遥测使用明确标记的模拟数据。进站示意图只读显示游戏服务勾选；断线后会清空旧遥测。
-
-## 看清软件怎么理解你
-
-v1.5.0 新增「知识库」页面：把「问法 → 意图 → 遥测字段 → 播报方式」画成连线图，也能切换成问法密度矩阵。点开一个意图，就能看到它由哪些问法支撑、读哪些字段、怎么播报。页面只读，不播报、不改车、不调模型。
-
-![知识库选中「燃油」后的链路高亮与详情，模拟遥测](docs/ui-preview/v1.5.0/knowledge-detail.png)
-
-它同时是排查工具：「可疑样本」列出能被两条以上意图同时接受的问法，「数据缺口」是游戏端本来读不到的值，单独计数、不算缺陷。用法见[使用指南的知识库一节](docs/guide/user-guide.md#知识库)，数据来源与判定规则见[知识库文档](docs/knowledge-base.md)。
-
-## 按需开启 AI 与进站控制
-
-不配置以下功能，也能使用本地规则问答与中文录音播报。
-
-- **AI 分析：** 在「AI 工程师」填写模型接口、模型名和自己的 API Key，通过兼容 Chat Completions 的接口调用，费用由所接服务决定。填好接口与 Key 后可拉取模型列表并选择，也可手动填写。响应方式可选「全部交给 AI」，让日常问题也交给模型回答。
-- **AI 回答语音合成：** 在同页的 TTS 区域单独配置与保存；不配置时 AI 只有文字，不影响规则问题的录音播报。AI 思考时先播的等待语也在这里开关。
-- **游戏内 Overlay：** 同页开启后，用半透明浮层在游戏画面上显示识别文字与最近回答；默认关闭，保存后立即生效。
-- **语音进站控制：** 在「进站控制」单独启用并保存，可设置换胎、加油、快修、清洁挡风，或取消、清空进站服务。
-
-⚠️ **语音进站控制会改变游戏中的进站设置。** 语音可能识别错误，请先在练习赛核对软件读回与游戏黑框。当前加油只执行整数升数，小数明确拒绝；轮胎配方、刹车平衡、TC/ABS 档位、雨刷和方向盘不支持语音修改。
-
-### 获取 API：以 DeepSeek 和豆包语音为例
-
-DeepSeek 负责生成 AI 文字回答，豆包语音负责把 AI 回答念出来；两者需要分别申请、分别填写密钥。本地语音识别与规则播报不需要这两项服务。以下步骤核对于 **2026-10-20**，服务商的开通条件、额度和价格以各自控制台为准。
-
-**1. 申请 DeepSeek 模型 API**
-
-打开 [DeepSeek 开放平台](https://platform.deepseek.com/)，注册并登录。在平台的 [API keys 页面](https://platform.deepseek.com/api_keys) 创建密钥并妥善保存；在余额或充值页面确认有可用 API 额度。网页版聊天账号的使用体验不代表 API 已有可用余额。
-
-回到软件「AI 工程师」，按下表填写，再点 **保存模型设置 → 测试连接**：
-
-| 软件里的字段 | 填写内容 |
-| --- | --- |
-| 启用 AI 分析 | 开启 |
-| 响应方式 | 白名单；需要独立触发时可选分析键并绑定按键 |
-| 服务预设 | DeepSeek |
-| 接口地址 | `https://api.deepseek.com` |
-| 模型名 | `deepseek-flash`（本次核对的官方示例模型名） |
-| API Key | 自己在 DeepSeek 开放平台创建的密钥 |
-
-**v1.4.5 的 DeepSeek 预设仍会填入旧模型名 `deepseek-chat`，选择预设后请手动改为上表名称。** 之后如服务商更新模型，按 [DeepSeek 官方接入文档](https://api-docs.deepseek.com/zh-cn/) 填写当前可用名称。接口地址不需要填写网页聊天地址，也不需要自己追加 `/chat/completions`。
-
-v1.6.0 起，保存接口地址与 Key 后可以点「拉取模型」从服务商返回的列表里选择模型；服务商不支持模型列表时仍可手动填写。
-
-**2. 申请豆包语音 API，让 AI 回答能听见**
-
-按 [豆包语音新版控制台入门](https://docs.volcengine.com/docs/DoubaoVoice/QuickStartNewConsole?lang=zh) 注册并登录火山引擎，完成平台要求的实名认证。进入 [豆包语音新版控制台](https://console.volcengine.com/speech/new/overview?projectName=default)，在 **开通管理** 开通「语音合成 2.0」服务；在同一项目的 **API Key 管理** 创建或获取可用密钥。在 **音色库** 选择语音合成 2.0 支持的音色，通过音色卡片的「···」复制 **音色 ID**。
-
-在软件「AI 工程师」展开 **语音合成**，填写后点 **保存语音合成 → 试听**：
-
-| 软件里的字段 | 填写内容 |
-| --- | --- |
-| 合成服务 | 豆包 |
-| 音色 | 控制台复制的音色 ID（不是音色的中文昵称） |
-| 服务地址 | 留空；豆包适配器使用内置地址 |
-| 语音 API Key | 豆包语音控制台获取的 API Key，与 DeepSeek 密钥分开 |
-
-当前软件默认使用 `seed-tts-2.0`，因此请配套选择 **语音合成 2.0 公版音色**。豆包语音的接口、资源与音色要求见 [官方 HTTP 单向流式文档](https://docs.volcengine.com/docs/DoubaoVoice/unidirectional-streaming-text-to-speech-http?lang=zh)。不要填火山方舟的模型 Key、云账号 AK/SK、旧版 AppID 或 Access Token；它们不是这里所需的语音 API Key。无需为此开通云端语音识别或声音复刻。
-
-**3. 赛前确认完整流程**
-
-先确认模型「测试连接」通过，再点语音「试听」检查合成结果。**v1.4.5 的此按钮目前只显示合成是否成功、音频大小与耗时，不会播放声音。** 要验证耳机出声，请在模拟模式或练习赛用一个分析问题完成实际问答，例如「结合当前油量分析一下是否需要进站」。文字试问要点 **执行并播报**，仅点「预览解析」不会调用模型或播放。连接测试通过只说明接口连通，仍需验证实际回答与延迟；本项目尚未使用你的账号实测上述服务。
-
-失败时先看软件返回的错误：鉴权失败检查密钥与服务归属；额度或权限错误检查余额、服务开通状态和音色所属项目；只有文字时检查 TTS 是否保存、试听和耳机路由。不要把含真实密钥的截图或配置上传到 GitHub。更多原理和排查见 [API 接入指南](docs/guide/api-setup.md)。
-
-## 语音包单独装进 iRacing
-
-只想换中文 Spotter，可在 [v1.4.1 发布附件](https://github.com/xxushengcchen/LittleNavigator/releases/tag/v1.4.1) 下载 `LittleNavigator-iRacing-VoicePack-v1.4.1.zip`。已安装助手时，也可使用安装目录下的 `build\pack\Mandarin-CNTW-Xusheng_Chen`。
-
-退出模拟器，将 `Mandarin-CNTW-Xusheng_Chen` 文件夹复制到 **iRacing 游戏安装目录**的 `sound\spcc`，在游戏 **Options → Sound → Voice Pack** 中选择它，再重新加载模拟器。
-
-[完整安装步骤与目录示例](docs/guide/spotter-install.md)。注意使用游戏安装目录，通常不是「文档\iRacing」。
-
-## 使用前了解
-
-- 规则问答依赖短语和意图匹配。AI 为可选补充，目前是一问一答，不支持多轮追问或主动工程师提醒。
-- 没有可靠遥测时会说明读不到；事故点不能用来判断具体车损，也不能用秒差代替圈差。
-- 前后车秒差是估计值；冷胎压是设定值，胎温和磨损来自有效进站检测，不能当作持续更新的胎面数据。
-- 赛段用时是插值估算，只到官方赛段级；整份分段清单不会逐段播报，具体弯道也无法定位。
-- 支持的字段与赛车有关。真实麦克风、方向盘、AI/TTS 接口和比赛场景仍需要在实际使用中验证。
-
-更多数据范围、操作边界与后续计划见 [能力与限制](docs/guide/capabilities-and-limits.md)。
-
-## 完整使用指南
-
-十一个页面逐页说明、常用问法、AI 与语音合成的申请步骤、语音改车、语音包安装、文件位置和排错，都在 [**使用指南**](docs/guide/user-guide.md)。
-
-- 入门：[安装与启动](docs/guide/user-guide.md#1-安装与启动) · [首次设置](docs/guide/user-guide.md#2-首次设置能说话能听见) · [十一个页面](docs/guide/user-guide.md#3-十一个页面) · [怎么问](docs/guide/user-guide.md#4-怎么问) · [排错](docs/guide/user-guide.md#9-排错)
-- 专题：[API 接入](docs/guide/api-setup.md) · [能力与限制](docs/guide/capabilities-and-limits.md) · [Spotter 安装](docs/guide/spotter-install.md) · [知识库说明](docs/knowledge-base.md)
-- 版本：[v1.6.0 更新说明](docs/releases/v1.6.0.md) · [旧版界面指南](docs/guide/v1.4.5-interface.md)
-
-## 开发和参与
-
-欢迎补充真实问法、报告播报问题、测试车型与方向盘，或提交代码。反馈时请附版本、车型、赛道、原话、识别文字和预期结果；只提供相关日志片段，**不要上传 API Key 或完整私人日志**。
-
-[贡献指南](CONTRIBUTING.md) · [开发与构建](DEVELOPMENT.md) · [真机问题修复记录](docs/live-race-fixes.md)
-
-主要代码在 [`voice-assistant/`](voice-assistant/)：`src/` 负责识别、遥测、问答和播放，`app/` 是桌面窗口与界面，`tests/` 为回归测试，`packaging/` 负责打包。语音文案与生成工具位于 `content/`、`scripts/`。
-
-## 许可与致谢
-
-从 v1.6.0 起，程序源代码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：个人、非商业用途免费；**商业使用需要单独取得 [商业授权](COMMERCIAL-LICENSE.md)**（联系邮箱：**[akaiwakamimeclerc@gmail.com](mailto:akaiwakamimeclerc@gmail.com)**）。这是源码公开（source-available）许可，不属于 OSI 定义下的开源许可证。**v1.5.5 及更早版本仍按 MIT License 授权**，已经发布的旧版本、旧 tag 和旧 fork 不受本次变更影响。
-
-- [许可证变更说明](LICENSE-CHANGE.md)：v1.5.5 及更早版本仍为 MIT，v1.6.0 起切换
-- [素材、语音与品牌许可](ASSETS-LICENSE.md)：代码许可证不自动覆盖模型、语音、Logo、赞助商标识
-- [商标与品牌使用政策](TRADEMARK.md)：fork 可以，但不能冒充官方
-- [安装包 EULA](INSTALLER-EULA.md)：官方安装包的个人非商业使用边界
-- [第三方依赖说明](THIRD_PARTY_NOTICES.md)：模型、语音、字体与依赖的各自许可
-
-制作：xushengchen from Moondrop-Dox Racing。感谢 IFP Wargame、MoonDrop 的赞助支持，以及 Drag-On XTT 车队的支持。项目由社区维护，**不是 iRacing 官方软件**。
+作者与维护者：[@xxushengcchen](https://github.com/xxushengcchen)。商业授权请见 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。

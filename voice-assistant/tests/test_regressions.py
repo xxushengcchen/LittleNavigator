@@ -309,7 +309,7 @@ class ServiceTests(unittest.TestCase):
             self.service.configure({'playback':{'ducking':{'enabled':True}}})
 
     def test_http_ai_models_endpoint(self):
-        """GET /api/ai/models 默认无参，用已保存配置；错误也走 200+JSON。"""
+        """模型列表：旧 GET 405 且零外发；POST 只读已保存成对配置（审计 S01）。"""
         class ModelsHandler(Handler):
             pass
 
@@ -318,26 +318,61 @@ class ServiceTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         url = f'http://127.0.0.1:{server.server_port}'
+        token = self.service.api_token
 
-        def get_models() -> tuple[int, dict]:
-            with urllib.request.urlopen(url + '/api/ai/models') as resp:
-                return resp.status, json.loads(resp.read())
+        def request_models(path, body=None, with_token=True):
+            data = None if body is None else json.dumps(body).encode()
+            req = urllib.request.Request(url + path, data=data, method='POST' if data is not None else 'GET')
+            if with_token:
+                req.add_header('X-Assistant-Token', token)
+            req.add_header('Content-Type', 'application/json')
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    return resp.status, resp.headers, json.loads(resp.read())
+            except urllib.error.HTTPError as exc:
+                raw = exc.read()
+                return exc.code, exc.headers, (json.loads(raw) if raw else {})
 
         try:
             with patch('src.llm_engine.list_models',
                        return_value={'ok': True,
                                      'models': [{'id': 'deepseek-chat'}]}) as fake:
-                status, payload = get_models()
-            self.assertEqual(status, 200)
-            self.assertEqual(payload['ok'], True)
-            self.assertEqual(payload['models'], [{'id': 'deepseek-chat'}])
-            self.assertNotIn('api_key', payload)
-            fake.assert_called_once()
-            # 未配置 base_url/key：返回可读错误，而不是 500
-            status, payload = get_models()
-            self.assertEqual(status, 200)
-            self.assertFalse(payload['ok'])
-            self.assertIn('接口地址', payload['error'])
+                # 1) 旧 GET：405 + Allow: POST，而且绝不能真的去外发
+                status, headers, payload = request_models('/api/ai/models')
+                self.assertEqual(status, 405)
+                self.assertEqual(headers.get('Allow'), 'POST')
+                fake.assert_not_called()
+
+                # 2) 无凭据 POST：403，外发仍是 0
+                status, _, _ = request_models('/api/ai/models', {}, with_token=False)
+                self.assertEqual(status, 403)
+                fake.assert_not_called()
+
+                # 3) 带覆盖参数：400，防「拿旧 Key 去打新地址」
+                status, _, _ = request_models('/api/ai/models',
+                                              {'base_url': 'http://evil.example'})
+                self.assertEqual(status, 400)
+                fake.assert_not_called()
+
+                # 4) 已保存成对配置：正常返回模型列表，且不回显密钥
+                self.service.cfg.setdefault('ai', {})
+                self.service.cfg['ai']['base_url'] = 'http://saved.example/v1'
+                self.service.cfg['ai']['api_key'] = 'sk-saved-placeholder'
+                status, _, payload = request_models('/api/ai/models', {})
+                self.assertEqual(status, 200)
+                self.assertTrue(payload['ok'])
+                self.assertEqual(payload['models'], [{'id': 'deepseek-chat'}])
+                self.assertNotIn('api_key', payload)
+                fake.assert_called_once()
+
+                # 5) 未配置成对凭据：可读错误，不 500、不外发
+                fake.reset_mock()
+                self.service.cfg['ai']['api_key'] = ''
+                status, _, payload = request_models('/api/ai/models', {})
+                self.assertEqual(status, 200)
+                self.assertFalse(payload['ok'])
+                self.assertTrue(payload['error'])
+                fake.assert_not_called()
         finally:
             server.shutdown()
             server.server_close()

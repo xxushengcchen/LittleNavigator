@@ -141,12 +141,13 @@ class AiModelFetchContractTests(unittest.TestCase):
         cls.js = read_static("app.js")
         cls.css = read_static("app.css")
 
-    def test_button_and_get_endpoint(self):
+    def test_button_and_post_endpoint(self):
         self.assertIn('id="ira-ai-models"', self.js)
         self.assertIn("拉取模型", self.js)
-        # GET：api() 只传一个参数（没有 body 才是 GET，见 app.js 顶部）。
-        self.assertIn('api("/api/ai/models")', self.js)
-        self.assertNotIn('api("/api/ai/models",', self.js)
+        # v1.6.1（审计 S01）：模型列表改为带凭据的 POST，且不接受覆盖参数。
+        # 旧 GET 在服务端直接 405，前端必须发 POST（空对象 body）。
+        self.assertIn('api("/api/ai/models", {})', self.js)
+        self.assertNotIn('api("/api/ai/models")', self.js)
 
     def test_select_upgrade_keeps_custom_fallback(self):
         self.assertIn('id="ira-ai-model-select"', self.js)
@@ -164,7 +165,7 @@ class AiModelFetchContractTests(unittest.TestCase):
         self.assertIn("用已保存的接口地址与密钥拉取", self.js)
 
     def test_key_never_enters_the_models_flow(self):
-        start = self.js.index('api("/api/ai/models")')
+        start = self.js.index('api("/api/ai/models", {})')
         block = self.js[start - 1200:start + 1200]
         self.assertNotIn("ira-ai-key", block)
         # 注释里可以写「不写 localStorage」；不能真的读写它。

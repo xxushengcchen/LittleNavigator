@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 import sys
 import time
@@ -520,24 +521,48 @@ class Assistant:
                     "error": "未初始化"}
         return self.car.status()
 
-    def _litres_to_fill(self, rec: dict) -> float | None:
-        """算出「加满」还要加多少升。读不到就返回 None，不去猜。"""
+    def _fill_decision(self, rec: dict) -> dict:
+        """算出「加满」还要加多少升，并给出**自动可发送的整数升**。
+
+        iRacing 的进站广播只收 1–120 的整数升。以前这里把算出的浮点数
+        clamp 后直接交给广播层，小数要么被拒绝、要么被悄悄取整，两种都错：
+        用户说「加满」，我们既不能少加也不能多加。所以只在算出来本来就
+        是整数（只吸收浮点噪声）时自动发送；真实的 .3/.7 升必须让用户
+        自己说一个整数。
+
+        返回 {"litres": float | None, "reason": str | None}。
+        """
         snap = self.snapshot()
         level = getattr(snap, "fuel_level", None)
         pct = getattr(snap, "fuel_pct", None)
-        if not isinstance(level, (int, float)) or not isinstance(pct, (int, float)):
-            return None
+        if (not isinstance(level, (int, float)) or isinstance(level, bool)
+                or not isinstance(pct, (int, float)) or isinstance(pct, bool)):
+            return {"litres": None, "reason": "读不到油箱容量，加满请在黑框里设"}
+        if not math.isfinite(level) or not math.isfinite(pct):
+            return {"litres": None, "reason": "读不到油箱容量，加满请在黑框里设"}
         if pct <= 0.001 or level < 0:
-            return None
+            return {"litres": None, "reason": "读不到油箱容量，加满请在黑框里设"}
         capacity = level / pct              # 油箱总容量
         need = capacity - level
         rec["cc_fill"] = {"level": round(level, 2), "pct": round(pct, 3),
                           "capacity": round(capacity, 2),
                           "need": round(need, 2)}
-        if need <= car_control.FUEL_MIN_L:
-            return None                      # 已经满了，没什么可加
-        return command_match.clamp_litres(
-            need, car_control.FUEL_MIN_L, car_control.FUEL_MAX_L)
+        if need <= 0:
+            return {"litres": None, "reason": "油箱已经是满的，不用再加"}
+        if need < car_control.FUEL_MIN_L:
+            return {"litres": None,
+                    "reason": "还差不到 1 升，进站广播只能报 1–120 的整数升"}
+        if need > car_control.FUEL_MAX_L:
+            return {"litres": None,
+                    "reason": f"估算还需 {need:.1f} 升，超过单次 120 升上限，请在黑框里设"}
+        nearest = round(need)
+        if abs(need - nearest) > 1e-6:
+            # 不取整、不夹紧：把估算量说清楚，让用户给一个明确整数。
+            return {"litres": None,
+                    "reason": (f"估算还需 {need:.1f} 升；进站广播只收整数升，"
+                               f"请说「加 {math.floor(need)} 升」或"
+                               f"「加 {math.ceil(need)} 升」")}
+        return {"litres": float(nearest), "reason": None}
 
     def peek_car_command(self, text: str) -> dict | None:
         """只解析不执行：这句话会不会被当成改车指令？
@@ -591,16 +616,14 @@ class Assistant:
         if action["kind"] == "fuel":
             if action.get("full"):
                 # 「加满」要现算：容量 = 当前油量 / 当前油量百分比。
-                # 算不出来就如实拒绝，绝不退化成「沿用现有量」。
-                litres = self._litres_to_fill(rec)
-                if litres is None:
-                    p("  ✗ 加满：读不到油箱容量")
-                    rec.update({"ok": False,
-                                "reason": "读不到油箱容量，加满请在黑框里设"})
-                    self._say_with_fallback(NO_CAR_CONTROL, force=True)
+                # 算不出来、或算出来不是整数升，都如实拒绝，绝不取整发送。
+                decision = self._fill_decision(rec)
+                if decision["litres"] is None:
+                    p(f"  ✗ 加满未执行：{decision['reason']}")
+                    rec.update({"ok": False, "reason": decision["reason"]})
                     self._log(self.miss_log, rec)
                     return rec
-                action["litres"] = litres
+                action["litres"] = decision["litres"]
             rec["cc_action"] = dict(action)
 
         result = self.car.apply(action)
