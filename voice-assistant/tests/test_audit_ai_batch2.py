@@ -264,6 +264,19 @@ class SafetyContentGateTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(checks.get("content"), "fail")
 
+    def test_telemetry_state_statement_is_not_operation_advice(self):
+        # 遥测事实（维修区已关闭 / DRS 已打开）不是操作建议，不能被内容闸误杀。
+        ok, checks = run_all(
+            {"answer": "维修区已经关闭，DRS 已打开", "data_used": []},
+            {"now": {"position": 4}}, "赛道状态怎么样", 60)
+        self.assertTrue(ok, checks)
+
+    def test_imperative_switch_advice_is_refused(self):
+        ok, checks = run_all({"answer": "建议把 TC 关掉", "data_used": []},
+                             {"now": {"position": 4}}, "为什么打滑", 60)
+        self.assertFalse(ok)
+        self.assertEqual(checks.get("content"), "fail")
+
     def test_all_pass_checks_shape_unchanged(self):
         # 兼容既有调用方：通过时 checks 仍只有三道闸三个键。
         ok, checks = run_all(

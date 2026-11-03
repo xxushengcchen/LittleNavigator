@@ -240,9 +240,14 @@ def _question_premises(question: str) -> set[float]:
 # 审计 A11：禁区不能只靠 system 提示词。这里用有限词法兜住两类最危险的
 # 自由发挥：操作/调校指令、处罚与规则解释。这是有限语法，不声称能覆盖
 # 所有改写——但比「只信提示词」强，且误杀方向是安全的（拒答）。
+# 强操作动词：几乎只出现在「替用户改车」的指令/建议里。
 _OPERATION_ADVICE_RE = re.compile(
     r"调软|调硬|调紧|调松|调高|调低|调到|设置成|设置到|改成|改为|换成|更换|"
-    r"拆下|装上|拧紧|拧松|打到|放到|关掉|关闭|打开")
+    r"拆下|装上|拧紧|拧松|打到|放到")
+# 开/关类必须带祈使前缀才算建议：遥测事实「维修区已关闭」「DRS 已打开」不能误杀。
+_OPERATION_SWITCH_RE = re.compile(
+    r"(?:把|将|请|帮我|替你|建议|应该|可以|需要|记得|试试|试着|先)"
+    r"[^。；;！!？?]{0,8}(?:打开|关闭|关掉)")
 _UNSAFE_RULE_RE = re.compile(r"处罚|判罚|罚时|罚秒|犯规|违规|黑旗|禁赛|申诉成功")
 _OUT_OF_DOMAIN_ANSWER_RE = re.compile(
     r"(?:现在|今天|当前)(?:是|的|的日期是)?(?:几月|几号|几点|什么时间|什么日期|星期几)")
@@ -255,6 +260,7 @@ def check_content(answer: str, question: str) -> str | None:
         return None
     for regex, label in (
         (_OPERATION_ADVICE_RE, "操作/调校指令"),
+        (_OPERATION_SWITCH_RE, "操作/调校指令"),
         (_UNSAFE_RULE_RE, "处罚或规则解释"),
         (_OUT_OF_DOMAIN_ANSWER_RE, "比赛遥测范围外的时间/日期"),
     ):
