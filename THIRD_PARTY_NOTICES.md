@@ -19,3 +19,34 @@
 - JetBrains Mono，来自 [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)，以 SIL Open Font License 1.1 分发。
 
 两种字体均本地加载，不依赖在线字体服务；字体与许可在 `voice-assistant/app/static/fonts/`，安装包保留对应 OFL 文件。中文由系统字体回退显示。
+
+## pyirsdk（iRacing SDK 封装）
+
+- 版本：`voice-assistant/requirements-tested.txt` 锁定的 `pyirsdk==1.3.7`
+- 版权：Copyright (c) 2014 Mihail Latyshov, kutu182@gmail.com
+- 许可：MIT License；全文如下。打包时 `xiaoxiao.spec` 还会把该分发自带的
+  `LICENSE` 收集到发行目录的 `licenses/pyirsdk/`，安装包随 `{app}` 一起携带。
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 Mihail Latyshov, kutu182@gmail.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```

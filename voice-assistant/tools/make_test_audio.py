@@ -106,7 +106,7 @@ def main() -> int:
     tmpdir = pathlib.Path(tempfile.mkdtemp(prefix="tts-"))
     manifest_path = out_dir / "manifest.jsonl"
     results: list[dict] = []
-    fails: list[str] = []
+    fails: list[dict] = []
 
     def run(job: tuple[str, str, bool, str, int]) -> dict | None:
         intent, phrase, neg, voice, rate = job
@@ -128,7 +128,9 @@ def main() -> int:
             return {"file": name, "phrase": phrase, "intent": intent, "neg": neg,
                     "voice": voice, "rate": rate, "ok": True}
         except (TtsError, OSError) as exc:
-            fails.append(f"{phrase} [{voice} r{rate}] {exc}")
+            fails.append({"file": name, "phrase": phrase, "intent": intent,
+                          "neg": neg, "voice": voice, "rate": rate,
+                          "ok": False, "error": str(exc)})
             return None
 
     with cf.ThreadPoolExecutor(max_workers=args.workers) as pool:
@@ -139,12 +141,19 @@ def main() -> int:
     with manifest_path.open("w", encoding="utf-8") as f:
         for r in sorted(results, key=lambda x: x["file"]):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    failures_path = out_dir / "manifest-failures.jsonl"
+    if fails:
+        # 失败任务必须留下记录：旧实现只收集不落盘，下游拿到的 manifest
+        # 会悄悄变小，测试集缩水却被当成流水线全绿。
+        with failures_path.open("w", encoding="utf-8") as f:
+            for r in sorted(fails, key=lambda x: x["file"]):
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
     print(f"成功 {len(results)} / {len(jobs)}，清单：{manifest_path}")
     if fails:
-        print(f"失败 {len(fails)} 条，前 5 条：")
+        print(f"失败 {len(fails)} 条（记录：{failures_path}），前 5 条：")
         for s in fails[:5]:
-            print("  -", s)
-    return 0 if results else 1
+            print(f"  - {s['phrase']} [{s['voice']} r{s['rate']}] {s['error']}")
+    return 0 if (not fails and len(results) == len(jobs)) else 1
 
 
 if __name__ == "__main__":

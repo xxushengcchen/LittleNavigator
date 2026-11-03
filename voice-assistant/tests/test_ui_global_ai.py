@@ -136,8 +136,10 @@ class OverlayLayoutContractTests(unittest.TestCase):
         for key in ("width:", "height:", "x:", "y:"):
             self.assertIn(key, block)
         self.assertIn("function overlayIntInput(el, fallback, min, max)", self.js)
-        self.assertIn('overlayIntInput($("#ira-ov-width", panel), 720, 240, 4096)', self.js)
-        self.assertIn('overlayIntInput($("#ira-ov-height", panel), 200, 80, 2160)', self.js)
+        # 审计 F07：表单范围与后端 config 校验对齐（宽 480-1200、高 140-400），
+        # 不再用 240-4096 / 80-2160 这种后端会拒绝的范围。
+        self.assertIn('overlayIntInput($("#ira-ov-width", panel), 720, 480, 1200)', self.js)
+        self.assertIn('overlayIntInput($("#ira-ov-height", panel), 200, 140, 400)', self.js)
 
     def test_reset_restores_default_position_and_size(self):
         self.assertIn('id="ira-ov-reset"', self.js)

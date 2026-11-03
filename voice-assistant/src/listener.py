@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import ctypes
+import queue
 import sys
 import threading
 import time
@@ -222,6 +223,11 @@ class PttListener:
         self.poll_s = ptt.get("poll_ms", 10) / 1000.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # 审计 R01：识别/回调（可能要等模型 1~2 秒）不能跑在轮询线程里，
+        # 否则等待期间按下的 PTT 事件整段丢失。轮询线程只负责录音并投递，
+        # 处理放进单条工作线程，保证「一次按住一条结果」且顺序不乱。
+        self._work_q: queue.Queue = queue.Queue()
+        self._worker: threading.Thread | None = None
         self._capture_lock = threading.Lock()
         self.error = None
         self.stats = {"segments": 0, "ignored_busy": 0, "too_short": 0, "errors": 0}
@@ -229,6 +235,18 @@ class PttListener:
         self.last: dict | None = None
 
     # ------------------------------------------------------------------
+    def apply_analysis_key(self, vk) -> int | None:
+        """热更新分析键：保存 ai.analysis_key 后无需停开监听即可生效。
+
+        审计 R04：以前 analysis_vk 只在构造时快照一次，运行中改绑/解除
+        都要手动重启监听。这里提供与构造同语义的入口（同键仍被拒绝）。
+        """
+        resolved = resolve_vk(vk) if vk is not None else None
+        if resolved is not None and resolved == self.vk:
+            resolved = None
+        self.analysis_vk = resolved
+        return self.analysis_vk
+
     def _down(self):
         return self.wheel.pressed(self.binding) if self.wheel is not None else _key_down(self.vk)
 
@@ -241,6 +259,15 @@ class PttListener:
         if self.running:
             return
         self._stop.clear()
+        # 上一次 stop 之后可能残留音频，重新开始监听时直接丢掉。
+        while True:
+            try:
+                self._work_q.get_nowait()
+            except queue.Empty:
+                break
+        self._worker = threading.Thread(target=self._work_loop,
+                                        name="ptt-process", daemon=True)
+        self._worker.start()
         self._thread = threading.Thread(target=self._loop, name="ptt-listener", daemon=True)
         self._thread.start()
 
@@ -252,6 +279,11 @@ class PttListener:
         self._stop.set()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=2.0)
+        # 让工作线程退出（若正阻塞在外部回调里，join 会超时后自然放弃，
+        # 仍由 daemon 属性保证不挡进程退出）。
+        self._work_q.put(None)
+        if self._worker and self._worker is not threading.current_thread():
+            self._worker.join(timeout=2.0)
         return not self.running
 
     # ------------------------------------------------------------------
@@ -287,17 +319,20 @@ class PttListener:
         try:
             if self.is_busy() or self._stop.is_set():
                 return {"error": "当前正在播报或监听已停止"}
+            # 审计 R09：界面测试录的是普通提问，不能继承上一条分析键留下的
+            # pending_source，否则会绕过本地规则直接请求 AI。
+            self.pending_source = "ptt"
             self.state = "recording"
             deadline = time.monotonic() + seconds
             audio = self._record_while(lambda: time.monotonic() >= deadline)
             if not self._stop.is_set():
-                self._process(audio)
+                self._process(audio, "ptt")
             return {"running": self.running, "simulated_seconds": seconds}
         finally:
             self.state = "idle"
             self._capture_lock.release()
 
-    def _process(self, audio):
+    def _process(self, audio, source: str | None = None):
         if self._stop.is_set() or self.is_busy():
             return
         if len(audio) < int(self.min_hold_s * self.sr):
@@ -315,7 +350,8 @@ class PttListener:
         meta = {"record_s": round(len(audio) / self.sr, 2),
                 "asr_ms": round((time.perf_counter() - started) * 1000),
                 "asr_model": getattr(self.asr, "key", "?")}
-        source = self.pending_source
+        if source is None:
+            source = self.pending_source
         self.last = {"text": res.text, **meta, "source": source}
         label = "分析" if source == "analysis" else ""
         print(f"🎙 听到{label}：「{res.text}」", file=self.out)
@@ -323,14 +359,38 @@ class PttListener:
                     else self.on_result)
         callback(res.text, {**meta, "source": source})
 
+    def _work_loop(self) -> None:
+        """串行执行识别/回调（审计 R01）。轮询线程只投递录音，不等模型。"""
+        while True:
+            item = self._work_q.get()
+            if item is None:
+                return
+            audio, source = item
+            try:
+                self._process(audio, source)
+            except Exception as exc:  # noqa: BLE001
+                self.error = str(exc)
+                print(f"✗ PTT 处理失败：{exc}", file=self.out)
+                self.stats["errors"] += 1
+            finally:
+                self.state = "idle"
+
     # ------------------------------------------------------------------
     def _loop(self) -> None:
         log = f"PTT 监听中：按住键说话，松开出结果（vk=0x{self.vk:02X}）"
         if self.analysis_vk is not None:
             log += f"；分析键 0x{self.analysis_vk:02X}"
         print(log, file=self.out)
+        # 方向盘后端在构造时已死：正确报失败，不冒充键盘继续轮询
+        # （审计 R05：Service 会读 listener.error，而不是显示「运行中」）。
+        wheel_err = getattr(self.wheel, "error", None)
+        if wheel_err:
+            self.error = wheel_err
+            print(f"✗ {wheel_err}", file=self.out)
+            return
         # 设置采集或重启监听时仍按住的按钮，不应生成一次提问。
-        while not self._stop.is_set() and self._down():
+        # 分析键同理（审计 R10）：按住分析键启动会立刻录音并直接请求 AI。
+        while not self._stop.is_set() and (self._down() or self._analysis_down()):
             self._stop.wait(self.poll_s)
         while not self._stop.is_set():
             # 两个输入源共用一套录音管线，用 pressed() 区分是谁；
@@ -358,13 +418,13 @@ class PttListener:
             self.state = "recording"
             try:
                 audio = self._record_while(lambda: not pressed())
-                self._process(audio)
+                # 审计 R01：只投递，不在轮询线程里跑识别+回调。
+                self._work_q.put((audio, source))
             except Exception as exc:  # noqa: BLE001
                 self.error = str(exc)
                 print(f"✗ PTT 处理失败：{exc}", file=self.out)
                 self.stats["errors"] += 1
             finally:
-                self.state = "idle"
                 self._capture_lock.release()
             # 超时或失败后必须等到松键；一次按住只产生一条录音。
             while not self._stop.is_set() and pressed():

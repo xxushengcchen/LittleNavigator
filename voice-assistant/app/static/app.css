@@ -39,7 +39,10 @@
 .kb-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
 @media(min-width:1180px){.kb-grid{grid-template-columns:minmax(0,1fr) 320px}}
 .kb-view{min-width:0;padding:16px}
-.kb-view svg{display:block;width:100%;height:auto;max-height:560px}
+/* F12：固定 672 宽 viewBox 若继续 width:100%，390 窗口会把 11.5px 压到约 5px。
+   给画布最小宽度并让图谱容器内部横向滚动：小窗口仍可读，页面本身不横向溢出。 */
+.kb-view svg{display:block;width:100%;height:auto;max-height:560px;min-width:672px}
+[data-kb-graph]{overflow-x:auto;overflow-y:hidden}
 .kb-view svg text{font-family:var(--font);fill:var(--ink)}
 .kb-view svg .kb-lbl{font-size:10px;fill:var(--faint)}
 .kb-view svg .kb-num{font:9.5px/1 var(--mono);fill:var(--faint);font-variant-numeric:tabular-nums}

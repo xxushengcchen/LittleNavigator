@@ -260,11 +260,26 @@ class AiPipeline:
 
     # ------------------------------------------------------------------
     def handle(self, question: str, snap, kind: QueryKind, laps: list[dict],
-               rule_ok: bool = False, intent: str | None = None) -> AiResult:
-        """走完整条链。任何失败都返回 ok=False，不抛异常给引擎。"""
+               rule_ok: bool = False, intent: str | None = None,
+               cancelled=None) -> AiResult:
+        """走完整条链。任何失败都返回 ok=False，不抛异常给引擎。
+
+        ``cancelled``（审计 A12）：可选的取消探针。AI 被关闭/切换后，在途请求
+        仍会返回，旧实现会照常写 live、播 TTS、覆盖 Overlay。传入探针后，
+        流水线在写 live / 播放音频之前检查它，一旦取消就整条丢弃：
+        不写 Overlay、不合成、不播放、不播固定话术。
+        """
         started = time.monotonic()
         captured = getattr(snap, 't', None)
         initial_age = max(0., time.time() - captured) if isinstance(captured, (int, float)) else 0.
+
+        def is_cancelled() -> bool:
+            if cancelled is None:
+                return False
+            try:
+                return bool(cancelled())
+            except Exception:      # noqa: BLE001 - 取消探针是装饰层，坏掉不能中断回答
+                return False
 
         def done(result: AiResult) -> AiResult:
             result.latency_ms = round((time.monotonic() - started) * 1000)
@@ -296,6 +311,10 @@ class AiPipeline:
 
         def speak(result: AiResult) -> AiResult:
             result.checks['pre_tts_data_age_s'] = round(initial_age + time.monotonic() - started, 3)
+            # 取消检查必须在写 Overlay / 出声之前：旧回答一旦写进 live，
+            # 就会覆盖用户当前应该看到的内容（审计 A12）。
+            if is_cancelled():
+                return done(self._mark_cancelled(result))
             stale = freshness()
             if stale:
                 self._expire(result, stale)
@@ -306,8 +325,13 @@ class AiPipeline:
                 # 先让 Overlay 看到答案，再合成/播报：TTS 是同步阻塞的，
                 # 等播完再写等于晚一整句的时长，Overlay 就失去「实时」意义了。
                 self._notify_live(result.text)
-                self._maybe_speak(result.text, result, before_play=freshness)
+                self._maybe_speak(result.text, result, before_play=freshness,
+                                  cancelled=is_cancelled)
             return done(result)
+
+        # 已在取消状态的请求连模型都不该再发（关闭 AI 后才启动的旧任务）。
+        if is_cancelled():
+            return done(self._mark_cancelled(AiResult()))
 
         if not should_engage(kind, self.mode, rule_ok, intent, self.whitelist):
             return done(AiResult(reason="当前档位不接管这类问题"))
@@ -406,7 +430,10 @@ class AiPipeline:
             return None
         kind_name, row = hit
         if kind_name == "knowledge":
-            return AiResult(ok=True, text=row.get("a", ""), source="learn")
+            # A09：命中记录必须带出源条目 ID，复盘标错时才有对象可停用。
+            return AiResult(ok=True, text=row.get("a", ""), source="learn",
+                            evidence={"learn_entry_id": row.get("id"),
+                                      "learn_kind": "knowledge"})
         ctx = race_context.build(snap, laps, kind, question)
         filled = fill_template(row.get("template") or {}, ctx)
         if filled is None:
@@ -422,7 +449,21 @@ class AiPipeline:
         # 再次复盘学习答案时也必须保留原模板，不能将本次填入的
         # 遥测数值重新写成固定知识。
         return AiResult(ok=True, text=filled, source="learn", checks=checks,
-                        dynamic=True, template=row.get("template"))
+                        dynamic=True, template=row.get("template"),
+                        evidence={"learn_entry_id": row.get("id"),
+                                  "learn_kind": "template"})
+
+    @staticmethod
+    def _mark_cancelled(result: AiResult) -> AiResult:
+        """把结果标成「已取消」：不留文字、不留模板、不计 breaker。"""
+        result.ok = False
+        result.source = "refused"
+        result.reason = "AI 已关闭或切换，在途回答已取消并丢弃"
+        result.text = ""
+        result.dynamic = False
+        result.template = None
+        result.checks = {**result.checks, "cancelled": "yes"}
+        return result
 
     def _expire(self, result: AiResult, reason: str) -> None:
         result.ok = False
@@ -447,12 +488,16 @@ class AiPipeline:
         except Exception:      # noqa: BLE001
             pass
 
-    def _maybe_speak(self, text: str, result: AiResult, before_play=None) -> None:
+    def _maybe_speak(self, text: str, result: AiResult, before_play=None,
+                      cancelled=None) -> None:
         """有 TTS 就合成并**播放**；失败只记一笔，文字照常返回。
 
         刻意捕获 `Exception` 而不只是 `TtsError`：TTS 是可选装饰，
         它出任何问题（编码错误、依赖缺失、适配器内部 bug）都绝不能让
         已经通过校验的文字答案丢掉。
+
+        审计 A12：TTS 合成可能耗时；合成返回后、真正出声前必须再看一次
+        取消状态。取消时连固定话术都不播。
         """
         if self.tts is None:
             return
@@ -461,6 +506,9 @@ class AiPipeline:
             return
         try:
             audio = self.tts.synth(text)
+            if cancelled is not None and cancelled():
+                self._mark_cancelled(result)
+                return
             # TTS 本身也可能耗时，必须在声音真正送出前再次检查。
             if before_play is not None:
                 stale = before_play()

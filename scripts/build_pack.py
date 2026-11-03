@@ -31,6 +31,13 @@ import re
 import subprocess
 import sys
 
+# 中文提示统一 UTF-8 输出，避免 Windows 管道/pre-commit 下按 GBK 解码成乱码。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from content_loader import count_sound_variants, load_items  # noqa: E402
 
@@ -48,6 +55,16 @@ def ffmpeg(*args: str) -> None:
                           capture_output=True)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:400])
+
+
+def needs_convert(src: pathlib.Path, dst: pathlib.Path, force: bool) -> bool:
+    """MP3 比 WAV 新（或 WAV 缺失/强制）时必须重转：改文案或重合成后不能复用旧 WAV。"""
+    if force or not dst.exists():
+        return True
+    try:
+        return src.stat().st_mtime > dst.stat().st_mtime
+    except OSError:
+        return True
 
 
 def decode_mono(src: pathlib.Path, rate: int, tempo: float = 1.0):
@@ -255,7 +272,14 @@ def main() -> int:
     args = p.parse_args()
 
     root = pathlib.Path(".")
-    items, _ = load_items(root, patterns=args.content)
+    try:
+        items, _ = load_items(root, patterns=args.content)
+    except (OSError, ValueError) as exc:
+        print(f"載入文案失敗：{exc}", file=sys.stderr)
+        return 2
+    if not items:
+        print(f"錯誤：文案為空，拒絕生成空語音包（{args.content}）", file=sys.stderr)
+        return 2
     print(f"載入 {len(items)} 個 msgId")
 
     # 尾部參數優先序：命令列 > 文案 meta > 預設。預設值維持舊行為（20ms / 不做淡出），
@@ -305,11 +329,17 @@ def main() -> int:
                 continue
             wav_name = f"{mid}_{idx:02d}.WAV"
             dst = pack_dir / wav_name
-            if args.force or not dst.exists():
+            if needs_convert(src, dst, args.force):
                 to_pack_wav(src, dst, args.rate, args.sample_fmt, wav_opts, tempo)
                 converted += 1
             entries.append((mid, wav_name, text))
             covered[mid] = covered.get(mid, 0) + 1
+
+    if missing_audio:
+        print(f"錯誤：{len(missing_audio)} 條文案找不到對應音檔，例如 {missing_audio[:5]}",
+              file=sys.stderr)
+        print("      請先補齊 MP3 再打包；不要發布缺音的語音包。", file=sys.stderr)
+        return 2
 
     # 補上沒寫到的 msgId
     nulled = 0
@@ -365,8 +395,6 @@ def main() -> int:
     print(f"  採樣率 {args.rate} Hz  總大小 {total / 1024 / 1024:.1f} MB")
     if nulled:
         print(f"  靜音（NULL）msgId {nulled} 個")
-    if missing_audio:
-        print(f"  警告：{len(missing_audio)} 條文案找不到對應音檔，例如 {missing_audio[:3]}")
     print(f"  spmsg.txt {spmsg.stat().st_size} bytes，{len(lines)} 行")
     return 0
 

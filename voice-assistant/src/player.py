@@ -140,7 +140,19 @@ class Player:
         if not self.enabled:
             return 0.0
         if self._sd is None:
-            return sum(self.play(p) for p in paths)
+            # 审计 R12：winsound 只能整段播文件，以前直接 sum(play(...))，
+            # 既不执行 gap_ms 也不回调 on_start，导致拼接节奏与主后端不同、
+            # 成功播放的 first_audio_ms 仍然是 None。这里按同样的语义补上。
+            total = 0.0
+            first = True
+            for path in paths:
+                if not first and gap_ms:
+                    time.sleep(gap_ms / 1000.0)
+                if first and on_start:
+                    on_start()
+                first = False
+                total += self.play(path)
+            return total
         parts = []
         rate = None
         for path in paths:

@@ -48,9 +48,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
+Name: "gamespotter"; Description: "把中文 Spotter 语音包同步到 iRacing 游戏目录（独立语音包用户）"; GroupDescription: "游戏内语音包："; Flags: unchecked
 
 [Files]
-Source: "{#AppSource}\*"; DestDir: "{app}"; Excludes: "\config.local.yaml,\logs\*,\state\*,\webview\*,\unins*"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 短语库是用户在安装目录里可改的内容：从通配里排除并单独安装，只首次写入、
+; 升级不覆盖、卸载不删除，避免用户自定义问法被升级或卸载清掉。
+Source: "{#AppSource}\*"; DestDir: "{app}"; Excludes: "\config.local.yaml,\logs\*,\state\*,\webview\*,\unins*,\intents_examples.yaml"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#AppSource}\intents_examples.yaml"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "installed-mode"; DestDir: "{app}"; Flags: ignoreversion
 ; WebView2 安装组件：默认是微软官方引导器（约 2 MB，缺运行时才联网补装），
 ; 也可指向离线 Standalone Installer。本行不落盘，仅在系统缺运行时时提取执行。
@@ -80,6 +84,32 @@ var Version: String;
 begin
   Result := (RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0')) or
     (RegQueryStringValue(HKCU32, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0'));
+end;
+
+procedure CopySpotterPack;
+var
+  Src, Dst: String;
+  Code: Integer;
+begin
+  Src := ExpandConstant('{app}\build\pack\Mandarin-CNTW-Xusheng_Chen');
+  Dst := ExpandConstant('{pf32}\iRacing\sound\spcc');
+  if not DirExists(ExpandConstant('{pf32}\iRacing\sound')) then begin
+    MsgBox('未找到 iRacing 安装目录（默认 C:\Program Files (x86)\iRacing），未能自动复制 Spotter 语音包。' +
+      '请退出模拟器后手动把：' + Src + ' 复制到 iRacing 安装目录的 sound\spcc 下。',
+      mbInformation, MB_OK);
+    exit;
+  end;
+  if (not DirExists(Src)) or (not Exec(ExpandConstant('{cmd}'),
+      '/c xcopy /E /I /Y "' + Src + '" "' + Dst + '" >nul', '',
+      SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+    MsgBox('同步 Spotter 语音包到游戏目录失败（游戏可能正在运行）。请退出游戏后手动把：' +
+      Src + ' 复制到 ' + Dst + '。', mbError, MB_OK);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('gamespotter') then
+    CopySpotterPack;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

@@ -153,7 +153,10 @@
     if (!ai.enabled) { busSet("ai", "off", "未启用"); }
     else if (!ai.configured) { busSet("ai", "warn", "缺密钥"); }
     else if (ai.breaker === "open") { busSet("ai", "bad", "已熔断"); }
-    else if (ai.mode === "full") { busSet("ai", "ok", "全接管"); }
+    // F14：四个档位各有自己的标签。all 是「全部交给 AI」，不是白名单；
+    // 赛前检查必须如实说明实际联网接管范围。
+    else if (ai.mode === "all") { busSet("ai", "warn", "全部交给 AI"); }
+    else if (ai.mode === "full") { busSet("ai", "ok", "规则答不上就接管"); }
     else if (ai.mode === "analysis_key") { busSet("ai", "ok", "按键触发"); }
     else { busSet("ai", "ok", "白名单"); }
 
@@ -164,8 +167,14 @@
 
   function formatTime(seconds, decimals) {
     if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds)) || seconds < 0) return '—';
-    var minutes = Math.floor(seconds / 60), rest = (seconds % 60).toFixed(decimals || 0);
-    return minutes + ':' + rest.padStart(decimals ? decimals + 3 : 2, '0');
+    // F18：先把总秒数按显示精度取整，再拆分钟。独立 floor 分钟 + 单独 toFixed
+    // 会在 59.5/119.999 这类边界显示 0:60 或 1:60.00。
+    var digits = decimals || 0;
+    var factor = Math.pow(10, digits);
+    var ticks = Math.round(Number(seconds) * factor);
+    var minutes = Math.floor(ticks / (60 * factor));
+    var rest = ((ticks - minutes * 60 * factor) / factor).toFixed(digits);
+    return minutes + ':' + rest.padStart(digits ? digits + 3 : 2, '0');
   }
   function renderPitServices(st) {
     var t = st.telemetry || {}, flags = t.connected && Number.isInteger(t.pit_sv_flags) ? t.pit_sv_flags : null;
@@ -268,20 +277,38 @@
   }
   var logFilter = "all";
   var logCache = null;
+  // F13：接口失败和「真的没有记录」是两件事，必须分开显示。
+  var logError = null;
 
   async function loadLog() {
     try {
       logCache = await api("/api/log?limit=100");
+      logError = null;
       renderLog();
     } catch (e) {
-      logCache = { qa: [], miss: [], console: [] };
+      logError = e && e.message || String(e);
+      logCache = null;
       renderLog();
     }
   }
 
   function renderLog() {
     var panel = $('[data-view-panel="log"]');
-    if (!panel || !logCache) { return; }
+    if (!panel) { return; }
+    var host = $(".ira-logrows", panel);
+    var vmeta = $(".ira-vmeta", panel);
+    if (logError) {
+      if (host) {
+        host.innerHTML = '<div class="ira-empty"><strong>日志读取失败</strong>' +
+          '<span class="ira-meta">' + esc(logError) + '。这不是「没有记录」；服务恢复后点这里重试。</span>' +
+          '<button class="ira-btn" type="button" data-logretry>重试读取</button></div>';
+      }
+      if (vmeta) { vmeta.innerHTML = '<span class="ira-chip">日志读取失败</span>'; }
+      var retry = host && $("[data-logretry]", host);
+      if (retry) { retry.onclick = function () { loadLog(); }; }
+      return;
+    }
+    if (!logCache) { return; }
     var rows = [];
     if (logFilter === "all") {
       rows = logCache.qa.map(function (r) {
@@ -306,7 +333,6 @@
           return { time: (r.ts || "").slice(11), q: r.q, a: "没听明白（已拒绝）", path: "refuse", ms: "" };
         });
     }
-    var host = $(".ira-logrows", panel);
     if (!host) { return; }
     if (!rows.length) {
       host.innerHTML = '<div class="ira-empty"><strong>还没有记录</strong>' +
@@ -322,7 +348,7 @@
           '<span class="ira-num">' + esc(r.ms) + "</span></div></div>";
       }).join("");
     }
-    var vmeta = $(".ira-vmeta", panel);
+    vmeta = $(".ira-vmeta", panel);
     if (vmeta) {
       vmeta.innerHTML = '<span class="ira-chip">最近 ' + logCache.qa.length + " 条</span>" +
         '<span class="ira-chip">未识别 ' +
@@ -423,6 +449,13 @@
         }).join("；")
       : "没有可播的内容";
     setText("[data-dbg-note]", note, panel);
+    // F09：后端在 playback.ok=false 时已经给了失败原因，界面必须亮出来；
+    // 只听「decision.ok / plan 有内容」会把「没播出来」误报成成功。
+    if (tr.playback && tr.playback.ok === false) {
+      var why = tr.playback.reason || tr.playback.error || "后端未说明原因";
+      setText("[data-dbg-note]", "执行未成功：" + why, panel);
+      reportError({ message: "执行未成功：" + why });
+    }
     // 审计 F02：预览卡是有身份的。问句改过、或已经点过执行，就不能再拿
     // 这个旧预览去改车——否则用户改完文字随手一点，执行的是上一句。
     var audition = $("[data-audition]", panel);
@@ -485,11 +518,32 @@
   }
 
   /* ---------- 统计 ---------- */
+  var statsError = null;
+  function renderStatsError(e) {
+    var panel = $('[data-view-panel="stats"]');
+    if (!panel) { return; }
+    var grid = $(".ira-statgrid", panel);
+    if (grid) {
+      grid.innerHTML = '<div class="ira-stat"><span class="ira-label">统计读取失败</span>' +
+        '<div class="ira-num">—</div><span class="ira-meta">读取失败：' +
+        esc(e && e.message || String(e)) + '。这不是「没有数据」；点「刷新统计」重试。</span></div>';
+    }
+    var bars = $(".ira-bars", panel);
+    if (bars) { bars.innerHTML = '<p class="ira-empty">读取失败，旧图已清空，避免把故障当数据。</p>'; }
+    var share = $(".ira-share", panel);
+    if (share) { share.innerHTML = ""; }
+    var legend = $(".ira-legend", panel);
+    if (legend) { legend.innerHTML = '<span>统计读取失败</span>'; }
+  }
+
   async function loadStats() {
     var panel = $('[data-view-panel="stats"]');
     if (!panel) { return; }
     var s;
-    try { s = await api("/api/stats"); } catch (e) { return; }
+    // F13：统计失败不能直接 return 留旧值/空白；必须明确说读取失败。
+    try { s = await api("/api/stats"); }
+    catch (e) { statsError = e && e.message || String(e); renderStatsError(e); return; }
+    statsError = null;
     var buckets = s.buckets || [0, 0, 0, 0];
     var maxB = Math.max(1, Math.max.apply(null, buckets));
     var totalLayers = Object.keys(s.layers || {}).reduce(function (a, k) { return a + s.layers[k]; }, 0) || 1;
@@ -553,12 +607,16 @@
   }
 
   /* ---------- 设置页 ---------- */
+  // F04：并发的 loadSettings 只允许最后一次渲染；旧响应回来晚不能覆盖新面板。
+  var settingsGeneration = 0;
   async function loadSettings() {
+    var generation = ++settingsGeneration;
     var id = $("[data-nav][aria-current=page]").dataset.nav;
     var st = window.__state || await api("/api/state");
     var dev;
     try { dev = await api("/api/devices"); }
     catch (e) { dev = {inputs: [], outputs: []}; reportError(e); }
+    if (generation !== settingsGeneration) return;
     window.__devices = dev;
     if ($('[data-nav][aria-current=page]').dataset.nav!==id) return;
     var priorPanel=$('[data-view-panel="'+id+'"]'),openSections=$$('details',priorPanel).map(function(d){return d.open;});
@@ -572,9 +630,17 @@
   }
 
   async function save(patch, hintEl, note) {
-    var r = await api("/api/config", { patch: patch });
+    // F04：请求发出前抓「提交值 + 草稿代次」。响应回来后，只有值没被
+    // 后续编辑改过的草稿才允许删除；否则新输入会被旧响应覆盖回提交值。
+    var revision = draftRevision;
     var ids=patch.car_control?['ira-cc-on','ira-cc-verify']:patch.ai && patch.ai.tts?['ira-tts-adapter','ira-tts-url','ira-tts-speaker','ira-tts-key','ira-ack-on']:patch.ai && !patch.ai.analysis_key?['ira-ai-on','ira-ai-mode','ira-ai-preset','ira-ai-url','ira-ai-model','ira-ai-key','ira-ai-global','ira-ai-thinking']:patch.overlay?['ira-ov-on','ira-ov-opacity','ira-ov-corner','ira-ov-width','ira-ov-height','ira-ov-x','ira-ov-y']:[];
-    ids.forEach(function(id){delete pendingDrafts[id];});
+    var submitted = {};
+    ids.forEach(function (id) { var el = document.getElementById(id); if (el) submitted[id] = el.value; });
+    var r = await api("/api/config", { patch: patch });
+    ids.forEach(function (id) {
+      if (draftRevision !== revision && pendingDrafts[id] !== undefined && pendingDrafts[id] !== submitted[id]) return;
+      delete pendingDrafts[id];
+    });
     if (hintEl) {
       hintEl.textContent = "已保存" + (r.restart_hint && r.restart_hint.length
         ? "（" + r.restart_hint.join("、") + " 重启后生效）" : "（已生效）");
@@ -621,12 +687,46 @@
 
   function deviceOptions(list, current, autoLabel) {
     var out = '<option value="">' + autoLabel + "</option>";
+    // F16：后端允许设备名（config.py 的 input_device/device 支持字符串）。
+    // 只跟 index 比较会把合法名称错显示成「系统默认」，音频路由诊断全错。
+    var named = typeof current === "string" && current !== "";
+    var matched = false;
     list.forEach(function (d) {
+      var on = String(current) === String(d.index) || (named && d.name === current);
+      if (on) matched = true;
       out += '<option value="' + d.index + '"' +
-        (String(current) === String(d.index) ? " selected" : "") + ">" +
+        (on ? " selected" : "") + ">" +
         d.index + " · " + esc(d.name) + "</option>";
     });
+    if (named && !matched) {
+      out += '<option value="' + esc(current) + '" selected>配置值：' + esc(current) +
+        "（当前设备列表里没有同名设备）</option>";
+    }
     return out;
+  }
+
+  // F16：把 select 的值还原成后端接受的类型：空=null、纯数字=序号、其余=设备名。
+  function deviceValue(raw) {
+    var text = String(raw == null ? "" : raw).trim();
+    if (!text) return null;
+    if (/^\d+$/.test(text)) return parseInt(text, 10);
+    return text;
+  }
+
+  // F17：整数输入先校验后保存。parseInt(...)||默认值 会把 abc / 0 / 1.5
+  // 悄悄改成默认值（界面却还显示原输入），显示与保存不一致。
+  function intFieldValue(el, spec) {
+    var label = spec.label || "数值";
+    var current = spec.current;
+    var raw = String(el && el.value != null ? el.value : "").trim();
+    var parsed = /^-?\d+$/.test(raw) ? Number(raw) : NaN;
+    if (!Number.isInteger(parsed) || parsed < spec.min || parsed > spec.max) {
+      if (el) { el.value = String(current); }
+      reportError({ message: label + "必须是 " + spec.min + "–" + spec.max +
+        " 的整数，已恢复为 " + current + "，本次未保存" });
+      return null;
+    }
+    return parsed;
   }
 
   function renderAsrPanel(st, dev) {
@@ -663,14 +763,19 @@
       save({ asr: { model: this.value } }, hint);
     };
     $("#ira-asrthreads2", panel).onchange = function () {
-      save({ asr: { num_threads: parseInt(this.value, 10) || 4 } }, hint);
+      var value = intFieldValue($("#ira-asrthreads2", panel),
+        { label: "线程数", min: 1, max: 16, current: a.num_threads || 4 });
+      if (value === null) return;
+      save({ asr: { num_threads: value } }, hint);
     };
     $("#ira-micdev2", panel).onchange = function () {
-      save({ ptt: { input_device: this.value === "" ? null : parseInt(this.value, 10) } },
-        hint);
+      save({ ptt: { input_device: deviceValue(this.value) } }, hint);
     };
     $("#ira-hold", panel).onchange = function () {
-      save({ ptt: { min_hold_ms: parseInt(this.value, 10) || 250 } }, hint);
+      var value = intFieldValue($("#ira-hold", panel),
+        { label: "误触阈值", min: 50, max: 8000, current: p.min_hold_ms || 250 });
+      if (value === null) return;
+      save({ ptt: { min_hold_ms: value } }, hint);
     };
     $("#ira-capture", panel).onclick = async function () {
       var btn = this;
@@ -885,7 +990,7 @@
       field('透明度','<input class="ira-range" type="range" id="ira-ov-opacity" min="20" max="100" step="5" value="'+ovOpacity+'"><span class="ira-rangeval"><span class="ira-num" id="ira-ov-opacityval">'+ovOpacity+'</span> %</span>','越低越不挡视线；最低 20%。')+
       field('显示位置','<select class="ira-select" id="ira-ov-corner">'+ovCorners.map(function(c){return '<option value="'+c[0]+'"'+(ovCorner===c[0]?' selected':'')+'>'+c[1]+'</option>';}).join('')+'</select>','多屏时以主屏为准。')+
       field('布局模式','<select class="ira-select" id="ira-ov-layout"><option value="0"'+(ovLayout?'':' selected')+'>关闭 · 点击穿透</option><option value="1"'+(ovLayout?' selected':'')+'>开启 · 可拖动缩放</option></select>','开启后临时关闭点击穿透，可拖动卡片、拖右下角缩放；游戏中按 Ctrl+Alt+L 也能切换。')+
-      field('窗口尺寸','<div class="ira-inline"><input class="ira-input ira-num" id="ira-ov-width" inputmode="numeric" min="240" max="4096" value="'+esc(String(ovWidth))+'"><span class="ira-meta">×</span><input class="ira-input ira-num" id="ira-ov-height" inputmode="numeric" min="80" max="2160" aria-label="Overlay 窗口高度（像素）" value="'+esc(String(ovHeight))+'"></div>','像素。宽度 240–4096，高度 80–2160；默认 720×200。')+
+      field('窗口尺寸','<div class="ira-inline"><input class="ira-input ira-num" id="ira-ov-width" inputmode="numeric" min="480" max="1200" value="'+esc(String(ovWidth))+'"><span class="ira-meta">×</span><input class="ira-input ira-num" id="ira-ov-height" inputmode="numeric" min="140" max="400" aria-label="Overlay 窗口高度（像素）" value="'+esc(String(ovHeight))+'"></div>','像素。宽度 480–1200，高度 140–400；默认 720×200。')+
       field('位置 X / Y','<div class="ira-inline"><input class="ira-input ira-num" id="ira-ov-x" inputmode="numeric" value="'+posText(ovX)+'" placeholder="留空 = 按角落"><span class="ira-meta">/</span><input class="ira-input ira-num" id="ira-ov-y" inputmode="numeric" aria-label="Overlay 位置 Y（留空按角落）" value="'+posText(ovY)+'" placeholder="留空 = 按角落"></div>','留空表示按「显示位置」的角落加边距排布；填写后固定到该坐标。')+
       field('切换热键','<input class="ira-input ira-num" value="'+esc(ovHotkey)+'" readonly>','游戏中按 '+esc(ovHotkey)+' 临时显示/隐藏，不会写入配置。')+
       '</div><div class="ira-row settings-actions"><button class="ira-btn ira-btn-primary" type="button" id="ira-ov-save">保存 Overlay 设置</button><button class="ira-btn" type="button" id="ira-ov-toggle">立即显示/隐藏</button><button class="ira-btn" type="button" id="ira-ov-reset">恢复默认位置与尺寸</button><span class="ira-savehint" id="ira-ov-out" role="status"></span></div></details>';
@@ -946,8 +1051,8 @@
           enabled: ($("#ira-ov-on", panel) || {}).value === "1",
           opacity: opacity,
           corner: ($("#ira-ov-corner", panel) || {}).value || "top-right",
-          width: overlayIntInput($("#ira-ov-width", panel), 720, 240, 4096),
-          height: overlayIntInput($("#ira-ov-height", panel), 200, 80, 2160),
+          width: overlayIntInput($("#ira-ov-width", panel), 720, 480, 1200),
+          height: overlayIntInput($("#ira-ov-height", panel), 200, 140, 400),
           x: overlayPositionInput($("#ira-ov-x", panel)),
           y: overlayPositionInput($("#ira-ov-y", panel))
         } };
@@ -1047,11 +1152,16 @@
   }
 
   function ttsPatchFromPanel(panel) {
+    var speaker = $("#ira-tts-speaker", panel).value.trim();
     var t = {
       adapter: $("#ira-tts-adapter", panel).value,
       base_url: $("#ira-tts-url", panel).value.trim(),
-      speaker: $("#ira-tts-speaker", panel).value.trim()
+      speaker: speaker
     };
+    // F08：后端 OpenAI 兼容分支 voice 优先于 speaker；旧配置常残留
+    // voice=shimmer，只写 speaker 会让界面选的 nova 永远不生效。
+    // 表单以 speaker 为准，所以 voice 必须同步写成同一个值。
+    t.voice = speaker;
     var key = $("#ira-tts-key", panel).value.trim();
     if (key) t.api_key = key;
     var ackEl = $("#ira-ack-on", panel);
@@ -1089,8 +1199,18 @@
       preset.addEventListener("change", function () {
         var p = AI_PRESETS.filter(function (x) { return x.key === preset.value; })[0];
         if (!p) return;
-        if (p.url) $("#ira-ai-url", panel).value = p.url;
-        if (p.model) $("#ira-ai-model", panel).value = p.model;
+        if (p.url) {
+          $("#ira-ai-url", panel).value = p.url;
+          pendingDrafts["ira-ai-url"] = p.url;
+        }
+        if (p.model) {
+          $("#ira-ai-model", panel).value = p.model;
+          pendingDrafts["ira-ai-model"] = p.model;
+        }
+        // F05：预设是程序写 DOM，不会触发 input 事件；必须手动登记草稿并推进代次，
+        // 否则离开再回来，地址/模型会退回旧的 saved 值，形成「新服务商+旧地址」。
+        draftRevision += 1;
+        setText("[data-savehint]", "已选择服务商，点「保存模型设置」生效", panel);
         // 换服务商后模型列表不再可信：收起下拉，回到手填。
         bumpAiModelsGeneration();
         applyAiModelOptions(panel, $("#ira-ai-model", panel).value);
@@ -1324,8 +1444,7 @@
       "<span class='ira-hint'>固定开启：不按 PTT 不开麦，播报期间按键忽略 —— 这条不开就会自己问自己答</span></label></div>";
 
     $("#ira-outdev2", panel).onchange = function () {
-      save({ playback: { device: this.value === "" ? null : parseInt(this.value, 10) } },
-        hint);
+      save({ playback: { device: deviceValue(this.value) } }, hint);
     };
   }
 
@@ -1427,7 +1546,9 @@
 
   /* ---------- 启动 ---------- */
   var pendingDrafts={};
-  $('#ira-main').addEventListener('input',function(event){var el=event.target,panel=el.closest('[data-view-panel]');if(el.id && panel && ['ai','pit'].includes(panel.dataset.viewPanel) && !el.readOnly){pendingDrafts[el.id]=el.value;setText('[data-savehint]','有未保存的更改',panel);}});
+  // F04：草稿代次。每次真实输入都推进；保存响应只清「提交后没再改过」的草稿。
+  var draftRevision=0;
+  $('#ira-main').addEventListener('input',function(event){draftRevision+=1;var el=event.target,panel=el.closest('[data-view-panel]');if(el.id && panel && ['ai','pit'].includes(panel.dataset.viewPanel) && !el.readOnly){pendingDrafts[el.id]=el.value;setText('[data-savehint]','有未保存的更改',panel);}});
   function closeNav(){document.body.classList.remove('nav-open');$('#nav-toggle').setAttribute('aria-expanded','false');$('#nav-toggle').setAttribute('aria-label','打开导航');$('#ira-navigation').inert=matchMedia('(max-width:800px)').matches;}
   $('#nav-toggle').onclick=function(){var open=!document.body.classList.contains('nav-open');document.body.classList.toggle('nav-open',open);this.setAttribute('aria-expanded',String(open));this.setAttribute('aria-label',open?'关闭导航':'打开导航');$('#nav-scrim').hidden=!open;$('#ira-navigation').inert=!open;if(open)tabs[0].focus();};
   matchMedia('(max-width:800px)').addEventListener('change',function(e){$('#ira-navigation').inert=e.matches && !document.body.classList.contains('nav-open');});
@@ -1667,10 +1788,12 @@
     function color(v) {
       if (!v) return "var(--raised)";
       var t = v / maxCell;
-      if (t < 0.05) return "#2f4a66";
-      if (t < 0.2) return "#3f7cbe";
-      if (t < 0.6) return "#5b95dc";
-      return "#6ba8ed";
+      // F11：10.5px 计数文字用 --ink(#f6f6f7)，四档背景都必须 >= 4.5:1。
+      // 原来最浅两档只有 2.87 / 2.30:1；保持蓝色系但整体压暗。
+      if (t < 0.05) return "#24486b";
+      if (t < 0.2) return "#2c5a84";
+      if (t < 0.6) return "#316489";
+      return "#356f9f";
     }
     var html = '<table aria-label="意图与问法语义类别的数量矩阵"><thead><tr>' +
       '<th class="kb-rowhead" scope="col">意图 / 类别</th>';
@@ -1703,6 +1826,7 @@
         KB.selected = "intent:" + parts[0];
         KB.category = already ? null : parts[1];
         kbRenderAll();
+        kbFocusSelection();
       };
     });
   }
@@ -1845,10 +1969,34 @@
       }).join("") + "</div></div>";
   }
 
+  // F10：图谱/矩阵每次选中都会 innerHTML 重建整棵树，焦点会掉回 BODY。
+  // 重建后按选中身份找回同一节点/行/格子，键盘连续探索才不中断。
+  function kbFocusSelection() {
+    var panel = $('[data-view-panel="knowledge"]');
+    if (!panel || !KB.selected) { return; }
+    var key = kbSelectedKey(), kind = kbSelectedKind(), target = null;
+    if (KB.mode === "matrix") {
+      if (kind === "intent" && KB.category) {
+        target = panel.querySelector('[data-kb-cell="' + key + "|" + KB.category + '"]');
+      }
+      if (!target && kind === "intent") {
+        target = panel.querySelector('[data-kb-row="' + key + '"]');
+      }
+    }
+    if (!target && kind === "intent") {
+      target = panel.querySelector('.kb-node[data-key="intent:' + key + '"]');
+    }
+    if (!target && (kind === "field" || kind === "out")) {
+      target = panel.querySelector('.kb-node[data-key="' + KB.selected + '"]');
+    }
+    if (target && typeof target.focus === "function") { target.focus({ preventScroll: true }); }
+  }
+
   function kbSelect(key) {
     KB.selected = KB.selected === key ? null : key;
     if (kbSelectedKind() === "intent") KB.category = null;
     kbRenderAll();
+    kbFocusSelection();
   }
 
   function kbRenderAll() {
@@ -1866,6 +2014,10 @@
     $("#kb-mode-matrix").classList.toggle("is-active", mode === "matrix");
     $("#kb-mode-graph").setAttribute("aria-selected", mode === "graph" ? "true" : "false");
     $("#kb-mode-matrix").setAttribute("aria-selected", mode === "matrix" ? "true" : "false");
+    // F20：roving tabindex —— 只有当前 tab 在 Tab 序列里，两个 tab 都进序列会让
+    // 键盘用户多按一次；配合 aria-controls/tabpanel 与方向键导航。
+    $("#kb-mode-graph").tabIndex = mode === "graph" ? 0 : -1;
+    $("#kb-mode-matrix").tabIndex = mode === "matrix" ? 0 : -1;
     var grid = $(".kb-grid");
     if (grid) grid.setAttribute("data-kb-mode", mode);
     if (mode === "matrix" && KB.selected && kbSelectedKind() !== "intent") {
@@ -1892,6 +2044,23 @@
   function bindKnowledge() {
     $("#kb-mode-graph").onclick = function () { kbSetMode("graph"); };
     $("#kb-mode-matrix").onclick = function () { kbSetMode("matrix"); };
+    // F20：标准选项卡键盘契约。role=tablist 只声明不实现，屏幕阅读器/键盘用户
+    // 按方向键会毫无反应；这里补齐左右/Home/End 并保持 roving tabindex。
+    var tablist = $('.ira-seg[role="tablist"]');
+    if (tablist) {
+      tablist.addEventListener("keydown", function (e) {
+        if (["ArrowRight", "ArrowLeft", "Home", "End"].indexOf(e.key) < 0) return;
+        e.preventDefault();
+        var want;
+        if (e.key === "Home") want = "graph";
+        else if (e.key === "End") want = "matrix";
+        else if (e.key === "ArrowRight") want = "matrix";
+        else want = "graph";
+        kbSetMode(want);
+        var tab = $("#kb-mode-" + want);
+        if (tab) tab.focus();
+      });
+    }
     $("#kb-refresh").onclick = function () { loadKnowledge(true); };
     $("#kb-filter").addEventListener("input", function () {
       KB.filter = this.value.trim();

@@ -213,12 +213,12 @@
       "priority": "P2",
       "title": "学习相似匹配不区分前后车等关键对象",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "学习库相似匹配先比对前后车/左右轮/否定/上下圈/单位/段号/问句数字等特征签名，不一致不匹配。"
     },
     {
       "id": "A07",
@@ -249,48 +249,48 @@
       "priority": "P2",
       "title": "复盘错误反馈使用错误ID，自动禁用形同虚设",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "学习库记 review_id/source_id，mark 支持双 ID 且失败返回 not_found；engine 透传 review_id，学习命中用源条目 ID；server 不再假报成功。"
     },
     {
       "id": "A10",
       "priority": "P2",
       "title": "数字闸只证明数字出现过，多个边界可稳定绕过",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "数字闸补符号、单位→字段类别、秒数跨单位、中文两、范围、容差上限，并新增 content 闸共四道。"
     },
     {
       "id": "A11",
       "priority": "P2",
       "title": "处罚与范围外问题分类未落实安全禁区，输出也无内容闸",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "处罚与日期时间域纳入安全分类，回答新增内容闸（三组有限词法），可疑内容拒答。"
     },
     {
       "id": "A12",
       "priority": "P2",
       "title": "关闭或切换AI后，在途旧回答仍可播放并覆盖Overlay",
       "plan_task": 7,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "AI 请求代次 + 取消探针：关闭/切换 AI 后在途回答不写 live、不播 TTS/固定话术、不计 breaker。"
     },
     {
       "id": "A13",
@@ -369,12 +369,12 @@
       "priority": "P3",
       "title": "模板白名单允许的口语字符串及数组字段填值器处理不了",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "模板取值器支持嵌套 list/dict 与显式 *_spoken，歧义叶子拒绝；when 不允许引用口语字段。"
     },
     {
       "id": "T01",
@@ -393,12 +393,12 @@
       "priority": "P2",
       "title": "多组别的组别第一可能选到另一组车",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "组别第一按玩家组别过滤；没有组别数据时保持旧行为。"
     },
     {
       "id": "T03",
@@ -417,12 +417,12 @@
       "priority": "P3",
       "title": "部分结果列表把正确参赛车数缩小",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "结果页局部列表不再缩小 field_size，只允许变大。"
     },
     {
       "id": "T05",
@@ -453,12 +453,12 @@
       "priority": "P2",
       "title": "跨线官方圈速晚到时，圈史永久保存上一圈旧成绩",
       "plan_task": 5,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "跨线旧圈速先记未知，2.5 秒内用晚到的官方圈速（含分段）回填，等不到保持未知。"
     },
     {
       "id": "T08",
@@ -477,36 +477,36 @@
       "priority": "P3",
       "title": "相差两秒的近邻跨线阶段被误当套圈，暂时拒绝分段对比",
       "plan_task": 5,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "仅当一车刚跨线、另一车未跨线时才允许差 1 圈的近邻分段对比。"
     },
     {
       "id": "T10",
       "priority": "P3",
       "title": "全量分段拒答规则误伤指定单段和摘要差值",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "只有整份分段清单请求才拒答；指定单段与比较问题放行。"
     },
     {
       "id": "R01",
       "priority": "P2",
       "title": "AI等待同步占住PTT线程，下一次按松键完全丢失",
       "plan_task": 7,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "监听只投递，工作线程串行处理并排队，按住/松开不再丢问题。"
     },
     {
       "id": "R02",
@@ -525,36 +525,36 @@
       "priority": "P2",
       "title": "本地拒答和固定操作反馈保留上一条Overlay答案",
       "plan_task": 7,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "每次提问清旧答案/错误，固定反馈写本次文案，_say 不覆盖 error。"
     },
     {
       "id": "R04",
       "priority": "P2",
       "title": "保存AI分析键未更新正在运行的监听器",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "保存 analysis_key 后热更新运行中的监听器（server 接线 + listener API）。"
     },
     {
       "id": "R05",
       "priority": "P2",
       "title": "SDL方向盘后端已死仍报告监听成功，停开无法恢复",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "SDL 后端死亡置 stop 并上报，监听不盲跑，重开可重建。"
     },
     {
       "id": "R06",
@@ -573,48 +573,48 @@
       "priority": "P2",
       "title": "旧CLI语音入口不接AI后续，all档可无声结束",
       "plan_task": 7,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "CLI 语音入口补 AI 仲裁与 ask_ai 后续，all 档不再无声结束。"
     },
     {
       "id": "R08",
       "priority": "P2",
       "title": "关闭改车控制器不是严格发送边界",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "车辆控制发送与关闭同锁，close 返回后不再发送。"
     },
     {
       "id": "R09",
       "priority": "P3",
       "title": "界面录音测试继承上次分析键来源",
       "plan_task": 7,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "record_for 显式来源，录音测试不再继承上次分析键来源。"
     },
     {
       "id": "R10",
       "priority": "P3",
       "title": "监听重启只忽略已按住PTT，不忽略已按住分析键",
       "plan_task": 7,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "监听启动同时忽略已按住的 PTT 与分析键。"
     },
     {
       "id": "R11",
@@ -633,12 +633,12 @@
       "priority": "P3",
       "title": "winsound多片段播放忽略间隔与首包回调",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "winsound 回退补片段间隔与首包回调。"
     },
     {
       "id": "R13",
@@ -657,24 +657,24 @@
       "priority": "P3",
       "title": "CLI自检忽略配置麦克风，且绕过原生格式回退",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "CLI 自检使用配置设备与原生格式采集再重采样到 16k。"
     },
     {
       "id": "R15",
       "priority": "P3",
       "title": "托盘启动超时后线程继续，晚到对象失去统一清理",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "托盘启动超时置放弃标记，晚到线程早退，holder 先登记保证可清理。"
     },
     {
       "id": "F01",
@@ -717,24 +717,24 @@
       "priority": "P2",
       "title": "保存请求发出后的新编辑会被旧响应覆盖",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "保存带提交快照与代次，旧响应不覆盖保存后新编辑。"
     },
     {
       "id": "F05",
       "priority": "P2",
       "title": "选择服务预设后，派生地址与模型草稿跨导航丢失",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "服务预设在草稿层记录地址/模型，跨导航保留。"
     },
     {
       "id": "F06",
@@ -753,96 +753,96 @@
       "priority": "P2",
       "title": "Overlay宽高表单允许范围与后端相互冲突",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "Overlay 宽高表单范围与后端校验对齐（480–1200 / 140–400）。"
     },
     {
       "id": "F08",
       "priority": "P2",
       "title": "旧voice覆盖界面保存的新speaker音色",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "TTS 用 voice 字段承载 speaker 音色，保存不再串字段。"
     },
     {
       "id": "F09",
       "priority": "P2",
       "title": "实际播放失败仍展示预览成功，不显示失败原因",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "播放失败显示后端原因，不再伪装预览成功。"
     },
     {
       "id": "F10",
       "priority": "P2",
       "title": "知识库选择节点或格子后键盘焦点落到BODY",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "知识库节点/格子选择后焦点回到同一元素，不落到 BODY。"
     },
     {
       "id": "F11",
       "priority": "P2",
       "title": "矩阵数量小字对比度低于AA要求",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "矩阵小字对比度提升到 ≥4.5:1（实测 4.95–8.78）。"
     },
     {
       "id": "F12",
       "priority": "P2",
       "title": "小窗口图谱无溢出却把字号压到约5像素",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "小窗口图谱改用内部滚动与字号下限，实测字号 11.34px、无横向溢出。"
     },
     {
       "id": "F13",
       "priority": "P2",
       "title": "日志／统计接口错误被伪装成空数据或无提示旧数据",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "日志/统计接口错误显示失败并可重试，不再伪装空数据或旧数据。"
     },
     {
       "id": "F14",
       "priority": "P2",
       "title": "总线把实际全部交给AI显示为白名单",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "总线在 all 档显示「全部交给 AI」，不再显示白名单。"
     },
     {
       "id": "F15",
@@ -861,96 +861,96 @@
       "priority": "P2",
       "title": "合法按设备名配置时，UI误显示系统默认",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "按设备名配置时显示该设备本身，不误显示系统默认。"
     },
     {
       "id": "F17",
       "priority": "P2",
       "title": "整数输入无效值悄悄变默认，显示与保存不一致",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "整数输入非法时报错并回填保存值，显示与保存一致。"
     },
     {
       "id": "F18",
       "priority": "P3",
       "title": "时间格式舍入没有向分钟进位",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "时间格式先四舍五入总 tick 再拆分钟秒，不再出现 0:60。"
     },
     {
       "id": "F19",
       "priority": "P3",
       "title": "统计刷新持续增加ResizeObserver而不释放",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "每个图表 host 只保留一个 ResizeObserver，刷新不累积泄漏。"
     },
     {
       "id": "F20",
       "priority": "P3",
       "title": "知识库选项卡声明与键盘契约不完整",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "知识库选项卡补齐 ARIA 与方向键/Home/End 键盘契约。"
     },
     {
       "id": "Q01",
       "priority": "P2",
       "title": "当前全历史密钥扫描被固定测试假Key阻断",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "密钥扫描改为精确值白名单，未知真实密钥仍被抓；gitleaks 配置同步。"
     },
     {
       "id": "Q02",
       "priority": "P2",
       "title": "中文／特殊暂存路径可能被密钥扫描静默漏掉",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "暂存扫描改 -z + os.fsdecode，git show 失败 fail-closed；中文/空格路径覆盖。"
     },
     {
       "id": "Q03",
       "priority": "P3",
       "title": "唯一CI工作流没有功能、界面、链接或构建回归",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "新增 CI 工作流：工具/文档/配置/编译与后端 pytest 真回归。"
     },
     {
       "id": "Q04",
@@ -981,132 +981,132 @@
       "priority": "P2",
       "title": "窗口冒烟白屏／超时仍返回成功",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "窗口冒烟按本轮 run_id 与加载结构判定，超时/白屏/旧记录一律非零并清旧文件。"
     },
     {
       "id": "Q07",
       "priority": "P2",
       "title": "修改文案后合成／打包仍复用旧录音",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "音频缓存指纹覆盖文案/音色/参数/速率，新增 --force 与 .fp sidecar，build_pack 按 mtime 重转。"
     },
     {
       "id": "Q08",
       "priority": "P2",
       "title": "缺文案或音频仍可生成空／静音语音包并成功退出",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "缺文案/缺音频/空包构建 fail-closed，不再生成残缺 spmsg。"
     },
     {
       "id": "Q09",
       "priority": "P2",
       "title": "豆包单句--text命令不可达，可能误走批量任务",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "--text 与 --content 互斥且 --text 可用，新增 --dry-run。"
     },
     {
       "id": "Q10",
       "priority": "P2",
       "title": "TTS转WAV失败仍报成功，下次还跳过补齐",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "WAV 转换失败计入失败并退出非零，缺 WAV 时重跑补齐。"
     },
     {
       "id": "Q11",
       "priority": "P2",
       "title": "音频质检漏文件及修复失败都可能假绿",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "qc_audio 缺文件/修复失败/复检可疑均退出 1，支持注入目录与清单。"
     },
     {
       "id": "Q12",
       "priority": "P2",
       "title": "离线音频审计未落实文档要求的16k／16bit",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "离线音频审计落实 16k/16bit/单声道契约。"
     },
     {
       "id": "Q13",
       "priority": "P2",
       "title": "文档允许的安装目录自定义短语会被升级覆盖或卸载删除",
       "plan_task": 12,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "用户短语库升级不覆盖、卸载不删除（onlyifdoesntexist/uninsnofile）。"
     },
     {
       "id": "Q14",
       "priority": "P2",
       "title": "Spotter更新说明称无需重装，但安装器不会同步游戏目录",
       "plan_task": 12,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "安装器新增可选任务把语音包同步到 iRacing 游戏目录，失败提示手动复制。"
     },
     {
       "id": "Q15",
       "priority": "P3",
       "title": "生成的随包说明仍提已删音量压低与旧退出方式",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "随包说明删除已移除的压低音量与旧退出方式，改为托盘退出/耳机输出。"
     },
     {
       "id": "Q16",
       "priority": "P3",
       "title": "链接自检固定清单漏了当前版本及核心开发文档",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "链接自检覆盖当前版本与核心开发文档并递归出链（31 份文档）。"
     },
     {
       "id": "Q17",
@@ -1149,24 +1149,24 @@
       "priority": "P2",
       "title": "测试音频生成部分失败仍成功并缩小验证样本",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "测试音频部分失败写失败清单并退出非零。"
     },
     {
       "id": "Q21",
       "priority": "P3",
       "title": "pyirsdk完整MIT notice未见于明确构建收集路径",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "THIRD_PARTY_NOTICES 补 pyirsdk MIT 全文，spec 收集其许可证到 licenses/。"
     },
     {
       "id": "Q22",
@@ -1185,12 +1185,12 @@
       "priority": "P2",
       "title": "构建直接复制工作配置，缺少凭据及危险开关发布闸门",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.3",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "构建新增发行配置闸门：内联密钥失败、AI/改车默认关闭，CI 可 --check-config-only。"
     }
   ],
   "rulings": [
@@ -1202,16 +1202,20 @@
   ],
   "v1_6_1_scope": {
     "released_as": "v1.6.1",
-    "fixed_in_v1_6_1": 19,
-    "fixed_after_v1_6_1_not_yet_released": 25,
-    "deferred": 55,
-    "total_fixed": 44,
-    "note": "v1.6.1 已发布且只包含其中的 19 项；后续修复在 fix/v1.6.2 分支上，未发布前不计入 v1.6.1，也不移动已发布 tag。",
+    "note": "v1.6.1/v1.6.2 已发布；fix/v1.6.3 分支上的修复未发布前不计入已发布版本，也不移动既有 tag。",
     "verification": {
-      "backend": "1238 passed, 1 skipped, 2510 subtests（fix/v1.6.2，隔离 TEMP 与数据目录）",
-      "browser": "16 项既有界面回归通过（模拟遥测、危险写接口全部 mock）",
+      "backend": "1367 passed, 1 skipped, 2557 subtests（v1.6.3 候选）",
+      "browser": "真实浏览器：主界面 24/24、知识库 16/16 通过",
       "links": "123 个本地链接/锚点、21 份文档通过",
       "packaging": "v1.6.1 安装包已构建并发布，SHA256 与本地一致"
-    }
+    },
+    "fixed_in_v1_6_1": 19,
+    "fixed_in_v1_6_2": 25,
+    "fixed_in_v1_6_3": 54,
+    "deferred": 1,
+    "deferred_ids": [
+      "Q22"
+    ],
+    "total_fixed": 98
   }
 }

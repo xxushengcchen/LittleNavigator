@@ -79,6 +79,11 @@ class CarController:
         self.sdk = sdk
         self._owns_sdk = sdk is None
         self._connection_lock = threading.RLock()
+        # 审计 R08：available 检查与真正的 pit_command 必须是同一个临界区，
+        # 否则 close() 可以插在两者之间——关闭后仍有一条命令发到游戏。
+        # 所有 _send 走 _send_lock，close() 也先拿它，保证「close 返回后
+        # 不可能再有发送」；锁序固定为 _send_lock → _connection_lock。
+        self._send_lock = threading.RLock()
         self._next_connect_at = 0.0
         self._closed = False
         self._err: str | None = None
@@ -118,16 +123,21 @@ class CarController:
                 return False
 
     def close(self) -> None:
-        """只释放自己持有的连接；关闭后状态轮询不能再次拉起它。"""
-        with self._connection_lock:
-            if self._closed:
-                return
-            self._closed = True
-            if self._owns_sdk and self.sdk is not None:
-                try:
-                    self.sdk.shutdown()
-                except Exception:      # noqa: BLE001
-                    pass
+        """只释放自己持有的连接；关闭后状态轮询不能再次拉起它。
+
+        审计 R08：先拿 _send_lock 再动连接，等正在发送的指令完整走完，
+        之后才置 _closed —— 关闭成为严格的发送边界。
+        """
+        with self._send_lock:
+            with self._connection_lock:
+                if self._closed:
+                    return
+                self._closed = True
+                if self._owns_sdk and self.sdk is not None:
+                    try:
+                        self.sdk.shutdown()
+                    except Exception:      # noqa: BLE001
+                        pass
 
     def status(self) -> dict:
         return {"enabled": self.enabled,
@@ -142,13 +152,19 @@ class CarController:
             raise CarControlError("改车功能未启用")
         if self.sdk is None:
             raise CarControlError(self._err or "pyirsdk 不可用")
-        if not self.available:
-            raise CarControlError(self._err or "未连接游戏，改车指令没有发出")
-        try:
-            # pyirsdk 的 pit_command(mode, var) 内部就是 BroadcastMsg.pit_command
-            self.sdk.pit_command(mode, int(var))
-        except Exception as exc:      # noqa: BLE001
-            raise CarControlError(f"发送失败：{exc}") from exc
+        # 审计 R08：检查与发送共用一个临界区，close() 在发送途中会等这把锁。
+        with self._send_lock:
+            if self._closed:
+                raise CarControlError("改车控制器已关闭，指令没有发出")
+            if not self.available:
+                raise CarControlError(self._err or "未连接游戏，改车指令没有发出")
+            if self._closed:          # available() 可能内部重连，再确认一次
+                raise CarControlError("改车控制器已关闭，指令没有发出")
+            try:
+                # pyirsdk 的 pit_command(mode, var) 内部就是 BroadcastMsg.pit_command
+                self.sdk.pit_command(mode, int(var))
+            except Exception as exc:      # noqa: BLE001
+                raise CarControlError(f"发送失败：{exc}") from exc
 
     # ------------------------------------------------------------------
     def expected_flags(self, action: dict) -> int:

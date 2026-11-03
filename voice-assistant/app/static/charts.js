@@ -612,6 +612,17 @@
     if (compareLabel && rows.some((r) => minutes(r.compare) != null)) items.push({ label: compareLabel, w: 8, draw: (sw) => tick(sw, 4, 6) });
     return { get svg() { return el.querySelector(':scope > svg'); }, legend: legendEl(items, legend) };
   }
-  function watch(el, draw) { if (!('ResizeObserver' in window)) return; let w = el.clientWidth; new ResizeObserver(() => { if (Math.abs(el.clientWidth - w) > 4) { w = el.clientWidth; draw(); } }).observe(el); }
+  // One live observer per host element. Every redraw used to construct another
+  // ResizeObserver without disconnecting the previous one: a long session with
+  // the stats page refreshing piled up observers, old draw closures and resize
+  // work. Keep the observer on the element and release it before replacing it.
+  function watch(el, draw) {
+    if (!('ResizeObserver' in window)) return;
+    if (el._chartObserver) { el._chartObserver.disconnect(); el._chartObserver = null; }
+    let w = el.clientWidth;
+    const observer = new ResizeObserver(() => { if (Math.abs(el.clientWidth - w) > 4) { w = el.clientWidth; draw(); } });
+    el._chartObserver = observer;
+    observer.observe(el);
+  }
   window.Charts = { line, bars, diverging, ring, barList, plan, bullet, timeline, matrix, timeStrip, ticks, fmt };
 })();

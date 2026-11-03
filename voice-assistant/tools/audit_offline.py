@@ -9,6 +9,22 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+
+# 发行语音包契约（DEVELOPMENT.md）：16 kHz / 16-bit PCM / 单声道。
+# 审计必须真的校验它，而不是只统计采样率；24 kHz 母带不能当发行包通过。
+AUDIO_RATE = 16000
+AUDIO_BITS = 16
+
+
+def format_errors(framerate: int, sampwidth: int, nchannels: int) -> list[str]:
+    errs = []
+    if framerate != AUDIO_RATE:
+        errs.append(f'采样率 {framerate}Hz，要求 {AUDIO_RATE}Hz')
+    if sampwidth * 8 != AUDIO_BITS:
+        errs.append(f'位深 {sampwidth*8}bit，要求 {AUDIO_BITS}bit')
+    if nchannels != 1:
+        errs.append(f'声道 {nchannels}，要求单声道')
+    return errs
 from src import config, numbers, router, telemetry
 from src.phrase_match import PhraseMatcher
 from src.voicepack import VoicePack
@@ -33,7 +49,10 @@ def main():
             try:
                 with wave.open(str(path),'rb') as w:
                     fmt = f'{w.getframerate()}Hz/{w.getsampwidth()*8}bit/{w.getnchannels()}ch'
-                    if w.getnchannels()!=1 or w.getsampwidth() not in (1,2) or w.getnframes()==0:
+                    errs = format_errors(w.getframerate(), w.getsampwidth(), w.getnchannels())
+                    if errs:
+                        raise ValueError('不符合发行契约：' + '；'.join(errs))
+                    if w.getnframes()==0:
                         raise ValueError('无效音频格式')
                     raw = w.readframes(w.getnframes())
                     if len(raw)!=w.getnframes()*w.getsampwidth():

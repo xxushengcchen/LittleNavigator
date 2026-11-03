@@ -13,6 +13,8 @@ function merge(a,b){for(const[k,v]of Object.entries(b)){if(v && typeof v==='obje
  const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_BROWSER_CHANNEL || (process.platform==='win32'?'msedge':undefined),headless:true});
  const context=await browser.newContext({viewport:{width:1180,height:820},reducedMotion:'reduce'});
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+ // F19：统计 ResizeObserver 存活计数（构造 +1、disconnect -1），检查重绘泄漏。
+ await page.addInitScript(()=>{const Native=window.ResizeObserver;window.__ro={live:0,made:0};if(!Native)return;window.ResizeObserver=class extends Native{constructor(cb){super(cb);this.__released=false;window.__ro.live++;window.__ro.made++;}disconnect(){if(!this.__released){this.__released=true;window.__ro.live--;}return super.disconnect();}};});
  const request=context.request;
  const html=await(await request.get(baseUrl)).text();
  const token=html.match(/name="assistant-token" content="([^"]+)"/)[1];
@@ -20,7 +22,12 @@ function merge(a,b){for(const[k,v]of Object.entries(b)){if(v && typeof v==='obje
  const fixture=structuredClone(original);fixture.sim=true;fixture.desktop=false;
  Object.assign(fixture.telemetry,{connected:true,source:'sim',fuel_level:45.4,lap:2,position:10,field_size:20,gap_behind_s:.6,lap_last:147.98,time_remain_s:742,pit_sv_flags:117,pit_sv_fuel:10,fast_repairs_available:2});
  fixture.ptt.running=false;fixture.ptt.error=null;fixture.ptt.binding_label='右 Ctrl';fixture.ptt.state='idle';
+ // F04/F05：受控的旧保存值——证明预设派生值/在途保存不覆盖新编辑。
+ fixture.config.ai.provider='custom';fixture.config.ai.base_url='https://saved.invalid';fixture.config.ai.model='saved-model';
+ // F16：合法设备名配置（后端允许字符串），列表里也有同名设备。
+ fixture.config.ptt.input_device='测试麦克风';
  let state=fixture,failConfig=false,failState=false,delayPreview=false;
+ let delayConfig=false,failLog=false,failStats=false,failPlayback=false;
  const previews={};for(const text of ['油还够吗','帮我取消换胎','我是否需要快修']){
   const r=await request.post(baseUrl+'/api/ask',{headers:{'X-Assistant-Token':token},data:{text,play:false}});assert.equal(r.status(),200);previews[text]=await r.json();
  }
@@ -30,13 +37,14 @@ function merge(a,b){for(const[k,v]of Object.entries(b)){if(v && typeof v==='obje
   if(u.pathname==='/api/state'){if(failState)return reply({error:'测试服务不可达'},503);return reply(state);}
   if(u.pathname==='/api/devices')return reply({inputs:[{index:0,name:'测试麦克风'}],outputs:[{index:1,name:'测试耳机'}],wheels:[]});
   if(u.pathname==='/api/wheels')return reply({wheels:[]});
-  if(u.pathname==='/api/log')return reply({qa:[{q:'分析我的节奏',ai_text:'最近圈数较少，暂不判断趋势。',ai_source:'model',ok:true,layer:'ai',ts:'2026-10-19T20:00:00'}],miss:[],console:[]});
-  if(u.pathname==='/api/stats')return reply({total:5,miss:1,avg_first_audio_ms:0,buckets:[3,1,1,0],layers:{phrase:3,l1_keyword:1,refuse:1},top_miss:[]});
+  if(u.pathname==='/api/log'){if(failLog)return reply({error:'测试：日志服务不可用'},503);return reply({qa:[{q:'分析我的节奏',ai_text:'最近圈数较少，暂不判断趋势。',ai_source:'model',ok:true,layer:'ai',ts:'2026-10-19T20:00:00'}],miss:[],console:[]});}
+  if(u.pathname==='/api/stats'){if(failStats)return reply({error:'测试：统计服务不可用'},503);return reply({total:5,miss:1,avg_first_audio_ms:0,buckets:[3,1,1,0],layers:{phrase:3,l1_keyword:1,refuse:1},top_miss:[]});}
   if(u.pathname==='/api/knowledge')return reply(await(await request.get(baseUrl+'/api/knowledge')).json());
   if(u.pathname==='/api/ai/review')return reply({rows:[]});
   if(u.pathname==='/api/config'){
    data=r.postDataJSON();writes.push({path:u.pathname,keys:Object.keys(data.patch)});
    if(failConfig)return reply({error:'测试：配置保存失败'},400);
+   if(delayConfig)await new Promise(r=>setTimeout(r,400));
    merge(state.config,data.patch);if(data.patch.playback)merge(state.config.playback,data.patch.playback);
    return reply({ok:true,restart_hint:[]});
   }
@@ -50,7 +58,7 @@ function merge(a,b){for(const[k,v]of Object.entries(b)){if(v && typeof v==='obje
    data=r.postDataJSON();writes.push({path:u.pathname,play:data.play,text:data.text});
    if(delayPreview)await new Promise(r=>setTimeout(r,300));
    const tr=structuredClone(previews[data.text] || previews['油还够吗']);tr.text=data.text;
-   if(data.play)tr.playback={ok:true,text:'测试播报已完成',kind:tr.kind || 'known'};
+   if(data.play)tr.playback=failPlayback?{ok:false,reason:'测试：耳机未连接或输出设备被占用'}:{ok:true,text:'测试播报已完成',kind:tr.kind || 'known'};
    return reply(tr);
   }
   if(u.pathname==='/api/export-logs')return reply({ok:true,path:'测试日志.zip',files:2});
@@ -74,6 +82,14 @@ function merge(a,b){for(const[k,v]of Object.entries(b)){if(v && typeof v==='obje
  await check('No horizontal overflow at desktop, tablet, mobile and zoom',async()=>{for(const width of [1440,1180,900,768,390,375]){await page.setViewportSize({width,height:width<600?844:900});await nav('dash');await page.waitForTimeout(40);const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);assert.equal(overflow,false,'width '+width);await page.screenshot({path:path.join(out,'dashboard-'+width+'.png')});}await page.setViewportSize({width:590,height:410});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);});
  await check('Mobile drawer closes with Escape and restores focus',async()=>{await page.setViewportSize({width:390,height:844});await page.locator('#nav-toggle').click();assert.equal(await page.locator('#nav-toggle').getAttribute('aria-expanded'),'true');await page.keyboard.press('Escape');assert.equal(await page.locator('#nav-toggle').getAttribute('aria-expanded'),'false');assert.equal(await page.locator('#nav-toggle').evaluate(e=>e===document.activeElement),true);});
  await check('All pages fit the small viewport and screenshot desktop settings',async()=>{for(const id of ['asr','pack','route','ai','pit','model','log','stats','debug','knowledge']){await nav(id);await page.waitForTimeout(50);if(id==='knowledge')await page.locator('[data-kb-stats] .ira-num').first().waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,id);}await page.setViewportSize({width:1440,height:900});for(const id of ['ai','pit','asr','debug','stats','log','knowledge']){await nav(id);await page.waitForTimeout(100);await page.screenshot({path:path.join(out,id+'-1440.png')});}});
+ await check('F04 edit typed during save survives the old response',async()=>{await nav('ai');await page.locator('#ira-ai-model').fill('first-model');delayConfig=true;await page.locator('#ira-ai-save').click();await page.locator('#ira-ai-model').fill('newer-model');await page.waitForTimeout(900);assert.equal(await page.locator('#ira-ai-model').inputValue(),'newer-model');delayConfig=false;});
+ await check('F05 preset address/model survive navigation',async()=>{await nav('ai');await page.locator('#ira-ai-preset').selectOption('deepseek');assert.equal(await page.locator('#ira-ai-url').inputValue(),'https://api.deepseek.com');await nav('pack');await nav('ai');await page.waitForFunction(()=>document.querySelector('#ira-ai-url')?.value==='https://api.deepseek.com');assert.equal(await page.locator('#ira-ai-model').inputValue(),'deepseek-chat');});
+ await check('F13 log failure is not disguised as empty history',async()=>{failLog=true;await nav('log');await page.waitForFunction(()=>document.querySelector('#ira-panel-log .ira-logrows')?.textContent.includes('日志读取失败'));assert.doesNotMatch(await page.locator('#ira-panel-log .ira-logrows').innerText(),/还没有记录/);failLog=false;await page.locator('[data-logretry]').click();await page.waitForFunction(()=>document.querySelector('#ira-panel-log .ira-logrows')?.textContent.includes('分析我的节奏'));});
+ await check('F13 stats failure is not silent',async()=>{failStats=true;await nav('stats');await page.waitForFunction(()=>document.querySelector('#ira-panel-stats .ira-statgrid')?.textContent.includes('统计读取失败'));failStats=false;await page.locator('#stats-refresh').click();await page.waitForFunction(()=>document.querySelector('#ira-panel-stats .ira-statgrid')?.textContent.includes('提问次数'));});
+ await check('F19 repeated stats refresh keeps one live ResizeObserver',async()=>{await nav('stats');await page.locator('.ira-bars svg').waitFor();const base=await page.evaluate(()=>({...window.__ro}));assert.ok(base.live>=1,'图表应有存活观察者: '+JSON.stringify(base));await page.locator('#stats-refresh').click();await page.waitForTimeout(300);await page.locator('#stats-refresh').click();await page.waitForTimeout(300);const after=await page.evaluate(()=>({...window.__ro}));assert.equal(after.live,base.live,'ResizeObserver 泄漏: '+JSON.stringify({base,after}));assert.ok(after.made>=base.made+2,'每次刷新都应重建图表: '+JSON.stringify({base,after}));});
+ await check('F09 failed playback exposes backend reason',async()=>{await nav('debug');await page.locator('#ira-q').fill('还剩多少时间');await page.locator('#ira-send').click();await page.locator('[data-audition]:not([disabled])').waitFor();failPlayback=true;await page.locator('[data-audition]').click();await page.locator('#ira-error').waitFor({state:'visible'});const err=await page.locator('#ira-error').innerText();assert.match(err,/执行未成功/);assert.match(err,/耳机未连接/);assert.match(await page.locator('[data-dbg-note]').innerText(),/耳机未连接/);failPlayback=false;await page.locator('#dismiss-error').click();});
+ await check('F16 named microphone is shown as itself, not system default',async()=>{await nav('asr');const v=await page.locator('#ira-micdev2').inputValue();assert.equal(v,'0','同名设备应被选中而不是系统默认');assert.match(await page.locator('#ira-micdev2 option:checked').innerText(),/测试麦克风/);});
+ await check('F17 invalid integer reports and restores displayed value',async()=>{await nav('asr');await page.waitForTimeout(250);const saved=await page.evaluate(()=>window.__state.config.asr.num_threads);const before=writes.filter(w=>w.path==='/api/config').length;await page.locator('#ira-asrthreads2').fill('abc');await page.locator('#ira-asrthreads2').blur();await page.locator('#ira-error').waitFor({state:'visible'});assert.match(await page.locator('#ira-error').innerText(),/必须是 1–16 的整数/);assert.equal(await page.locator('#ira-asrthreads2').inputValue(),String(saved),'非法输入要回填保存值');assert.equal(writes.filter(w=>w.path==='/api/config').length,before,'非法值不能发出保存请求');await page.locator('#dismiss-error').click();await page.locator('#ira-asrthreads2').fill('1.5');await page.locator('#ira-asrthreads2').blur();await page.locator('#ira-error').waitFor({state:'visible'});assert.equal(await page.locator('#ira-asrthreads2').inputValue(),String(saved));await page.locator('#dismiss-error').click();});
  assert.deepEqual(errors,[]);
  const result={passed:true,tests:cases.length,cases,consoleErrors:errors,writeCalls:writes.map(({text,...r})=>r),scope:'Real browser; configuration, microphone and execution writes mocked. Actual backend used for preview only.'};
  fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(result,null,2));await browser.close();console.log(JSON.stringify({passed:true,tests:cases.length}));

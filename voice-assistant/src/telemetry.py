@@ -228,6 +228,8 @@ class DerivedTracker:
         self._session_time = None
         self._last_fuel = None
         self._valid_lap = False
+        # 审计 T07：跨线时官方圈速可能晚一两帧到，先记在这里等补结算。
+        self._pending_lap: dict | None = None
         self._tyre_history={}
         self._gap_history={'ahead':[],'behind':[]}
         # 圈级历史：给 AI 上下文用。与 fuel_per_lap_samples 是两套判据——
@@ -317,6 +319,21 @@ class DerivedTracker:
                 self._valid_lap = not s.on_pit_road
                 self._open_lap(s)
 
+        # 审计 T07：跨线时官方圈速可能晚一两帧到；这里补结算刚记录的那一圈。
+        pending = self._pending_lap
+        if pending is not None and pending.get("record") is not None:
+            target = pending["target"]
+            fresh = s.lap_last if s.lap_last and s.lap_last > 0 else None
+            if fresh is not None and abs(fresh - target) <= 2.0:
+                pending["record"]["lap_time"] = round(fresh, 3)
+                sectors_now = self.segments.sectors_for(pending["record"]["lap"])
+                if sectors_now is not None:
+                    pending["record"]["sectors"] = [
+                        round(value, 3) if value is not None else None
+                        for value in sectors_now]
+                self._pending_lap = None
+            elif s.session_time is not None and s.session_time > pending["deadline"]:
+                self._pending_lap = None        # 等不到就保持未知，绝不填旧值
         if self.fuel_per_lap_samples:
             # 用中位数抗单圈异常
             xs = sorted(self.fuel_per_lap_samples)
@@ -378,9 +395,19 @@ class DerivedTracker:
         sectors = ([round(value, 3) if value is not None else None
                     for value in sector_times] if sector_times is not None else [])
 
-        self.record_lap({
+        # 审计 T07：跨线那一帧 SDK 的 LapLastLapTime 可能还是**上上圈**的值。
+        # 用「本圈实际经过的 session 时间」当基准判断：官方圈速与它相差
+        # ≤2 秒才算这一圈的；否则先记未知，等下面几帧补结算。
+        lap_elapsed = None
+        if opened.get("session_time") is not None and s.session_time is not None:
+            lap_elapsed = s.session_time - opened["session_time"]
+        lap_time = None
+        if s.lap_last and s.lap_last > 0:
+            if lap_elapsed is None or abs(s.lap_last - lap_elapsed) <= 2.0:
+                lap_time = round(s.lap_last, 3)
+        record = {
             "lap": opened["lap"],
-            "lap_time": round(s.lap_last, 3) if s.lap_last and s.lap_last > 0 else None,
+            "lap_time": lap_time,
             "sectors": sectors,
             "fuel_start": opened["fuel_start"],
             "fuel_used": fuel_used,
@@ -395,7 +422,18 @@ class DerivedTracker:
             "track_temp": s.track_temp,
             "wetness": s.track_wetness,
             "incidents": opened["incidents"],
-        })
+        }
+        self.record_lap(record)
+        if lap_time is None and lap_elapsed is not None:
+            # 官方圈速晚到时先挂起，后面几帧（最多 2.5 秒）补上；
+            # 一直等不到就保持未知，不拿上一圈的旧成绩顶替。
+            self._pending_lap = {
+                "record": record,
+                "target": lap_elapsed,
+                "deadline": (s.session_time or 0) + 2.5,
+            }
+        else:
+            self._pending_lap = None
         self._lap_open = None
 
     def _derive_gaps(self,s):
@@ -806,11 +844,16 @@ class IrsdkTelemetry:
             s.car_completed_laps = completed
             # field_size 以结果页的有效名次为准；pace car 不应算入。
             pace = set(s.pace_car_indices or [])
-            s.field_size = len([
+            counted = len([
                 r for r in results
                 if isinstance(r.get("Position"), int) and r["Position"] > 0
                 and r.get("CarIdx") not in pace
-            ]) or s.field_size
+            ])
+            # 审计 T04：ResultsPositions 可能只是局部列表（例如刚开赛只回了一条），
+            # 旧代码直接拿它当完整参赛集合，把 field_size 从 3 缩到 1，
+            # 界面上会出现「第 2 名 / 共 1 辆」这种自相矛盾的显示。
+            # 这里只允许变大，不允许变小。
+            s.field_size = max(s.field_size or 0, counted) or s.field_size
 
     def _session_sector_starts(self, ir, session_key) -> tuple[float, ...]:
         """读 SplitTimeInfo.Sectors[].SectorStartPct，按 session 缓存。

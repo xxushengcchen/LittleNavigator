@@ -27,6 +27,13 @@ import sys
 import urllib.error
 import urllib.request
 
+# 中文清单/错误提示统一 UTF-8，避免 Windows 管道按 GBK 解码成乱码。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from content_loader import load_items  # noqa: E402
 
@@ -120,9 +127,13 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--content", nargs="+", default=["content/messages*.json"],
-                   help="文案檔（可多個或萬用字元）；與 --text 二選一")
-    p.add_argument("--text", help="單句文字")
+    # --text 必须真正可达：旧实现给了非空默认值，if args.content 永远抢在
+    # elif args.text 前面，单句模式实际被批量任务吃掉（还可能误计费）。
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--content", nargs="+", default=None,
+                        help="文案檔（可多個或萬用字元）；與 --text 二選一；"
+                             "都不給時讀 content/messages*.json")
+    source.add_argument("--text", help="單句文字")
     p.add_argument("--out", required=True, help="輸出目錄")
     p.add_argument("--only", default="", help="只跑指定 id/msgId，逗號分隔")
     p.add_argument("--instruct", default=None, help='情感／語氣描述，例如 "用撒嬌甜美的語氣"')
@@ -140,19 +151,27 @@ def main() -> int:
     p.add_argument("--speaker", default=None)
     p.add_argument("--resource-id", default=None)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--dry-run", action="store_true",
+                   help="只印出待合成清單，不呼叫 API、不寫檔")
     args = p.parse_args()
 
     api_key = args.api_key or os.environ.get("DOUBAO_API_KEY")
     speaker = args.speaker or os.environ.get("DOUBAO_SPEAKER") or DEFAULT_SPEAKER
     resource_id = args.resource_id or os.environ.get("DOUBAO_RESOURCE_ID") or DEFAULT_RESOURCE
-    if not api_key:
-        print("缺少 DOUBAO_API_KEY（或 --api-key）", file=sys.stderr)
-        return 2
 
     # 組出待合成清單：(檔名, 文字, 語氣指令)
     jobs: list[tuple[str, str, str | None, int | None]] = []
-    if args.content:
-        items, instructs = load_items(pathlib.Path("."), patterns=args.content)
+    if args.text:
+        jobs = [(f"single_r{n:02d}" if args.repeat > 1 else "single", args.text,
+                 args.instruct, args.speech_rate)
+                for n in range(1, args.repeat + 1)]
+    else:
+        patterns = args.content or ["content/messages*.json"]
+        try:
+            items, instructs = load_items(pathlib.Path("."), patterns=patterns)
+        except (OSError, ValueError) as exc:
+            print(f"載入文案失敗：{exc}", file=sys.stderr)
+            return 2
         print(f"載入 {len(items)} 個 msgId")
         if args.only:
             wanted = {s.strip() for s in args.only.split(",") if s.strip()}
@@ -181,17 +200,25 @@ def main() -> int:
                     jobs.append((f"{item['msgId']}__{idx:02d}", text, instruct, rate))
             else:
                 jobs.append((f"{item['id']}_{item['msgId']}", item["text"], instruct, rate))
-    elif args.text:
-        jobs = [(f"single_r{n:02d}" if args.repeat > 1 else "single", args.text,
-                 args.instruct, args.speech_rate)
-                for n in range(1, args.repeat + 1)]
-    else:
-        print("需要 --content 或 --text", file=sys.stderr)
+
+
+    if args.dry_run:
+        print(f"speaker={speaker}  resource={resource_id}  共 {len(jobs)} 句（dry-run）")
+        for stem, text, _instruct, _rate in jobs:
+            print(f"  {stem}\t{text}")
+        return 0
+
+    if not api_key:
+        print("缺少 DOUBAO_API_KEY（或 --api-key）", file=sys.stderr)
         return 2
 
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    todo = [j for j in jobs if args.force or not (out / f"{j[0]}.mp3").exists()]
+    # 只有 MP3 不算完成：缺 WAV 时也要重跑（跳过合成、直接补转换）。
+    todo = [j for j in jobs
+            if args.force
+            or not (out / f"{j[0]}.mp3").exists()
+            or (not args.no_wav and not (out / f"{j[0]}.wav").exists())]
     print(f"speaker={speaker}  resource={resource_id}  共 {len(jobs)} 句，待處理 {len(todo)}")
 
     lock = __import__("threading").Lock()
@@ -200,26 +227,36 @@ def main() -> int:
     def work(job: tuple[str, str, str | None, int | None]) -> None:
         nonlocal failures
         stem, text, instruct, rate = job
-        try:
-            data = synthesize(text, api_key=api_key, speaker=speaker,
-                              resource_id=resource_id, instruct=instruct,
-                              speech_rate=rate)
-        except TtsError as exc:
-            with lock:
-                failures += 1
-                print(f"  FAIL  {stem}: {exc}")
-            return
         mp3 = out / f"{stem}.mp3"
-        mp3.write_bytes(data)
+        wav = out / f"{stem}.wav"
+        need_synth = args.force or not (mp3.exists() and mp3.stat().st_size > 0)
+        size = mp3.stat().st_size if mp3.exists() else 0
+        if need_synth:
+            try:
+                data = synthesize(text, api_key=api_key, speaker=speaker,
+                                  resource_id=resource_id, instruct=instruct,
+                                  speech_rate=rate)
+            except TtsError as exc:
+                with lock:
+                    failures += 1
+                    print(f"  FAIL  {stem}: {exc}")
+                return
+            mp3.write_bytes(data)
+            size = len(data)
         extra = ""
         if not args.no_wav:
             try:
-                mp3_to_wav(mp3, out / f"{stem}.wav", args.wav_rate)
+                mp3_to_wav(mp3, wav, args.wav_rate)
                 extra = "  +wav"
-            except TtsError as exc:
-                extra = f"  (wav 失敗: {exc})"
+            except (TtsError, OSError) as exc:
+                # 转 WAV 失败不能算成功：否则 MP3 留下、WAV 缺失却 exit 0，
+                # 下次又因为 MP3 存在直接跳过，成品永远不完整。
+                with lock:
+                    failures += 1
+                    print(f"  FAIL  {stem}: wav 轉換失敗: {exc}")
+                return
         with lock:
-            print(f"  ok    {stem}  {len(data)}B{extra}")
+            print(f"  ok    {stem}  {size}B{extra}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         list(pool.map(work, todo))

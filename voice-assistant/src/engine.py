@@ -56,6 +56,8 @@ def exclusive(fn):
 
 
 class Assistant:
+    # A12：类级默认值，供 __new__ 测试夹具与旧实例兼容（生产 __init__ 会覆盖）。
+    _ai_epoch = 0
     def __init__(self, cfg: dict, *, no_play: bool = False, gap_ms: int = 60,
                  force_sim: bool = False, sim_advance: bool = False,
                  pack_dir: str | None = None, out=sys.stdout):
@@ -70,6 +72,9 @@ class Assistant:
                                      "answer": "", "error": ""}
         self.ack_picker = AckPicker()
         self._operation_lock = threading.RLock()
+        # A12：AI 请求代次。reload_switchables / close 递增它；正在等模型
+        # 的旧 ask_ai 用「实例 + 代次」判断自己是否已被取消。
+        self._ai_epoch = 0
         vp = cfg["voice_pack"]
         roots = [cfg_mod.resolve(cfg, pack_dir or vp["dir"])]
         self.extra_dir = vp.get("extra_dir")
@@ -186,6 +191,9 @@ class Assistant:
         before = {"ai": self.ai is not None,
                   "car": bool(self.car and self.car.enabled)}
         self.cfg = cfg
+        # A12：关闭/切换 AI 时先撤销在途请求；旧实例的 handle 即使返回，
+        # 也不得再写 live、播 TTS 或覆盖 Overlay。
+        self._ai_epoch = getattr(self, "_ai_epoch", 0) + 1
 
         # AI：未启用时置 None，已启用时重建（模型/密钥可能也改了）
         try:
@@ -220,9 +228,16 @@ class Assistant:
             # 只有「模型声明依赖可变数值」且「确实给了模板」才算动态型；
             # 其余按知识型入库。声明了却没给模板的，会被 add_from_review 拒绝。
             dynamic = bool(rec.get("ai_dynamic"))
+            evidence = rec.get("ai_evidence")
+            source_id = (evidence.get("learn_entry_id")
+                         if isinstance(evidence, dict) else None)
             return {"question": rec.get("q"), "answer": rec.get("ai_text"),
                     "template": template if isinstance(template, dict) else None,
-                    "dynamic": dynamic, "clip_path": rec.get("ai_clip")}
+                    "dynamic": dynamic, "clip_path": rec.get("ai_clip"),
+                    # A09：复盘反馈必须能落回真正条目；review_id 记住来源
+                    # history 记录，source_id 记住「本来就是学习库命中」的条目。
+                    "review_id": entry_id,
+                    "source_id": source_id if isinstance(source_id, str) else None}
         return None
 
     def ai_status(self) -> dict:
@@ -388,6 +403,10 @@ class Assistant:
         extra = dict(extra or {})
         # 入口先记「听到什么」：后面无论走规则还是 AI，Overlay 第一行都要有。
         self.set_heard(text)
+        # 审计 R03：新问题进来先清掉上一条答案。否则本地拒答 / 固定操作反馈
+        # 这些不经过 play_decision 的路径会让 Overlay 一直显示上一题的答案
+        # （典型：新问题配旧遥测数字），「思考中」也可能永远不消失。
+        self._live(state="thinking", answer="", error="")
         tr = self._resolve(text, strict=self._strict_for(source))
         if forced_intent:
             tr = dict(tr)
@@ -695,6 +714,8 @@ class Assistant:
                 return
         # 三个都没有：至少别让用户面对完全的沉默
         print("  ⚠ 话术素材全部缺失，本次无声", file=self.out)
+        # 审计 R03：没有任何话术可播时也要结束「思考中」，不能挂着旧答案。
+        self._live(state="idle", answer="", error="")
 
     def _show_text_only(self, preferred: str) -> None:
         """按 `_say_with_fallback` 的降级链取文案，写进 live 但不播。
@@ -811,6 +832,13 @@ class Assistant:
             rec.update({"ok": False, "reason": "AI 未启用"})
             return rec
 
+        # A12：捕获本次请求对应的流水线实例与代次；两者任一变化即视为取消。
+        pipeline = self.ai
+        epoch = self._ai_epoch
+
+        def ai_cancelled() -> bool:
+            return self.ai is not pipeline or self._ai_epoch != epoch
+
         # 空文本不进模型（与 _ai_should_engage 同一条底线，这里再兜一层，
         # 防止调用方绕过矩阵直接调 ask_ai）。
         if not (text or "").strip():
@@ -831,7 +859,8 @@ class Assistant:
             snap = self.snapshot()
             laps = list(getattr(self.derive, "lap_records", []) or [])
             result = self.ai.handle(text, snap, kind, laps,
-                                    rule_ok=rule_ok, intent=intent)
+                                    rule_ok=rule_ok, intent=intent,
+                                    cancelled=ai_cancelled)
         except Exception as exc:   # noqa: BLE001
             p(f"  ✗ AI 处理异常：{exc}")
             rec.update({"ok": False, "reason": f"AI 处理异常：{exc}"})
@@ -841,13 +870,28 @@ class Assistant:
             return rec
 
         import uuid
+        # A12：handle 内部已在写 live / 播放前检查过；这里兜住
+        # 「handle 刚返回、用户恰好关闭 AI」的窗口——不写答案、不播 fallback。
+        if ai_cancelled():
+            rec.update({"ok": False, "ai_source": "refused", "ai_text": "",
+                        "ai_checks": {"cancelled": "yes"},
+                        "reason": "AI 已关闭或切换，在途回答已取消并丢弃",
+                        "cancelled": True})
+            self._log(self.miss_log, rec)
+            return rec
+        # A09：学习库命中的回答，复盘反馈要直接落回源条目（否则标错永远
+        # 找不到条目，自动禁用形同虚设）；模型回答仍用一次性 review_id。
+        evidence = result.evidence if isinstance(result.evidence, dict) else {}
+        learned_id = evidence.get("learn_entry_id")
+        review_id = (learned_id if isinstance(learned_id, str) and learned_id
+                     else uuid.uuid4().hex[:12])
         rec.update({"ai_source": result.source, "ai_text": result.text,
                     "ai_checks": result.checks, "ok": result.ok,
                     "ai_latency_ms": result.latency_ms,
                     "ai_dynamic": bool(result.dynamic),
                     "ai_template": result.template,
                     "ai_evidence": result.evidence,
-                    "review_id": uuid.uuid4().hex[:12]})
+                    "review_id": review_id})
         if not result.ok:
             # 规则答得上却被转交给 AI 的那条路径：AI 失败不能静默，
             # 回退播规则答案（fallback_plan 由 engine.ask 在 all 档写入）。
@@ -1148,6 +1192,8 @@ class Assistant:
         return snap
 
     def close(self):
+        # A12：退出时撤销在途 AI 请求（旧回答不得再写 live/出声）。
+        self._ai_epoch = getattr(self, "_ai_epoch", 0) + 1
         self.player.stop()
         self.sampler.close()
         if self.car is not None:
@@ -1180,6 +1226,11 @@ class Assistant:
             print(f"  ⚠ {mid} 没有可播的文件，跳过", file=self.out)
             return
         print(f"  ↩ 「{v.text}」", file=self.out)
+        # 审计 R03：固定反馈（拒绝/改车确认）也是本轮的答案，必须写进
+        # Overlay；以前只出声不更新 live，界面上还停着上一条回答。
+        # 但不要把已经标成 error 的 AI 失败改写成 answer（失败原因要保留）。
+        if self.live.get("state") != "error":
+            self._live(state="answer", answer=v.text, error="")
         try:
             self.player.play(self.pack.path_of(v))
         except Exception:  # noqa: BLE001

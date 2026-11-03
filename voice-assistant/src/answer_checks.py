@@ -20,7 +20,8 @@ _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 # 中文数字：只把这些当「数值表述」；「上一圈」「一档」这类量词搭配不算。
 # 用前后文排除法而不是维护一份量词白名单——中文里「一」做量词太常见，
 # 逐个列反而更容易漏。
-_CN_DIGIT_RE = re.compile(r"[一二三四五六七八九十零百千万]")
+# 审计 A10：「两」也是常用数量词（「油还够两圈」），旧表漏掉它是稳定绕过。
+_CN_DIGIT_RE = re.compile(r"[一二两三四五六七八九十零百千万]")
 
 # 中文数字出现在这些搭配里时是量词/序数，不是要播报的数值
 _CN_MEASURE_PATTERNS = (
@@ -111,10 +112,15 @@ def _flatten(node, prefix: str = "") -> list[tuple[str, float]]:
 
 
 def _tolerance(number_text: str) -> float:
-    """容差随小数位收紧：整数 0.05，一位小数 0.06。"""
+    """容差随小数位收紧：整数 0.05，一位小数 0.06。
+
+    审计 A10：旧实现按回答里的小数位**增加**容差，写出更多小数位反而
+    更容易蒙混过关（6.300000000000 能匹配 6.2）。正确方向是收紧并封顶：
+    上下文数值本身已按一位小数给出，回答多写的小数位不提供任何精度信息。
+    """
     if "." in number_text:
         decimals = len(number_text.split(".")[1])
-        return 0.05 + 0.01 * decimals
+        return 0.05 + 0.01 * min(decimals, 1)
     return 0.05
 
 
@@ -125,6 +131,137 @@ def _matches(value: float, candidates: list[tuple[str, float]]) -> bool:
 def _seconds_from_min_sec(answer: str) -> list[float]:
     """把「1 分 23 秒」这类表述换算成总秒数，用于与秒制候选值比对。"""
     return [int(m) * 60 + float(s) for m, s in _MIN_SEC_RE.findall(answer)]
+
+
+# ---------------------------------------------------------------- A10 辅助
+#
+# 审计 A10：只证明「某个数字在上下文里出现过」不够。同一个数字可能来自
+# 完全不同的量（18.4 升 vs 18.4 圈），负号会被 `_NUM_RE` 吃掉，问题里
+# 出现过的数字会被当成豁免，分秒表述还会把同字面量的别处数字一起跳过。
+# 下面按「符号 + 单位/字段归属 + 文本 span」补上绑定。
+
+# 单位 -> 允许的字段类别；字段名 -> 类别。未识别的单位不做推断（避免误杀）。
+_UNIT_FIELD_CATEGORIES: dict[str, set[str]] = {
+    # "lap" 是圈号（第几圈），不是圈数量；不绑定「圈」单位，避免
+    # 「还剩 12 秒」撞上 lap=12 时被误判成单位不符（既有行为约定）。
+    "laps": {"lap_completed", "laps_remain", "laps_of_fuel",
+             "total_laps", "laps_spare", "completed"},
+    "fuel": {"fuel_level", "fuel_per_lap"},
+    "seconds": {"lap_last", "lap_best", "avg3", "avg5", "trend_per_lap",
+                "delta_to_best", "gap_ahead_s", "gap_behind_s",
+                "time_remain_s", "delta_s", "lap_time", "gap_s",
+                "last_lap", "best_lap", "sectors", "deltas"},
+    "temp": {"air_temp", "track_temp", "water_temp", "oil_temp"},
+    "speed": {"speed_kph"},
+    "position": {"position", "class_position", "pos"},
+    "gear": {"gear"},
+    "percent": {"track_wetness", "relative_humidity", "precip"},
+}
+_UNIT_TOKENS: tuple[tuple[str, str], ...] = (
+    ("公里每小时", "speed"), ("公里/小时", "speed"), ("km/h", "speed"),
+    ("摄氏度", "temp"), ("℃", "temp"),
+    ("圈", "laps"), ("升", "fuel"), ("秒", "seconds"), ("分", "seconds"),
+    ("度", "temp"), ("公里", "speed"), ("档", "gear"), ("名", "position"),
+    ("位", "position"),
+)
+
+# 问题里作为「前提」给出的数字（用户自己说的差距），回答复述时可以豁免。
+# 只有比较/差距语境才算前提——「还能跑99圈吗」这种断言不能借问题数字洗白。
+_QUESTION_PREMISE_MARKERS = (
+    "慢", "快", "差", "落后", "领先", "损失", "丢", "推头", "甩尾",
+    "降低", "提高", "增加", "减少", "超过", "不足", "不到", "多了", "少了",
+)
+
+
+def _signed_value(text: str, match: re.Match) -> float:
+    """取数字的字面值并识别前置负号（范围连字符不算负号）。"""
+    value = float(match.group())
+    index = match.start() - 1
+    while index >= 0 and text[index] in " \t":
+        index -= 1
+    if index < 0 or text[index] not in "-−":
+        return value
+    before = index - 1
+    while before >= 0 and text[before] == " ":
+        before -= 1
+    # 「18.4-18.6」「1-2 圈」的连字符前面是数字：这是范围，不是负号。
+    if before >= 0 and (text[before].isdigit() or text[before] == "."):
+        return value
+    return -value
+
+
+def _following_unit(text: str, end: int) -> tuple[str, str] | None:
+    """数字后面紧跟的单位（跳过空格）；未识别返回 None。"""
+    index = end
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    for token, category in _UNIT_TOKENS:
+        if text.startswith(token, index):
+            return token, category
+    return None
+
+
+def _leaf_name(path: str) -> str:
+    """``segments.best_loss[0].delta_s`` -> ``delta_s``；``deltas[2]`` -> ``deltas``。"""
+    leaf = path.rsplit(".", 1)[-1]
+    return leaf.split("[", 1)[0]
+
+
+def _unit_matches(category: str, matched: list[tuple[str, float]]) -> bool:
+    """匹配到的候选字段里，是否至少有一个属于该单位对应的量。
+
+    没有任何候选字段能归入已知量纲时不做推断（例如 12 撞上圈号 lap=12，
+    无法证明用户说的「12 秒」是错的）；一旦有已知量纲，就要求单位对得上。
+    """
+    known: set[str] = set()
+    for path, _ in matched:
+        leaf = _leaf_name(path)
+        for name, fields in _UNIT_FIELD_CATEGORIES.items():
+            if leaf in fields:
+                known.add(name)
+    if not known:
+        return True
+    return category in known
+
+
+def _question_premises(question: str) -> set[float]:
+    """问题里被比较/差距语境标记过的数值，视为用户给出的前提。"""
+    q = question or ""
+    out: set[float] = set()
+    for match in _NUM_RE.finditer(q):
+        window = q[max(0, match.start() - 12):match.start()]
+        if any(marker in window for marker in _QUESTION_PREMISE_MARKERS):
+            out.add(float(match.group()))
+    return out
+
+
+# ---------------------------------------------------------------- A11 内容闸
+#
+# 审计 A11：禁区不能只靠 system 提示词。这里用有限词法兜住两类最危险的
+# 自由发挥：操作/调校指令、处罚与规则解释。这是有限语法，不声称能覆盖
+# 所有改写——但比「只信提示词」强，且误杀方向是安全的（拒答）。
+_OPERATION_ADVICE_RE = re.compile(
+    r"调软|调硬|调紧|调松|调高|调低|调到|设置成|设置到|改成|改为|换成|更换|"
+    r"拆下|装上|拧紧|拧松|打到|放到|关掉|关闭|打开")
+_UNSAFE_RULE_RE = re.compile(r"处罚|判罚|罚时|罚秒|犯规|违规|黑旗|禁赛|申诉成功")
+_OUT_OF_DOMAIN_ANSWER_RE = re.compile(
+    r"(?:现在|今天|当前)(?:是|的|的日期是)?(?:几月|几号|几点|什么时间|什么日期|星期几)")
+
+
+def check_content(answer: str, question: str) -> str | None:
+    """回答内容闸（审计 A11）：不解释处罚、不给操作指令、不聊比赛外的事。"""
+    text = answer or ""
+    if not text.strip():
+        return None
+    for regex, label in (
+        (_OPERATION_ADVICE_RE, "操作/调校指令"),
+        (_UNSAFE_RULE_RE, "处罚或规则解释"),
+        (_OUT_OF_DOMAIN_ANSWER_RE, "比赛遥测范围外的时间/日期"),
+    ):
+        match = regex.search(text)
+        if match:
+            return f"回答含{label}：{match.group(0)}"
+    return None
 
 
 def check_length(answer: str, max_chars: int) -> str | None:
@@ -356,42 +493,44 @@ def check_numbers(answer: str, ctx: dict, question: str) -> str | None:
         return "回答含中文数字，要求改用阿拉伯数字"
 
     numbers = _flatten(ctx)
-    q_numbers = {float(x) for x in _NUM_RE.findall(question or "")}
+    premises = _question_premises(question)
 
     ordinals = {float(x) for x in _ORDINAL_RE.findall(text)}
     percents = {float(x) for x in _PERCENT_RE.findall(text)}
     min_sec_seconds = _seconds_from_min_sec(text)
 
-    # 只有分秒表述里的两个数字需要跳过独立校验——它们由末尾的总秒数检查统一裁决。
-    # 序数与百分比**不能**放进这里：那样会绕过各自的验证分支，导致
-    # 「第 2 名」（实际第 4）与「91%」（实际 62%）也被放行。
-    consumed: set[str] = set()
-    for m in _MIN_SEC_RE.finditer(text):
-        consumed.update({m.group(1), m.group(2)})
-
-    for literal in _NUM_RE.findall(stripped):
-        value = float(literal)
-        if literal in consumed:
-            continue
-        # 来自问题本身的数字可豁免（「确实慢了 0.3 秒」）
-        if value in q_numbers:
+    # 分秒表述的数字已从 stripped 里整段移除，因此这里不再需要「字面量跳过表」。
+    # 审计 A10：旧实现按字面量跳过（consumed），「1 分 23.5 秒」会让答案别处
+    # 同字面量的「1 升」一起免检——现在只按文本位置处理。
+    for match in _NUM_RE.finditer(stripped):
+        literal = match.group()
+        unsigned = float(literal)
+        # 用户当前提给出的比较数值可以复述（「确实慢了 0.3 秒」）；
+        # 问题里普通出现的数字不豁免（审计 A10：不能拿问题数字给断言洗白）。
+        if unsigned in premises:
             continue
         # 序数：必须与 position / class_position 之一相符，否则拒绝
-        if value in ordinals:
+        if unsigned in ordinals:
             pos = [v for k, v in numbers if k.endswith("position")]
-            if any(abs(value - p) <= 0.051 for p in pos):
+            if any(abs(unsigned - p) <= 0.051 for p in pos):
                 continue
             return f"名次 {literal} 与遥测不符"
         # 百分比：只接受 0-1 比例值 ×100（容差 0.5），不接受任意数值近似
-        if value in percents:
+        if unsigned in percents:
             scaled = [c * 100 for _, c in numbers if 0.0 <= c <= 1.0]
-            if any(abs(value - s) <= 0.51 for s in scaled):
+            if any(abs(unsigned - s) <= 0.51 for s in scaled):
                 continue
             return f"百分比 {literal}% 在上下文中没有对应值"
-        # 普通数值：直接容差比对
-        if any(abs(value - c) <= _tolerance(literal) for _, c in numbers):
-            continue
-        return f"数值 {literal} 在上下文中没有对应值"
+        # 普通数值：带符号比对（负号不能被当成同绝对值的正数）
+        value = _signed_value(stripped, match)
+        matched = [(path, candidate) for path, candidate in numbers
+                   if abs(value - candidate) <= _tolerance(literal)]
+        if not matched:
+            return f"数值 {literal} 在上下文中没有对应值"
+        # 单位 → 字段绑定：18.4 升不能变成 18.4 圈（审计 A10）
+        unit = _following_unit(stripped, match.end())
+        if unit is not None and not _unit_matches(unit[1], matched):
+            return f"数值 {literal} 与单位「{unit[0]}」在上下文中没有对应字段"
 
     # 分秒表述本身也要能对上总秒数
     for total in min_sec_seconds:
@@ -405,7 +544,11 @@ def check_numbers(answer: str, ctx: dict, question: str) -> str | None:
 
 def run_all(payload: dict, ctx: dict, question: str, max_chars: int
             ) -> tuple[bool, dict[str, str]]:
-    """依次跑三道闸，返回 (是否全部通过, 每道闸的结论)。"""
+    """依次跑四道闸，返回 (是否全部通过, 每道闸的结论)。
+
+    第四道 ``content``（审计 A11）只在**失败**时写进 checks，保持通过时
+    ``{"length","data","number"}`` 的既有形状不变，免得既有调用方断言崩掉。
+    """
     answer = (payload or {}).get("answer", "") or ""
     checks: dict[str, str] = {}
     reasons: list[str] = []
@@ -414,6 +557,7 @@ def run_all(payload: dict, ctx: dict, question: str, max_chars: int
         ("length", check_length(answer, max_chars)),
         ("data", check_data((payload or {}).get("data_used", []), ctx)),
         ("number", check_numbers(answer, ctx, question)),
+        ("content", check_content(answer, question)),
     ):
         checks[name] = "fail" if failed else "pass"
         if failed:
@@ -421,4 +565,6 @@ def run_all(payload: dict, ctx: dict, question: str, max_chars: int
 
     if reasons:
         checks["reasons"] = "; ".join(reasons)
+    else:
+        checks.pop("content", None)
     return (not reasons), checks

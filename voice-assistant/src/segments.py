@@ -661,8 +661,34 @@ class SegmentModel:
             mine_laps, their_laps = completed[player], completed[index]
             if not _lap_count(mine_laps) or not _lap_count(their_laps):
                 return None
-            # 完成圈数不同 = 差一圈（套圈/被套圈）：分段差距没有可比性
-            return index if mine_laps == their_laps else None
+            # 审计 T09：完成圈数不同多半是套圈/被套圈，但近邻在跨线那一刻
+            # 会短暂出现「相差 1 圈」——两车其实只差两秒。只按圈数相等判断，
+            # 会把每圈跨线窗口里的可比对象误判成套圈而拒绝分段对比。
+            # 差 1 圈时再看赛道位置：两车仍在 2% 圈内相邻才算跨线窗口。
+            if mine_laps == their_laps:
+                return index
+            if abs(their_laps - mine_laps) == 1 and self._crossing_adjacent(player, index):
+                return index
+            return None
+
+    def _crossing_adjacent(self, player: int, index: int) -> bool:
+        """两车是否都在跨线窗口内（圈内位置相差 ≤2%）。"""
+        mine = self._cars.get(player)
+        theirs = self._cars.get(index)
+        if mine is None or theirs is None:
+            return False
+        a, b = mine.last_pct, theirs.last_pct
+        if a is None or b is None:
+            return False
+        # 必须是「一车刚跨过、另一车还没跨」这种真正跨线的错位：
+        # 若两车位置相同（例如都停在 0.0），那更可能是真实套圈，保持拒绝。
+        # 阈值 0.05 约等于 80 秒圈里的 4 秒，足够覆盖近邻提前/延后跨线，
+        # 又不会把中段并排的套圈车当成可比对象。
+        just_crossed = lambda x: x <= 0.05
+        before_line = lambda x: x >= 0.95
+        straddling = ((just_crossed(a) and before_line(b)) or
+                      (just_crossed(b) and before_line(a)))
+        return straddling
 
 
 def _car_index(value: Any) -> bool:

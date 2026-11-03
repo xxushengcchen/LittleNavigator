@@ -18,6 +18,30 @@ datas = [
     (str(VA / "VERSION"), "."),
 ]
 
+def _collect_license_datas(package_names):
+    """把第三方分发自带的 LICENSE/COPYING 收进发行目录 licenses/<pkg>/。
+
+    只在代码文件里 import 包不会自动收集分发元数据；MIT 等许可要求随二进制
+    分发时附带版权与许可全文，所以显式按分发文件清单收集。
+    """
+    import importlib.metadata as md
+    entries = []
+    for name in package_names:
+        try:
+            dist = md.distribution(name)
+        except md.PackageNotFoundError:
+            continue
+        for f in dist.files or []:
+            path = str(f)
+            if ".dist-info/" in path and (
+                    "LICENSE" in path.upper() or "COPYING" in path.upper()):
+                entries.append((str(dist.locate_file(f)), f"licenses/{name}"))
+    return entries
+
+
+# pyirsdk（MIT）等依赖自带的许可证必须随安装包落地，不能只留在 site-packages。
+datas += _collect_license_datas(("pyirsdk",))
+
 hiddenimports = [
     # 都是运行时才 import 的，PyInstaller 静态分析看不到
     "app.server", "src.config", "src.engine", "src.voicepack", "src.phrase_match",

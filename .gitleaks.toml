@@ -22,9 +22,12 @@ description = "火山引擎/豆包语音 API Key（UUID 形，需在 api_key / �
 regex = '''(?i)(?:x-api-key|api[_-]?key|api\s*key|密钥)\s*["']?\s*[:=：]\s*["']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'''
 
 # 项目文档里公开的占位值与测试夹具，不是真实密钥。
+# 只允许「完整字面值」出现在这里：不要写 sk-test.* 之类前缀规则，
+# 否则真实 Key 只要以 sk-test 开头也会被一起豁免。
 [[allowlists]]
-description = "公开占位值与测试夹具"
+description = "公开占位值与测试夹具（精确字面值）"
 regexes = [
   '''sk-SECRET-123''',
+  '''sk-test-SECRET-1234567890''',
   '''sk-\.\.\.''',
 ]

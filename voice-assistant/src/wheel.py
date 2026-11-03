@@ -98,6 +98,10 @@ class WheelInput:
                 self._stop.wait(.01)
         except Exception as exc:
             self.error=f'方向盘输入不可用：{exc}'
+            # 审计 R05：后端线程已经退出，必须置停止位，否则 get_input()
+            # 永远返回这个死单例（看起来 running、实际不再轮询），
+            # 用户「停开监听」也无法恢复。置位后下一次 get_input() 会重建。
+            self._stop.set()
             self._ready.set()
         finally:
             if initialized:
@@ -114,7 +118,11 @@ _instance_lock=threading.Lock()
 def get_input():
     global _instance
     with _instance_lock:
-        if _instance is None or _instance._stop.is_set():_instance=WheelInput()
+        # 线程退出（含 SDL 初始化/轮询异常）后单例已死：重建，让停开监听
+        # 能真正重试，而不是拿到一个永远不再更新的对象。
+        if (_instance is None or _instance._stop.is_set()
+                or _instance.error):
+            _instance=WheelInput()
         return _instance
 
 def close_input():

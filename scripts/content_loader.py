@@ -29,8 +29,18 @@ def load_items(root: pathlib.Path, patterns: list[str] | None = None,
         supplements = any("messages" in p for p in pats)
     main: list[pathlib.Path] = []
     for pat in pats:
-        hits = sorted(root.glob(pat)) if any(c in pat for c in "*?[") else [root / pat]
-        main.extend(h for h in hits if h.exists())
+        if any(c in pat for c in "*?["):
+            hits = sorted(root.glob(pat))
+            if not hits:
+                raise FileNotFoundError(f"文案檔不存在或沒有匹配：{pat}")
+            main.extend(h for h in hits if h.is_file())
+        else:
+            path = root / pat
+            if not path.is_file():
+                raise FileNotFoundError(f"文案檔不存在：{pat}")
+            main.append(path)
+    if not main:
+        raise FileNotFoundError(f"沒有找到任何文案檔：{pats}")
     main.sort(key=lambda h: (0 if h.name == "messages.json" else 1, h.name))
 
     items: list[dict] = []

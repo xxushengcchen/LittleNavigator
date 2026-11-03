@@ -1168,16 +1168,25 @@ class TrayIcon:
         self._thread.Start()
         self._ready.wait(timeout)
         if not self.running:
+            # 审计 R15：等待超时只说明「还没就绪」，线程可能晚一步继续跑并
+            # 真的建出托盘/消息循环。必须立刻打上放弃标记，晚到的线程在
+            # 进 UI 前自行退出，否则会变成没有人收尾的孤儿托盘。
+            self._stop.set()
             self.log("⚠ 系统托盘启动失败（关闭时仍可选「直接退出」）")
         return self.running
 
     def _run_ui(self):
+        # 启动已判超时：晚到的线程不能再建图标/进消息循环（审计 R15）。
+        if self._stop.is_set():
+            return
         import clr
         clr.AddReference("System.Windows.Forms")
         clr.AddReference("System.Drawing")
         from System.Windows.Forms import (Application, ContextMenuStrip, NotifyIcon,
                                           Timer, ToolStripMenuItem, ToolTipIcon)  # noqa: F401
 
+        if self._stop.is_set():
+            return
         icon, keep_bitmap = _tray_asset_icon()
         notify = NotifyIcon()
         notify.Text = TRAY_TITLE
@@ -1204,6 +1213,11 @@ class TrayIcon:
         notify.Visible = True
         self._ok = True
         self._ready.set()
+        if self._stop.is_set():
+            # 就绪与放弃标记撞在一起：不要进消息循环，直接拆掉已建对象。
+            self._ok = False
+            self._shutdown()
+            return
         Application.Run()
         self._ok = False
 
@@ -1421,6 +1435,18 @@ def main(argv: list[str] | None = None) -> int:
     stop_hotkey = threading.Event()
     smoke_holder: dict = {"result": None}
     smoke_path: dict = {"path": None}
+    # 审计 Q06：窗口冒烟要能区分「这次真的加载成功」和「超时/旧记录」。
+    smoke_state: dict = {"loaded": False, "timeout": False, "error": None,
+                         "run_id": None}
+    if args.window_smoke_test:
+        import uuid as _uuid
+        smoke_state["run_id"] = _uuid.uuid4().hex[:12]
+        # 先清掉上一轮的记录：旧的成功文件不能被当成本轮结果。
+        try:
+            from src.config import data_dir as _data_dir
+            (_data_dir() / 'logs' / 'window-smoke.json').unlink(missing_ok=True)
+        except OSError:
+            pass
     tray_holder: dict = {"tray": None}
 
     def request_quit() -> None:
@@ -1435,8 +1461,10 @@ def main(argv: list[str] | None = None) -> int:
                 or args.overlay_smoke_test):
             return None
         tray = TrayIcon(window, request_quit, log=print)
+        # 审计 R15：先放 holder 再启动。启动超时后线程可能晚到并短暂存在，
+        # finally 只管 holder 里的对象；先登记才能保证它一定被 stop。
+        tray_holder["tray"] = tray
         if tray.start():
-            tray_holder["tray"] = tray
             return tray
         return None
 
@@ -1474,6 +1502,8 @@ def main(argv: list[str] | None = None) -> int:
         deadline = time.monotonic() + 20 if args.window_smoke_test else None
         while not svc.quit_requested:
             if deadline is not None and time.monotonic() > deadline:
+                smoke_state["timeout"] = True
+                smoke_state["error"] = smoke_state["error"] or                     "窗口 20 秒内没有加载完成"
                 svc.quit_requested = True
                 break
             time.sleep(0.3)
@@ -1586,10 +1616,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.window_smoke_test:
             def loaded():
                 from src.config import data_dir
-                title = window.evaluate_js('document.title')
-                result = data_dir() / 'logs' / 'window-smoke.json'
-                result.parent.mkdir(parents=True, exist_ok=True)
-                result.write_text(json.dumps({'renderer': 'edgechromium', 'title': title, 'loaded': True}), encoding='utf-8')
+                from datetime import datetime, timezone
+                target = data_dir() / 'logs' / 'window-smoke.json'
+                try:
+                    title = window.evaluate_js('document.title') or ""
+                    root_nodes = window.evaluate_js(
+                        'document.body ? document.body.children.length : 0') or 0
+                    if not str(title).strip():
+                        raise RuntimeError("页面标题为空（可能白屏）")
+                    if int(root_nodes) < 1:
+                        raise RuntimeError("页面根节点为空（可能白屏）")
+                    record = {'renderer': 'edgechromium', 'title': title,
+                              'root_nodes': int(root_nodes), 'loaded': True,
+                              'run_id': smoke_state["run_id"],
+                              'at': datetime.now(timezone.utc).isoformat()}
+                except Exception as exc:      # noqa: BLE001
+                    smoke_state["error"] = f"{type(exc).__name__}: {exc}"
+                    record = {'loaded': False, 'run_id': smoke_state["run_id"],
+                              'error': smoke_state["error"]}
+                else:
+                    smoke_state["loaded"] = True
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # 原子写：先写同目录临时文件再替换，避免留下半截记录。
+                tmp = target.with_suffix('.json.tmp')
+                tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2),
+                               encoding='utf-8')
+                tmp.replace(target)
+                smoke_state["path"] = str(target)
                 svc.quit_requested = True
             window.events.loaded += loaded
         webview.start(after_start)
@@ -1606,6 +1659,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.overlay_smoke_test:
         result = smoke_holder["result"] or {"ok": False, "error": "没有产生冒烟结果"}
         return 0 if result.get("ok") else 1
+    if args.window_smoke_test:
+        # 审计 Q06：只有「本轮真的加载成功且没有超时」才算通过；
+        # 超时、白屏、JS 异常一律非零，避免冒烟假绿。
+        reason = smoke_state["error"]
+        if reason is None and not smoke_state["loaded"]:
+            reason = "没有收到窗口加载完成事件"
+        ok = bool(smoke_state["loaded"] and not smoke_state["timeout"]
+                  and smoke_state["error"] is None)
+        print("=" * 60)
+        print("  窗口冒烟测试")
+        print("=" * 60)
+        print(f"  run_id: {smoke_state['run_id']}")
+        print(f"  loaded: {smoke_state['loaded']}  timeout: {smoke_state['timeout']}")
+        print(f"  记录: {smoke_state['path']}")
+        if reason:
+            print(f"  错误：{reason}")
+        print(f"  结果：{'通过' if ok else '失败'}")
+        return 0 if ok else 1
     return 0
 
 

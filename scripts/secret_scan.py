@@ -76,6 +76,15 @@ PLACEHOLDER = re.compile(
     r"none|null|true|false|redacted|fromfile|fromenv|draft-|<|\$\{|\.\.\.)"
 )
 ALLOW_VALUE = re.compile(r"^(?:sk-SECRET-123|sk-\.\.\.)$")
+# 固定测试夹具：只按“完整字面值”豁免，绝不做 sk-test* 之类前缀放行，
+# 否则真实泄漏只要长得像测试值就会被一起放过。新增夹具必须逐值加入。
+ALLOW_EXACT = frozenset({
+    "sk-test-SECRET-1234567890",   # test_ai_models.py 的假 Key
+    "sk-env-only-placeholder",     # test_audit_config_security_v161.py 的环境变量夹具
+    "synthetic-source-key",        # test_audit_config_transaction_chain.py 的合成配置
+    "audit-fake-key",              # test_audit_dynamic_learning_chain.py
+    "http://user:pw@",             # test_http_transport.py 的非法 URL 夹具
+})
 
 
 def entropy(value: str) -> float:
@@ -103,6 +112,8 @@ def scan_text(text: str, path: str) -> list[tuple[str, str, str, int]]:
     findings: list[tuple[str, str, str, int]] = []
     for rule_name, pattern in STRONG_RULES:
         for match in pattern.finditer(text):
+            if match.group(0) in ALLOW_EXACT:
+                continue  # 精确豁免固定测试夹具
             line = text.count("\n", 0, match.start()) + 1
             findings.append((path, rule_name, match.group(0), line))
 
@@ -112,7 +123,7 @@ def scan_text(text: str, path: str) -> list[tuple[str, str, str, int]]:
 
     for match in GENERIC.finditer(text):
         value = match.group(2)
-        if PLACEHOLDER.match(value) or ALLOW_VALUE.match(value):
+        if value in ALLOW_EXACT or PLACEHOLDER.match(value) or ALLOW_VALUE.match(value):
             continue
         if "." in value:  # 代码属性访问（args.api_key / os.environ.get），不是字面量密钥
             continue
@@ -145,22 +156,35 @@ def git(*args: str, input_bytes: bytes | None = None) -> subprocess.CompletedPro
 
 
 def scan_staged() -> int:
-    listed = git("diff", "--cached", "--name-only", "--diff-filter=ACMR")
+    # -z：git 默认会把中文等路径转成 C 风格转义（quotePath），一旦按行解析就
+    # 再也还原不出真实路径，git show 失败还被静默跳过，等于漏扫。用 NUL 分隔
+    # 并按文件系统编码还原原始字节。
+    listed = git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
     if listed.returncode != 0:
         print(listed.stderr.decode("utf-8", "replace"), file=sys.stderr)
         return 2
-    paths = [p for p in listed.stdout.decode("utf-8", "replace").splitlines() if p]
+    paths = [os.fsdecode(p) for p in listed.stdout.split(b"\x00") if p]
     findings: list[tuple[str, str, str, int]] = []
     scanned = 0
+    errors = 0
     for path in paths:
         blob = git("show", f":{path}")
-        if blob.returncode != 0 or is_binary(blob.stdout):
+        if blob.returncode != 0:
+            # 暂存文件读不出来时不能当作“没问题”：宁可运行失败（2），
+            # 也不让 pre-commit 在漏扫的情况下放行。
+            print(f"无法读取暂存内容：{path}: "
+                  f"{blob.stderr.decode('utf-8', 'replace').strip()}",
+                  file=sys.stderr)
+            errors += 1
+            continue
+        if is_binary(blob.stdout):
             continue
         scanned += 1
         findings.extend(
             scan_text(blob.stdout.decode("utf-8", "replace"), path)
         )
-    return report(findings, scanned)
+    code = report(findings, scanned)
+    return 2 if errors else code
 
 
 def scan_all_refs() -> int:

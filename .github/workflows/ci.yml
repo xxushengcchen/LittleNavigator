@@ -1,0 +1,55 @@
+name: ci
+
+# v1.6.2 起补齐功能/界面/链接/打包回归门禁：错误路由、删模块后的 CLI、
+# 文档死链、发行配置里误带密钥等问题，不再依赖人工记忆。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tooling-and-audit-regressions:
+    name: 工具链与审计修复回归（Q 组）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 构建/工具链审计回归（stdlib 子进程 fixture）
+        run: python -m pytest voice-assistant/tests/test_audit_build_batch2.py -q
+      - name: README/文档链接（递归）
+        run: python scripts/check_readme_links.py
+      - name: 发行配置安全闸门（无内联密钥/危险开关）
+        working-directory: voice-assistant
+        run: python packaging/build_dist.py --check-config-only
+      - name: Python 语法编译
+        run: python -m compileall -q scripts voice-assistant/tools voice-assistant/packaging
+
+  backend-unit:
+    name: 后端单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装锁定依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r voice-assistant/requirements-tested.txt
+          python -m pip install pytest
+      - name: 运行后端测试
+        working-directory: voice-assistant
+        run: python -m pytest tests -q
+
+  secret-scan:
+    # 密钥扫描工作流保持独立（.github/workflows/secret-scan.yml 已有），这里
+    # 只做汇总占位，避免两个 workflow 重复配置同一检查。
+    name: 密钥扫描（见 secret-scan.yml）
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "secret scan runs in secret-scan.yml"

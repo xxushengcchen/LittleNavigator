@@ -43,6 +43,48 @@ _MATCH_RATIO = 0.82
 # 连续错多少次自动禁用
 _DISABLE_AFTER_ERRORS = 2
 
+# 「语义护栏」（审计 A06）：字符相似度分不清前/后车、左右轮、否定与时间目标，
+# 只靠 0.82 阈值会把「后车圈速」的答案播给「前车圈速」。这里从问句里抽
+# 一组关键 token，两侧必须完全一致才允许命中；不一致一律当没命中退回模型——
+# 多花一次调用换「不播错对象」是值得的。
+_GUARD_TARGET_WORDS = (
+    "前车", "后车", "前轮", "后轮", "左前", "右前", "左后", "右后",
+    "前面", "后面", "前方", "后方", "头车", "领跑", "对手", "队友",
+    "自己", "别人", "我", "你",
+)
+_GUARD_LAP_WORDS = (
+    "上一圈", "下一圈", "上圈", "下圈", "这一圈", "那一圈", "这圈", "那圈",
+    "本圈", "最近一圈", "当前圈", "前一圈", "后一圈",
+    "上一段", "下一段", "上段", "下段", "本段", "该段",
+)
+_GUARD_NEGATIONS = ("不", "没", "别", "未", "无", "非")
+_GUARD_UNITS = ("升", "圈", "秒", "分", "度", "公里", "米", "档", "名", "次")
+_GUARD_SECTOR_RE = re.compile(r"第\s*([0-9]+|[一二两三四五六七八九十]+)\s*段")
+_GUARD_NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _guard_signature(question: str) -> frozenset[str]:
+    """抽问句里的语义关键 token；空集合表示没有可换错的对象。"""
+    q = normalize(question or "")
+    sig: set[str] = set()
+    for word in _GUARD_TARGET_WORDS:
+        if word in q:
+            sig.add("target:" + word)
+    for word in _GUARD_LAP_WORDS:
+        if word in q:
+            sig.add("lap:" + word)
+    for ch in _GUARD_NEGATIONS:
+        if ch in q:
+            sig.add("neg:" + ch)
+    for word in _GUARD_UNITS:
+        if word in q:
+            sig.add("unit:" + word)
+    for match in _GUARD_SECTOR_RE.finditer(q):
+        sig.add("sector:" + match.group(1))
+    for match in _GUARD_NUM_RE.finditer(q):
+        sig.add("num:" + match.group(0))
+    return frozenset(sig)
+
 
 class LearnError(RuntimeError):
     pass
@@ -52,23 +94,45 @@ def _similar(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-def _flatten_values(ctx: dict) -> dict[str, float]:
-    """把上下文展平成 {字段名: 数值}，供模板求值。只收数值。"""
-    out: dict[str, float] = {}
+def _flatten_values(ctx: dict) -> dict[str, float | str]:
+    """把上下文展平成 {字段名: 值}，供模板求值。
 
-    def walk(node):
+    审计 A19：
+      · 数组里的对象叶子（如 segments.best_loss[].delta_s）原先被整个丢掉，
+        改成递归 dict/list；
+      · 白名单里的口语字符串（``*_spoken``）原先没有通路，改成显式允许——
+        只认名字以 ``_spoken`` 结尾的字段，其它字符串（flags 之类）不参与填值；
+      · 同一个叶子出现多个不同值（例如 best_loss 有两段的 delta_s）视为歧义，
+        整份模板放弃，而不是随便挑第一个。
+    """
+    values: dict[str, float | str] = {}
+    ambiguous: set[str] = set()
+
+    def put(key: str, value: float | str) -> None:
+        if key in values:
+            if values[key] != value:
+                ambiguous.add(key)
+            return
+        values[key] = value
+
+    def walk(node, key: str | None = None) -> None:
         if isinstance(node, dict):
-            for key, value in node.items():
-                if isinstance(value, dict):
-                    walk(value)
-                elif isinstance(value, (int, float)) and not isinstance(value, bool):
-                    out.setdefault(str(key), float(value))
+            for child_key, value in node.items():
+                walk(value, str(child_key))
         elif isinstance(node, (list, tuple)):
             for value in node:
-                walk(value)
+                walk(value, key)
+        elif isinstance(node, bool) or node is None:
+            return
+        elif isinstance(node, (int, float)) and key:
+            put(key, float(node))
+        elif isinstance(node, str) and key and key.endswith("_spoken"):
+            put(key, node)
 
     walk(ctx)
-    return out
+    for key in ambiguous:
+        values.pop(key, None)
+    return values
 
 
 def validate_template(template: dict) -> str | None:
@@ -120,6 +184,9 @@ def validate_template(template: dict) -> str | None:
             if field and not field.replace("-", "").replace(".", "").isdigit():
                 if field not in params:
                     return f"第 {i} 条规则引用了 params 之外的字段：{field}"
+                # A19：口语字符串字段只能整段填进 say，不能拿来做大小比较。
+                if field.endswith("_spoken"):
+                    return f"第 {i} 条规则的 when 不能引用口语字符串字段：{field}"
 
     if not has_fallback:
         return "缺少 when 为 true 的兜底分支"
@@ -198,10 +265,17 @@ def fill_template(template: dict, ctx: dict) -> str | None:
             return None
         try:
             return _PLACEHOLDER_RE.sub(
-                lambda m: _format_number(values[m.group(1)]), say)
+                lambda m: _format_value(values[m.group(1)]), say)
         except (KeyError, ValueError):
             return None
     return None
+
+
+def _format_value(value: float | str) -> str:
+    """口语字符串原样使用；数值走 `_format_number`。"""
+    if isinstance(value, str):
+        return value
+    return _format_number(value)
 
 
 def _format_number(value: float) -> str:
@@ -249,22 +323,46 @@ class LearnStore:
         path.write_text(text + ("\n" if text else ""), encoding="utf-8")
 
     # ------------------------------------------------------------------ 写入
+    @staticmethod
+    def _clean_review_id(value) -> str | None:
+        """只接受非空字符串；其余一律当「没有来源记录」。"""
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                return value
+        return None
+
+    def _find_by_review_id(self, path: pathlib.Path,
+                           review_id: str) -> dict | None:
+        for row in self._read(path):
+            if row.get("review_id") == review_id:
+                return row
+        return None
+
     def add_knowledge(self, question: str, answer: str,
-                      clip_path: str | None = None) -> dict:
+                      clip_path: str | None = None,
+                      review_id: str | None = None) -> dict:
         rows = self._read(self._knowledge_path)
         entry = {"id": uuid.uuid4().hex[:12], "q": question, "a": answer,
                  "clip": clip_path, "ok": 0, "err": 0, "disabled": False}
+        review_id = self._clean_review_id(review_id)
+        if review_id is not None:
+            entry["review_id"] = review_id
         rows.append(entry)
         self._write(self._knowledge_path, rows)
         return entry
 
-    def add_template(self, question: str, template: dict) -> dict:
+    def add_template(self, question: str, template: dict,
+                     review_id: str | None = None) -> dict:
         reason = validate_template(template)
         if reason is not None:
             raise LearnError(reason)
         rows = self._read(self._templates_path)
         entry = {"id": uuid.uuid4().hex[:12], "q": question,
                  "template": template, "ok": 0, "err": 0, "disabled": False}
+        review_id = self._clean_review_id(review_id)
+        if review_id is not None:
+            entry["review_id"] = review_id
         rows.append(entry)
         self._write(self._templates_path, rows)
         return entry
@@ -274,11 +372,26 @@ class LearnStore:
 
         动态型**必须**带合法模板：没有模板的动态回答只在那刻成立，
         存下来下次就是播报过期数值。
+
+        审计 A09：记录来源 history 的 ``review_id``。以前复盘「确认」时生成的新
+        条目 id 与 history 里的 review_id 不同，之后标错永远找不到条目——
+        现在同一条反馈再次确认是幂等的，标错则经 review_id 命中真正条目。
         """
         question = (record or {}).get("question") or ""
         answer = (record or {}).get("answer") or ""
         if not question.strip():
             return "rejected"
+        review_id = self._clean_review_id((record or {}).get("review_id"))
+        # 「确认」一条本来就是学习库命中的回答时，engine 会带上源条目 id；
+        # 此时不要复制新条目，只把它当作一次成功复用（幂等）。
+        source_id = self._clean_review_id((record or {}).get("source_id"))
+        if source_id is not None:
+            for kind, path in (("template", self._templates_path),
+                               ("knowledge", self._knowledge_path)):
+                for row in self._read(path):
+                    if row.get("id") == source_id:
+                        self.mark(source_id, ok=True)
+                        return kind
         dynamic = (record or {}).get("dynamic")
         if dynamic is not None and not isinstance(dynamic, bool):
             # 说不清是不是动态的，就不能当静态知识存（审计 A05）。
@@ -289,7 +402,11 @@ class LearnStore:
                 return "rejected"
             if validate_template(template) is not None:
                 return "rejected"
-            self.add_template(question, template)
+            if (review_id is not None
+                    and self._find_by_review_id(self._templates_path,
+                                                review_id) is not None):
+                return "template"          # 同一条确认重复提交：幂等
+            self.add_template(question, template, review_id=review_id)
             return "template"
         if dynamic is None:
             # 缺这个字段时保守处理：静态知识可能依赖会过期的数值，
@@ -297,7 +414,12 @@ class LearnStore:
             return "rejected"
         if not answer.strip():
             return "rejected"
-        self.add_knowledge(question, answer, record.get("clip_path"))
+        if (review_id is not None
+                and self._find_by_review_id(self._knowledge_path,
+                                            review_id) is not None):
+            return "knowledge"             # 同一条确认重复提交：幂等
+        self.add_knowledge(question, answer, record.get("clip_path"),
+                           review_id=review_id)
         return "knowledge"
 
     # ------------------------------------------------------------------ 查询
@@ -305,15 +427,23 @@ class LearnStore:
         return [r for r in self._read(path) if not r.get("disabled")]
 
     def match(self, question: str) -> tuple[str, dict] | None:
-        """模糊匹配学习库，模板优先（模板能重算数值，比固定答案可靠）。"""
+        """模糊匹配学习库，模板优先（模板能重算数值，比固定答案可靠）。
+
+        审计 A06：字符相似度之外再加一道语义护栏——前/后车、左右轮、否定、
+        时间目标与段号必须完全一致。护栏不同或抽不出时一律不命中。
+        """
         q = normalize(question or "")
         if not q:
             return None
+        q_signature = _guard_signature(question)
         best: tuple[float, str, dict] | None = None
         for kind, path in (("template", self._templates_path),
                            ("knowledge", self._knowledge_path)):
             for row in self._live(path):
-                ratio = _similar(q, normalize(row.get("q", "")))
+                stored = row.get("q", "")
+                if _guard_signature(stored) != q_signature:
+                    continue
+                ratio = _similar(q, normalize(stored))
                 if ratio < _MATCH_RATIO:
                     continue
                 if best is None or ratio > best[0]:
@@ -323,14 +453,25 @@ class LearnStore:
         return best[1], best[2]
 
     def mark(self, entry_id: str, ok: bool) -> bool:
-        """标记一次复用结果。错两次自动禁用，正确则清零。"""
+        """标记一次复用结果。错两次自动禁用，正确则清零。
+
+        审计 A09：``entry_id`` 既可以是入库条目自己的 id，也可以是复盘
+        history 里的 ``review_id``（add_from_review 已把它记进入库条目）。
+        以前只用随机 id 比对，bad 反馈永远找不到条目；现在两种都认。
+        返回 False 表示库里没有这个 id（调用方可据此报 not_found）。
+        """
+        if not isinstance(entry_id, str) or not entry_id:
+            return False
+        hit = False
         for path in (self._templates_path, self._knowledge_path):
             rows = self._read(path)
-            hit = False
+            changed = False
             for row in rows:
-                if row.get("id") != entry_id:
+                if (row.get("id") != entry_id
+                        and row.get("review_id") != entry_id):
                     continue
                 hit = True
+                changed = True
                 if ok:
                     row["ok"] = int(row.get("ok", 0)) + 1
                     row["err"] = 0
@@ -338,10 +479,9 @@ class LearnStore:
                     row["err"] = int(row.get("err", 0)) + 1
                     if row["err"] >= _DISABLE_AFTER_ERRORS:
                         row["disabled"] = True
-            if hit:
+            if changed:
                 self._write(path, rows)
-                return True
-        return False
+        return hit
 
     def stats(self) -> dict:
         return {"templates": self._read(self._templates_path),

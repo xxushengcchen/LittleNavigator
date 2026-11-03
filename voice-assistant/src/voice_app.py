@@ -16,7 +16,36 @@ import numpy as np
 
 from . import config as cfg_mod
 from .engine import Assistant
-from .listener import PttListener
+from .listener import PttListener, input_format, resolve_device
+
+
+def _followup_after_rule(asst, rec, text: str, source: str, extra: dict | None):
+    """规则层之后接 AI 后续，与桌面 Service 的编排保持一致（审计 R07）。
+
+    CLI 以前只调用 ``asst.ask()`` 就把 ``ai_eligible`` / ``ai_disambiguate``
+    两个返回标志丢掉：all 档让出本地答案后没有任何 AI 回答，仲裁请求也
+    永远不会发出。这里补齐「低置信度先仲裁 → 再按档位转 AI」两步。
+    """
+    if not isinstance(rec, dict):
+        return rec
+    request = rec.get("ai_disambiguate")
+    if isinstance(request, dict):
+        judged = asst.judge_intent(text, request.get("candidates") or [])
+        meta = dict(extra or {})
+        meta["ai_disambiguate"] = request
+        meta["ai_disambiguate_intent"] = judged
+        if judged:
+            rec = asst.ask(text, source=source, extra=meta,
+                           forced_intent=judged)
+        else:
+            rec = asst.ask(text, source=source, extra=meta,
+                           allow_disambiguate=False, force_refuse=True)
+    if isinstance(rec, dict) and rec.get("ai_eligible"):
+        from .query_class import QueryKind
+        kind = QueryKind(rec.get("kind") or QueryKind.UNKNOWN.value)
+        rec = asst.ask_ai(text, kind, rec.get("intent"), False,
+                          source=source, extra=rec)
+    return rec
 
 
 def _close_quietly(asst) -> None:
@@ -65,18 +94,28 @@ def main(argv: list[str] | None = None) -> int:
         # 自检只开麦，不碰语音包/遥测
         sys.path.insert(0, str(cfg_mod.ROOT))
         from tools.asr_models import load as load_asr
-        from .listener import _trim_silence, check_input_device
+        from .listener import (_trim_silence, check_input_device,
+                               input_format, resolve_device)
 
-        dev_err = check_input_device(args.device)
+        # 审计 R14：自检必须跟正式 PTT 用同一个设备与原生录音格式，
+        # 不能因为没传 --device 就退回系统默认麦、也不能写死 16k/mono。
+        device = resolve_device(args.device
+                                or cfg.get("ptt", {}).get("input_device"))
+        dev_err = check_input_device(device)
         if dev_err:
             print(f"✗ {dev_err}")
             return 2
         asr = load_asr(model, num_threads=threads)
-        print(f"ASR {model} 载入 {asr.load_sec:.2f}s；录 {args.selftest:.0f} 秒…开口说话")
-        audio = sd.rec(int(args.selftest * 16000), samplerate=16000, channels=1,
-                       dtype="float32", device=args.device)
+        rate, channels = input_format(device)
+        print(f"ASR {model} 载入 {asr.load_sec:.2f}s；"
+              f"录 {args.selftest:.0f} 秒（{rate} Hz / {channels} 声道）…开口说话")
+        audio = sd.rec(int(args.selftest * rate), samplerate=rate,
+                       channels=channels, dtype="float32", device=device)
         sd.wait()
-        x = _trim_silence(np.asarray(audio).reshape(-1), 16000)
+        x = _trim_silence(np.asarray(audio).reshape(-1), rate)
+        if rate != 16000:
+            from tools.audio_io import resample
+            x = resample(x, rate, 16000)
         res = asr.transcribe(x, 16000)
         print(f"识别（{len(x) / 16000:.2f}s 有效音频，{res.decode_sec * 1000:.0f}ms）："
               f"「{res.text}」")
@@ -120,9 +159,10 @@ def _run_with_assistant(asst, cfg, args, model, threads) -> int:
         x, sr = read_wav(args.wav)
         res = asr.transcribe(x, sr)
         print(f"🎙 听到（{len(x) / sr:.2f}s，识别 {res.decode_sec * 1000:.0f}ms）：「{res.text}」")
-        asst.ask(res.text, source="voice",
-                 extra={"record_s": round(len(x) / sr, 2),
-                        "asr_ms": round(res.decode_sec * 1000), "asr_model": model})
+        extra = {"record_s": round(len(x) / sr, 2),
+                 "asr_ms": round(res.decode_sec * 1000), "asr_model": model}
+        rec = asst.ask(res.text, source="voice", extra=extra)
+        _followup_after_rule(asst, rec, res.text, "voice", extra)
         return 0
 
     from .listener import check_input_device
@@ -133,10 +173,21 @@ def _run_with_assistant(asst, cfg, args, model, threads) -> int:
         return 2
 
     def on_result(text: str, meta: dict) -> None:
-        asst.ask(text, source="voice", extra=meta)
+        rec = asst.ask(text, source="voice", extra=meta)
+        _followup_after_rule(asst, rec, text, "voice", meta)
         print()
 
-    listener = PttListener(asr, cfg, on_result, is_busy=lambda: asst.busy)
+    def on_analysis(text: str, meta: dict) -> None:
+        """分析键：跳过规则层直接走 AI（与桌面 Service 一致）。"""
+        from .query_class import classify
+        kind = classify(text, None)
+        asst.ask_ai(text, kind, None, False, source="analysis", extra=meta)
+
+    ai_key = (cfg.get("ai", {}) or {}).get("analysis_key") or {}
+    analysis_vk = ai_key.get("vk") if isinstance(ai_key, dict) else None
+    listener = PttListener(asr, cfg, on_result, is_busy=lambda: asst.busy,
+                           analysis_vk=analysis_vk,
+                           on_analysis_result=on_analysis)
     try:
         listener.start()
         while True:

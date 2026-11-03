@@ -769,7 +769,11 @@ class Service:
             record = (self.asst.learn_candidate(entry_id) or {})
             kind = store.add_from_review(record)
             return {"ok": True, "stored_as": kind}
-        store.mark(entry_id, ok=(verdict != "bad"))
+        # 审计 A09：mark() 没命中也会返回 False，旧代码却照样回 ok，
+        # 界面显示「已标记」，学习库里什么都没变，自动禁用形同虚设。
+        if not store.mark(entry_id, ok=(verdict != "bad")):
+            return {"ok": False,
+                    "error": "这条回答不在学习库里：只有从学习库命中的回答才能标记"}
         return {"ok": True}
 
     def ai_clear_learn(self) -> dict:
@@ -990,6 +994,22 @@ class Service:
             if "ai" in patch or "car_control" in patch:
                 switched = self.asst.reload_switchables(self.cfg)
 
+        # 审计 R04：分析键只在监听器构造时快照一次，运行中改绑/解除
+        # 以前必须手动重启监听。listener 已有热更新入口，这里接上；
+        # 保存失败/监听未运行都不影响配置本身已落盘。
+        analysis_key_error = None
+        if "ai" in patch and isinstance(patch.get("ai"), dict) \
+                and "analysis_key" in patch["ai"]:
+            listener = self.listener
+            if listener is not None and getattr(listener, "running", False):
+                try:
+                    value = ((patch["ai"].get("analysis_key") or {}).get("vk")
+                             if isinstance(patch["ai"].get("analysis_key"), dict)
+                             else None)
+                    listener.apply_analysis_key(value)
+                except Exception as exc:      # noqa: BLE001
+                    analysis_key_error = f"分析键热更新失败：{exc}"[:200]
+
         needs_restart = []
         if "asr" in patch:
             self.asr = None
@@ -997,8 +1017,11 @@ class Service:
         if result and result.get("error"):
             return {"ok": True, "saved": str(local), "error": result["error"],
                     "restart_hint": [], "applied": switched}
-        return {"ok": True, "saved": str(local), "restart_hint": needs_restart,
-                "applied": switched}
+        result = {"ok": True, "saved": str(local), "restart_hint": needs_restart,
+                  "applied": switched}
+        if analysis_key_error:
+            result["error"] = analysis_key_error
+        return result
 
 
 # ---------------------------------------------------------------------- HTTP

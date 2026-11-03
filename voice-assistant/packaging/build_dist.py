@@ -22,11 +22,79 @@ import subprocess
 import sys
 import zipfile
 
+# 中文警告/错误统一 UTF-8 输出，避免 Windows 管道下 GBK 解码成乱码。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 VA = pathlib.Path(__file__).resolve().parents[1]        # voice-assistant/
 PROJ = VA.parent                                        # iRacing spotter/
 PKG = VA / "packaging"
 DIST = PROJ / "build" / "dist"
 APP_NAME = "小小领航员"
+
+
+class ReleaseConfigError(ValueError):
+    """发行配置里发现不该随包发布的内容（内联密钥 / 危险开关）。"""
+
+
+# 允许出现在“密钥类字段”上的安全占位值（空、null、环境变量引用）。
+_SAFE_SECRET_VALUES = frozenset({"", '""', "''", "null", "~", "None"})
+_FIELD_LINE = re.compile(r"(?s)^(\s*)([A-Za-z0-9_.-]+)\s*:\s*(.*?)\s*$")
+# 只有“字段名本身就是密钥”才拦：max_tokens / token_budget 这类计数不算。
+_SECRET_SUFFIXES = ("api_key", "apikey", "secret", "token", "password", "passwd")
+
+
+def _is_secret_field(name: str) -> bool:
+    low = name.lower().replace("-", "_").replace(".", "_")
+    if low == "analysis_key":
+        return False
+    return low in _SECRET_SUFFIXES or any(low.endswith("_" + s) for s in _SECRET_SUFFIXES)
+_DANGEROUS_SECTIONS = frozenset({"ai", "car_control"})
+
+
+def sanitize_release_config(text: str) -> tuple[str, list[str]]:
+    """发行前把工作区 config.yaml 收敛成安全配置。
+
+    - 内联密钥（api_key/token/secret/password 等非空字面值）直接失败：这类
+      值必须走 config.local.yaml 或环境变量，不能随安装包分发。
+    - ai / car_control 的 enabled 危险开关强制改 false（构建仍继续，但会打印
+      警告），避免维护者临时改配置后误发“默认开启改车/AI”的包。
+    """
+    out: list[str] = []
+    warnings: list[str] = []
+    leaked: list[str] = []
+    section = ""
+    child_indent = None   # 只处理该顶层段落的直接子项，不误伤 ack/disambiguate 等嵌套开关
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not line[:1].isspace() and not stripped.startswith("#"):
+            section = stripped.split(":", 1)[0].strip() if ":" in stripped else ""
+            child_indent = None
+        elif stripped and not stripped.startswith("#") and section:
+            indent = len(line) - len(line.lstrip(" 	"))
+            if child_indent is None:
+                child_indent = indent
+        m = _FIELD_LINE.match(line)
+        if m and _is_secret_field(m.group(2)):
+            value = re.sub(r"\s+#.*$", "", m.group(3)).strip()
+            if value not in _SAFE_SECRET_VALUES and not value.startswith(("$", "${", "{{")):
+                leaked.append(m.group(2))
+        if section in _DANGEROUS_SECTIONS:
+            sw = re.match(r"^(\s*)enabled:\s*(true|True)\s*(#.*)?$", line)
+            if sw and child_indent is not None and len(sw.group(1)) == child_indent:
+                comment = f"  {sw.group(3).strip()}" if sw.group(3) else ""
+                out.append(f"{sw.group(1)}enabled: false{comment}")
+                warnings.append(f"{section}.enabled 已强制关闭（发行配置不允许默认开启）")
+                continue
+        out.append(line)
+    if leaked:
+        raise ReleaseConfigError(
+            "发行配置含未清空的内联密钥字段：" + "、".join(sorted(set(leaked)))
+            + "；请改用 config.local.yaml 或环境变量，不要随安装包分发")
+    return "\n".join(out), warnings
 
 
 def run(cmd: list[str], **kw) -> None:
@@ -35,8 +103,11 @@ def run(cmd: list[str], **kw) -> None:
 
 
 def make_config() -> str:
-    """把工作区 config.yaml 变成发行版：语音包/素材路径改成相对的。"""
+    """把工作区 config.yaml 变成发行版：相对路径 + 安全闸门。"""
     text = (VA / "config.yaml").read_text(encoding="utf-8")
+    text, warnings = sanitize_release_config(text)
+    for warning in warnings:
+        print(f"警告：{warning}", file=sys.stderr)
     text = re.sub(r"(?m)^(\s*dir:).*$", r'\1 "build/pack/Mandarin-CNTW-Xusheng_Chen"',
                   text, count=1)
     text = re.sub(r"(?m)^(\s*extra_dir:).*$", r'\1 "build/assistant-extra"',
@@ -55,7 +126,7 @@ def readme() -> str:
 =========================================================
 
 一、启动与第一次使用
-双击「小小领航员.exe」打开原生窗口。右上角 × 退出。
+双击「小小领航员.exe」打开原生窗口。关闭窗口时可选择最小化到托盘继续后台运行，或直接退出。
 在「语音输入」选麦克风，采集键盘或方向盘 PTT 按钮。
 开启监听，按住按钮说「油还够吗」，松开后等待回答。
 规则问答与本地语音识别无需联网或 API Key。
@@ -67,7 +138,7 @@ def readme() -> str:
 诊断统计      实际命中路径、首包延迟分布与未命中问法
 语音输入      模型、麦克风、PTT 绑定与误触阈值（自动保存）
 语音播报      音量、变体冷却与试听（自动保存）
-音频路由      耳机输出、播报时压低游戏音量（自动保存）
+音频路由      耳机输出（自动保存）
 AI 工程师     模型、TTS、专用分析键、赛后复盘（每区单独保存）
 进站控制      允许语音改车、执行回读与只读服务示意图（单独保存）
 识别设置      严格语音模式与识别边界（自动保存）
@@ -136,8 +207,15 @@ def main() -> int:
     ap.add_argument("--no-assets", action="store_true", help="不铺模型/语音包（小程序本体）")
     ap.add_argument("--zip", action="store_true", help="最后压成 zip")
     ap.add_argument("--clean", action="store_true", help="先删旧产物")
+    ap.add_argument("--check-config-only", action="store_true",
+                    help="只校验发行配置安全闸门（内联密钥/危险开关），不构建")
     ap.add_argument("--dist-root", type=pathlib.Path, default=DIST, help="独立发行目录，必须位于本项目 build 目录内")
     args = ap.parse_args()
+
+    if args.check_config_only:
+        make_config()
+        print("配置检查通过：无内联密钥，ai/car_control 危险开关已强制关闭。")
+        return 0
 
     dist = args.dist_root.resolve()
     if not dist.is_relative_to((PROJ / 'build').resolve()) or dist == (PROJ / 'build').resolve():

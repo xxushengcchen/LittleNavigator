@@ -229,6 +229,29 @@ def _rubber(s):
     if 'high' in low:return state('RUBBER_HIGH',f'橡胶状态 {v}')
     return state('RUBBER_UNKNOWN',f'橡胶状态 {v} 未识别')
 
+def _class_leader_index(s):
+    """玩家所在组别的组别第一（索引）；没有可用数据时 None。
+
+    审计 T02：多组别同场时每组都有自己的「组别第一」。旧代码取第一个
+    class_position==1 的车，可能选到别的组，于是把别人的差距当成自己的。
+    有组别数据时必须同组；完全没有组别数据时保持旧行为（不额外收紧）。
+    """
+    if not s.car_class_positions or s.car_idx is None:
+        return None
+    classes = s.car_classes or []
+    player_known = 0 <= s.car_idx < len(classes)
+    player_class = classes[s.car_idx] if player_known else None
+
+    def same_class(i):
+        if not player_known:
+            return True
+        return i < len(classes) and classes[i] == player_class
+
+    return next((i for i, p in enumerate(s.car_class_positions)
+                 if p == 1 and i != s.car_idx and i not in (s.pace_car_indices or [])
+                 and same_class(i)), None)
+
+
 def answer(intent,s,q,segments=None,raw_query=None):
     if intent=='query_sector_loss':
         from .segment_rules import is_full_split
@@ -291,9 +314,7 @@ def answer(intent,s,q,segments=None,raw_query=None):
         m=_re.search(r'第\s*([0-9]+|[一二三四五六七八九十]+)\s*名',q)
         head=None;idx=None;n=None
         if any(w in q for w in ('组别第一','同组第一','分组第一','組別第一','同組第一')):
-            if s.car_class_positions and s.car_idx is not None:
-                idx=next((i for i,p in enumerate(s.car_class_positions)
-                          if p==1 and i!=s.car_idx and i not in s.pace_car_indices),None)
+            idx=_class_leader_index(s)
             head='AST2_GAP_TO_CLASS_LEADER_LEAD'
         elif any(w in q for w in ('第一名','全场第一','領先','领先')):
             if s.car_positions and s.car_idx is not None:
