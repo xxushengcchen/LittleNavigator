@@ -45,12 +45,12 @@
       "priority": "P2",
       "title": "本地HTTP无读取超时及连接线程上限",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "HTTP 服务连接数封顶（默认 32），满员直接关连接不派生线程；每个连接设空闲超时，线程收尾含异常都归还槽位。"
     },
     {
       "id": "S05",
@@ -81,12 +81,12 @@
       "priority": "P2",
       "title": "非法TTS超时先落盘再校验，可能让下次启动失败",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "新增 config.compose() 作为唯一合成+校验管线；保存配置先用待落盘数据合成校验，通过后才写；唯一临时文件原子替换；TTS 的 timeout_s/sample_rate/adapter 补上校验。"
     },
     {
       "id": "S08",
@@ -105,36 +105,36 @@
       "priority": "P3",
       "title": "移除环境密钥后，同进程其他配置仍继承旧密钥",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "_merge 深拷贝，环境变量密钥不再污染 DEFAULTS；清掉环境变量后下一次 load 不残留旧 Key。"
     },
     {
       "id": "S10",
       "priority": "P3",
       "title": "非ASCII token使认证异常逃出HTTP错误处理",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "凭据比较改为 UTF-8 bytes 常数时间比较；非 ASCII 请求头返回 403 而不是 500。"
     },
     {
       "id": "S11",
       "priority": "P3",
       "title": "超大JSON整数令配置校验返回500而非400",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "超大整数不再交给 math.isfinite（OverflowError→500），统一按配置错误拒绝。"
     },
     {
       "id": "S12",
@@ -201,12 +201,12 @@
       "priority": "P2",
       "title": "动态回答缺模板时降成静态知识，后续播旧遥测",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "add_from_review 只在 dynamic 明确为 false 时存静态知识；缺字段/非布尔/动态无模板一律 rejected。"
     },
     {
       "id": "A06",
@@ -225,24 +225,24 @@
       "priority": "P2",
       "title": "未展示的模板未来分支可绕过全部回答闸门",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "学习库模板输出同样过长度/数据/数字三道闸，不通过就退回模型。"
     },
     {
       "id": "A08",
       "priority": "P2",
       "title": "模板决策输入缺失时落到兜底确定性结论",
       "plan_task": 6,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "模板条件三值判断，字段缺失整份模板放弃，不再用兜底分支冒充结论。"
     },
     {
       "id": "A09",
@@ -321,48 +321,48 @@
       "priority": "P2",
       "title": "模型字段类型异常跳过正常降级和本地兜底",
       "plan_task": 9,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "模型返回的 answer/refused/data_used/dynamic/template/confidence 先做类型校验，类型不对走安全失败，不崩溃。"
     },
     {
       "id": "A16",
       "priority": "P2",
       "title": "每分钟请求限额配置没有任何生产门禁",
       "plan_task": 9,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "新增进程内 60 秒滑窗限流闸，真正外发前占额度；超限不发请求，0 表示禁止自动外发。"
     },
     {
       "id": "A17",
       "priority": "P2",
       "title": "--config隔离配置却共享运行目录的学习库",
       "plan_task": 3,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "显式 --config 时学习库跟随该配置目录，避免不同配置共享并污染学习数据。"
     },
     {
       "id": "A18",
       "priority": "P3",
       "title": "1500-token输入预算只裁上下文，不含问题和系统提示",
       "plan_task": 9,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "system 提示词与问题文本计入 1500 输入预算；超预算直接拒答且不发出请求，不截断问题。"
     },
     {
       "id": "A19",
@@ -381,12 +381,12 @@
       "priority": "P2",
       "title": "SDK燃油质量流量被当作体积流量播报和比较",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "每小时燃油是质量流量，不再当升/小时播报，也不与升/圈相减；这类问题明确拒答，每圈消耗/剩余/续航仍可用。"
     },
     {
       "id": "T02",
@@ -405,12 +405,12 @@
       "priority": "P2",
       "title": "结果页零基ClassPosition直接回填一基数组",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "结果页零基 ClassPosition 转一基后回填，负值/缺失不写；旧 fixture 改为真实零基。"
     },
     {
       "id": "T04",
@@ -429,12 +429,12 @@
       "priority": "P2",
       "title": "中途进出维修区的圈记录仍标记非进站圈",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "本圈任意一帧在维修区/维修位即把整圈记为进站圈，AI 圈史不再混入 PIT 耗时。"
     },
     {
       "id": "T06",
@@ -465,12 +465,12 @@
       "priority": "P2",
       "title": "新SessionNum未匹配时使用上一session成绩",
       "plan_task": 4,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "SessionNum 精确匹配不到时不再回退到最后一场，名次/圈速/胶量保持未知。"
     },
     {
       "id": "T09",
@@ -561,12 +561,12 @@
       "priority": "P2",
       "title": "PortAudio缺失时winsound降级被顶层导入阻断",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "sounddevice 改为可选依赖，listener/engine 在缺 PortAudio 时可导入，录音时给结构化错误，winsound 回退保持可用。"
     },
     {
       "id": "R07",
@@ -621,12 +621,12 @@
       "priority": "P3",
       "title": "Windows语音包根相对／驱动器相对路径可越出包目录",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "新增 _inside_pack：拒绝驱动器/根/UNC/设备命名空间与 .. 段，resolve 后再做 is_relative_to 包含性校验；加载与 path_of 共用，另有真实 junction 回归。"
     },
     {
       "id": "R12",
@@ -645,12 +645,12 @@
       "priority": "P3",
       "title": "CLI成功早退或初始化失败未关闭Assistant",
       "plan_task": 8,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "console/voice_app 构造后的所有路径 try/finally 关闭 Assistant，恰好一次；清理失败不掩盖原始异常。"
     },
     {
       "id": "R14",
@@ -705,12 +705,12 @@
       "priority": "P2",
       "title": "切全局AI档位会删除尚未保存的模型和密钥草稿",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "切全局档位前后抓取并恢复未保存的地址/模型/密钥草稿；只改 mode。"
     },
     {
       "id": "F04",
@@ -741,12 +741,12 @@
       "priority": "P2",
       "title": "旧模型列表响应可污染已切换的服务商下拉",
       "plan_task": 10,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "模型列表请求带代次与接口地址校验，服务商切换后旧响应丢弃并提示重拉。"
     },
     {
       "id": "F07",
@@ -969,12 +969,12 @@
       "priority": "P3",
       "title": "文档推荐的短语自检在Windows默认GBK下崩溃",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "check_library 保留调用方编码，仅把 stdout/stderr 的 errors 设为 replace；ASCII/GBK 严格终端均可跑完并退出 0。"
     },
     {
       "id": "Q06",
@@ -1113,36 +1113,36 @@
       "priority": "P3",
       "title": "干净克隆的方向盘自检最后写报告时缺父目录",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "wheel_selftest 写报告前 mkdir(parents=True, exist_ok=True)，干净克隆不再缺父目录。"
     },
     {
       "id": "Q18",
       "priority": "P3",
       "title": "麦克风纯探测--probe仍强制要求无用WAV参数",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "mic_loop_test 的 WAV 改为仅 --probe 时可省略；非 probe 仍 argparse 退出 2，诊断文本改为 ASCII，严格 ASCII stderr 下不再 UnicodeEncodeError。"
     },
     {
       "id": "Q19",
       "priority": "P3",
       "title": "ASR噪声基准使用随机化hash，跨运行不复现",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "fixed-in-v1.6.2",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "bench_asr 噪声种子改为 sha256(UTF-8 文件名) 前 32 bit 掩 31 bit，JSONL 记录实际 noise_seed，summary 记录算法；跨 PYTHONHASHSEED 音频摘要一致。"
     },
     {
       "id": "Q20",
@@ -1201,14 +1201,17 @@
     "Q22 source evidence and isolated installation lifecycle results remain explicit release gates."
   ],
   "v1_6_1_scope": {
-    "fixed": 19,
-    "deferred": 80,
-    "note": "本次交付只宣称完成下列已修复项；其余保留为待办，不以「99 项全部修复」对外表述。",
+    "released_as": "v1.6.1",
+    "fixed_in_v1_6_1": 19,
+    "fixed_after_v1_6_1_not_yet_released": 25,
+    "deferred": 55,
+    "total_fixed": 44,
+    "note": "v1.6.1 已发布且只包含其中的 19 项；后续修复在 fix/v1.6.2 分支上，未发布前不计入 v1.6.1，也不移动已发布 tag。",
     "verification": {
-      "backend": "1150 passed, 1 skipped, 2493 subtests（voice-assistant/tests，隔离 TEMP 与数据目录）",
+      "backend": "1238 passed, 1 skipped, 2510 subtests（fix/v1.6.2，隔离 TEMP 与数据目录）",
       "browser": "16 项既有界面回归通过（模拟遥测、危险写接口全部 mock）",
-      "links": "123 个本地链接/锚点，21 份文档通过",
-      "packaging": "PyInstaller 目录构建通过，安装包构建见 build/releases"
+      "links": "123 个本地链接/锚点、21 份文档通过",
+      "packaging": "v1.6.1 安装包已构建并发布，SHA256 与本地一致"
     }
   }
 }

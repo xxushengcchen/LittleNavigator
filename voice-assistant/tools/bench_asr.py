@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import statistics as st
@@ -102,11 +103,15 @@ def main() -> int:
 
     # 预读所有音频（含噪声增强各一版），三个模型复用，避免重复 IO/噪声计算
     cache: dict[tuple[str, str], np.ndarray] = {}
+    noise_seeds: dict[tuple[str, str], int] = {}
     for r in manifest:
         x, sr = read_wav(AUDIO_DIR / r["file"])
         assert sr == SAMPLE_RATE
         for cond, snr in NOISE_CONDS:
-            seed = abs(hash(r["file"])) % (2**31) if cond != "clean" else 0
+            # Python hash() changes with each process; bind noise to a stable filename digest.
+            seed = (int.from_bytes(hashlib.sha256(r["file"].encode("utf-8")).digest()[:4],
+                                   "big") & 0x7fffffff) if cond != "clean" else 0
+            noise_seeds[(r["file"], cond)] = seed
             cache[(r["file"], cond)] = augment(x, snr, seed)
 
     matcher = PhraseMatcher()
@@ -129,7 +134,7 @@ def main() -> int:
                 records.append({
                     "file": r["file"], "phrase": r["phrase"], "intent": r["intent"],
                     "neg": r["neg"], "voice": r["voice"], "rate": r["rate"],
-                    "noise": cond, "text": res.text,
+                    "noise": cond, "noise_seed": noise_seeds[(r["file"], cond)], "text": res.text,
                     "ranked": sr_rank[:4],
                     "decode_sec": res.decode_sec, "total_sec": total,
                     "audio_sec": res.audio_sec, "chunks": res.chunks,
@@ -166,6 +171,7 @@ def main() -> int:
             "label": REGISTRY[name].label,
             "load_sec": asr.load_sec,
             "n_records": len(records),
+            "noise_seed_algorithm": "sha256-utf8-filename-first32-mask31",
             "best": best,
             "strict": strict,
             "latency": {

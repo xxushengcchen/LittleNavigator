@@ -79,7 +79,6 @@ class FeedbackTests(unittest.TestCase):
         "后车是第几名": "AST2_BEHIND_POSITION_LEAD",
         "我离第三名还有多远": "AST2_GAP_TO_POSITION_LEAD",
         "我离组别第一多远": "AST2_GAP_TO_CLASS_LEADER_LEAD",
-        "我现在的实际油耗和平均油耗差多少": "AST2_FUEL_VS_AVG_MORE_LEAD",
         "现在赛道使用率是多少": "AST2_RUBBER_MODERATE",
     }
 

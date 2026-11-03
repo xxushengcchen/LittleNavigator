@@ -14,6 +14,20 @@ import sys
 
 from . import config as cfg_mod
 from .engine import Assistant
+def _close_quietly(asst) -> None:
+    """关闭引擎资源；清理失败只提示，不改变退出码、也不掩盖原始异常。
+
+    审计 R13：以前只有正常走完的路径会 close()，--once/--wav/初始化后
+    出错等早退路径会把监听线程与日志句柄留在进程里。
+    """
+    if asst is None:
+        return
+    try:
+        asst.close()
+    except Exception as exc:          # noqa: BLE001
+        print(f"⚠ 关闭资源时出错（不影响退出）：{exc}", file=sys.stderr)
+
+
 
 
 def _fmt_snapshot(s) -> str:
@@ -54,51 +68,52 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✗ 语音包读不到：{exc}")
         print("  用 --pack 指到 build/pack/Mandarin-CNTW-Xusheng_Chen 也可以")
         return 2
-    for line in asst.info_lines():
-        print(line)
-    if asst.tel_warn:
-        print(f"⚠ {asst.tel_warn}")
-    print(f"遥测 provider = {cfg['telemetry']['provider']}"
-          f"{'（强制 sim）' if args.sim else ''}  →  {type(asst.tel).__name__}")
-    print(f"播放后端 = {asst.player.backend}")
-    print("输入问题后回车；:snap 看快照，:pack 看语音包，:q 退出")
-    print()
+    try:
+        for line in asst.info_lines():
+            print(line)
+        if asst.tel_warn:
+            print(f"⚠ {asst.tel_warn}")
+        print(f"遥测 provider = {cfg['telemetry']['provider']}"
+              f"{'（强制 sim）' if args.sim else ''}  →  {type(asst.tel).__name__}")
+        print(f"播放后端 = {asst.player.backend}")
+        print("输入问题后回车；:snap 看快照，:pack 看语音包，:q 退出")
+        print()
 
-    if args.once:
-        print(f"> {args.once}")
-        asst.ask(args.once)
-        asst.close()
-        return 0
+        if args.once:
+            print(f"> {args.once}")
+            asst.ask(args.once)
+            return 0
 
-    while True:
-        try:
-            line = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not line:
-            continue
-        if line in (":q", ":quit", "exit", "quit"):
-            break
-        if line == ":snap":
-            print(_fmt_snapshot(asst.snapshot()))
-            continue
-        if line == ":pack":
-            print(f"  {asst.stats}")
-            continue
-        if line.startswith(":msgid"):
-            parts = line.split()
-            if len(parts) < 2:
-                print("  用法：:msgid SPCC_YELOUT")
+        while True:
+            try:
+                line = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not line:
                 continue
-            if not asst.play_msgid(parts[1]):
-                print(f"  ✗ 语音包里没有 {parts[1]}")
-            continue
-        asst.ask(line)
+            if line in (":q", ":quit", "exit", "quit"):
+                break
+            if line == ":snap":
+                print(_fmt_snapshot(asst.snapshot()))
+                continue
+            if line == ":pack":
+                print(f"  {asst.stats}")
+                continue
+            if line.startswith(":msgid"):
+                parts = line.split()
+                if len(parts) < 2:
+                    print("  用法：:msgid SPCC_YELOUT")
+                    continue
+                if not asst.play_msgid(parts[1]):
+                    print(f"  ✗ 语音包里没有 {parts[1]}")
+                continue
+            asst.ask(line)
 
-    print(f"结束。本次问答 {len(asst.history)} 条，日志写在 {asst.qa_log}")
-    asst.close()
-    return 0
+        print(f"结束。本次问答 {len(asst.history)} 条，日志写在 {asst.qa_log}")
+        return 0
+    finally:
+        _close_quietly(asst)
 
 
 if __name__ == "__main__":

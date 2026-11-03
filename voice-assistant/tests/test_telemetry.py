@@ -296,9 +296,9 @@ class SessionResultsFallbackTests(unittest.TestCase):
             "SessionInfo": {"Sessions": [{
                 "SessionNum": 0,
                 "ResultsPositions": [
-                    {"CarIdx": 2, "Position": 1, "ClassPosition": 1,
+                    {"CarIdx": 2, "Position": 1, "ClassPosition": 0,
                      "FastestTime": 80.0, "LastTime": 81.0, "LapsComplete": 5},
-                    {"CarIdx": 1, "Position": 2, "ClassPosition": 2,
+                    {"CarIdx": 1, "Position": 2, "ClassPosition": 1,
                      "FastestTime": 82.0, "LastTime": 83.0, "LapsComplete": 5},
                 ],
             }]},
@@ -311,6 +311,9 @@ class SessionResultsFallbackTests(unittest.TestCase):
         self.assertEqual(s.car_best_laps[2], 80.0)
         self.assertEqual(s.car_last_laps[1], 83.0)
         self.assertEqual(s.car_completed_laps[2], 5)
+        # 审计 T03：结果页 ClassPosition 是零基，入库要 +1
+        self.assertEqual(s.car_class_positions[2], 1)
+        self.assertEqual(s.car_class_positions[1], 2)
 
     def test_does_not_override_valid_sdk_positions(self):
         tel, fake = make_irsdk({

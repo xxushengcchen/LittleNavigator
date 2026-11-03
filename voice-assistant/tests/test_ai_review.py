@@ -86,7 +86,7 @@ class PipelineDynamicFlagTests(unittest.TestCase):
         self.assertTrue(r.dynamic)
         self.assertEqual(r.template, GOOD_TEMPLATE)
 
-    def test_dynamic_without_template_downgrades_to_static(self):
+    def test_preserves_dynamic_without_template(self):
         from src.telemetry import Snapshot
         from src.query_class import QueryKind
         snap = Snapshot(connected=True)
@@ -96,7 +96,8 @@ class PipelineDynamicFlagTests(unittest.TestCase):
         with unittest.mock.patch.object(p.client, "ask", return_value=reply):
             r = p.handle("x", snap, QueryKind.ANALYSIS, [])
         self.assertTrue(r.ok)
-        self.assertFalse(r.dynamic)      # 声明了但没模板 → 不当动态型
+        # A05：缺模板只能阻止缓存，不能把动态答案改成静态知识。
+        self.assertTrue(r.dynamic)
 
     def test_static_stays_static(self):
         from src.telemetry import Snapshot

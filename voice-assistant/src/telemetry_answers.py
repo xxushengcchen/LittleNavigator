@@ -324,18 +324,12 @@ def answer(intent,s,q,segments=None,raw_query=None):
             return timed('FUEL_TIME',s.laps_of_fuel*s.lap_last)
         if '油耗' in q:
             if any(w in q for w in ('实际','即时','实时','现在的油耗','当前的油耗')):
-                hour=s.fuel_use_per_hour
-                if not valid(hour,0.1,500):return refuse('没有读到当前油耗')
-                if any(w in q for w in ('差','差多少','差别')):
-                    if not valid(s.fuel_per_lap,0.01,100) or not valid(s.lap_last,.001,36000):
-                        return refuse('要比较每圈油耗，需要先有一个完整圈的圈速与油耗')
-                    now=hour*s.lap_last/3600
-                    delta=now-s.fuel_per_lap
-                    lead='AST2_FUEL_VS_AVG_MORE_LEAD' if delta>=0 else 'AST2_FUEL_VS_AVG_LESS_LEAD'
-                    return Decision([lead,*numbers.decimal_to_msgids(abs(delta),2),'AST2_UNIT_LITRE'],
-                                    f'本圈即时 {now:.2f} 对平均 {s.fuel_per_lap:.2f} L/圈')
-                return Decision(['AST2_FUEL_USE_HOUR_LEAD',*numbers.decimal_to_msgids(hour,1),
-                                 'AST2_UNIT_LITRE_PER_HOUR'],f'即时油耗 {hour:.1f} L/h')
+                # 审计 T01：iRacing 的 FuelUsePerHour 是**每小时燃油质量流量**，
+                # 不是「升/小时」。以前把它当 L/h 播报，还拿它乘圈速去和
+                # 「升/圈」比较——单位不一致，算出来的差值没有意义。
+                # 没有可信的密度就不能换算成体积，所以这一版如实拒答；
+                # 仍在可靠范围内的「每圈消耗升数」由下面那行走 fuel_per_lap。
+                return refuse('即时油耗是燃油质量流量，不能和升/圈直接比较；可以问「每圈油耗多少」')
             return numeric('FUEL_USE',s.fuel_per_lap,'LITRE',digits=2,hi=100)
         if any(w in q for w in ('几圈','多少圈','跑多久','撑几','再撑','够跑')) and not '跑完' in q:
             result=numeric('FUEL_LAPS',s.laps_of_fuel,hi=999)

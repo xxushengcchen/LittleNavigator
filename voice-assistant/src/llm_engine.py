@@ -137,6 +137,49 @@ class AdaptiveBreaker:
         self._consecutive_timeouts = self.threshold - 1
 
 
+def system_prompt() -> str:
+    """系统提示词。抽成函数是为了让输入预算把它的开销算进去。"""
+    return (
+            "你是 iRacing 比赛工程师。只能基于用户提供的遥测数据回答。"
+            "数据里没有的，明确说「现在读不到」，绝不推测。"
+            "回答简短口语化，不超过 60 字，不解释推理过程，直接给结论。"
+            "不要提供调校或操作指令，不要解释处罚原因。"
+            "赛段/分段问题只引用 segments 上下文里的段号与段用时差，"
+            "只陈述观察到的差值，不归因刹车点、走线、轮胎或车辆设置，不预测下一圈。"
+            "数字必须原样引用上下文里给出的值，不要自己计算或四舍五入；"
+            "并且必须使用阿拉伯数字。"
+            "\n\n圈速与时长优先引用上下文里的 *_spoken 字段"
+            "（如 lap_last_spoken、lap_best_spoken、time_remain_spoken）："
+            "它已经是口语化的「分秒」说法，直接原样使用，不要自己把秒换算成分秒，"
+            "也不要改写其中的数字。只有没有对应 *_spoken 字段时，才引用原始数值字段。"
+            "\n\n若答案依赖会变化的数值（油量、圈数、胎温、差距等），"
+            "必须在 template 里给出可复用的条件模板，让下次能换新数值重算："
+            '{"params": ["字段名..."], '
+            '"rules": [{"when": "字段 >= 字段 * 1.15", "say": "含 {字段} 的句子"}, '
+            '{"when": "true", "say": "兜底句"}]}。'
+            "when 只允许『字段 比较符 数字或字段』、可选再乘一个数字，"
+            "或字符串 true；必须有 true 兜底分支；"
+            "say 里的 { } 占位符只能来自 params。"
+            "若答案不依赖任何会变化的数值（纯知识），template 给 null 并把 "
+            "dynamic 设为 false。"
+            '\n\n只输出 JSON：{"answer": "...", "confidence": 0.0-1.0, '
+            '"refused": false, "data_used": ["字段名", ...], '
+            '"dynamic": true 或 false, "template": 模板或 null}'
+        )
+
+
+def estimate_prompt_tokens(question: str) -> int:
+    """估算 system 提示与问题本身占用的 token（不含 ctx）。
+
+    审计 A18：以前只按 ctx 大小裁剪，system 提示与问题文本完全不进预算，
+    一个很长的问题仍会整条发出去。这里沿用 race_context.estimate_tokens
+    的粗估口径（中文 1 字 1 token、ASCII 4 字符 1 token），
+    只用于「发不发」的判断，不声称与供应商 tokenizer 精确一致。
+    """
+    text = (system_prompt() + chr(10) + '遥测上下文：' + chr(10) + '{}' + chr(10) + chr(10) + '问题：' + (question or ""))
+    cjk = sum(1 for ch in text if '一' <= ch <= '鿿')
+    return cjk + (len(text) - cjk) // 4 + 1
+
 class LlmClient:
     """一个可复用的客户端。线程安全：内部用锁保护单飞与取消标志。"""
 
@@ -178,33 +221,7 @@ class LlmClient:
         return base + "/chat/completions"
 
     def _payload(self, ctx: dict, question: str) -> dict:
-        system = (
-            "你是 iRacing 比赛工程师。只能基于用户提供的遥测数据回答。"
-            "数据里没有的，明确说「现在读不到」，绝不推测。"
-            "回答简短口语化，不超过 60 字，不解释推理过程，直接给结论。"
-            "不要提供调校或操作指令，不要解释处罚原因。"
-            "赛段/分段问题只引用 segments 上下文里的段号与段用时差，"
-            "只陈述观察到的差值，不归因刹车点、走线、轮胎或车辆设置，不预测下一圈。"
-            "数字必须原样引用上下文里给出的值，不要自己计算或四舍五入；"
-            "并且必须使用阿拉伯数字。"
-            "\n\n圈速与时长优先引用上下文里的 *_spoken 字段"
-            "（如 lap_last_spoken、lap_best_spoken、time_remain_spoken）："
-            "它已经是口语化的「分秒」说法，直接原样使用，不要自己把秒换算成分秒，"
-            "也不要改写其中的数字。只有没有对应 *_spoken 字段时，才引用原始数值字段。"
-            "\n\n若答案依赖会变化的数值（油量、圈数、胎温、差距等），"
-            "必须在 template 里给出可复用的条件模板，让下次能换新数值重算："
-            '{"params": ["字段名..."], '
-            '"rules": [{"when": "字段 >= 字段 * 1.15", "say": "含 {字段} 的句子"}, '
-            '{"when": "true", "say": "兜底句"}]}。'
-            "when 只允许『字段 比较符 数字或字段』、可选再乘一个数字，"
-            "或字符串 true；必须有 true 兜底分支；"
-            "say 里的 { } 占位符只能来自 params。"
-            "若答案不依赖任何会变化的数值（纯知识），template 给 null 并把 "
-            "dynamic 设为 false。"
-            '\n\n只输出 JSON：{"answer": "...", "confidence": 0.0-1.0, '
-            '"refused": false, "data_used": ["字段名", ...], '
-            '"dynamic": true 或 false, "template": 模板或 null}'
-        )
+        system = system_prompt()
         user = "遥测上下文：\n" + json.dumps(ctx, ensure_ascii=False) + \
                "\n\n问题：" + (question or "")
         body = {

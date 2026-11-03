@@ -27,7 +27,7 @@ from tools.audio_io import read_wav                  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("wav")
+    ap.add_argument("wav", nargs="?", help="环路测试音频；--probe 时可省略")
     ap.add_argument("--gain", type=float, default=0.6)
     ap.add_argument("--model", default="sense-voice")
     ap.add_argument("--mic", default=None, help="输入设备序号/名称")
@@ -53,6 +53,8 @@ def main() -> int:
                 print(f"  [{i:2d}] {d['name'][:44]:44s} ✗ {str(exc)[:60]}")
         return 0
 
+    if args.wav is None:
+        ap.error("WAV is required unless --probe is used")
     x, sr = read_wav(args.wav)
     assert sr == 16000
     mic = resolve_device(args.mic)

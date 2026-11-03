@@ -23,6 +23,29 @@ class Variant:
     dir: pathlib.Path | None = None
 
 
+def _inside_pack(root, wav: str) -> pathlib.Path:
+    """把包内相对路径解析成绝对路径；越界就抛 ValueError。
+
+    审计 R11：以前只用 ``Path(wav).is_absolute()`` 判断，但 Windows 上
+    ``C:foo.wav``（驱动器相对）、``\\foo.wav``（根相对）不是
+    absolute；UNC、设备路径与 ``..`` 也需显式拦截。这里按 Windows 语义解析，
+    并在 resolve 之后再确认仍在包目录内。
+    """
+    raw = str(wav or "").strip()
+    if not raw:
+        raise ValueError("语音文件名为空")
+    win = pathlib.PureWindowsPath(raw)
+    if win.drive or win.root:
+        raise ValueError(f"语音文件路径超出包目录：{raw}")
+    if ".." in win.parts:
+        raise ValueError(f"语音文件路径超出包目录：{raw}")
+    base = pathlib.Path(root).resolve()
+    target = (base / raw).resolve()
+    if not target.is_relative_to(base):
+        raise ValueError(f"语音文件路径超出包目录：{raw}")
+    return target
+
+
 @dataclass
 class VoicePack:
     root: pathlib.Path
@@ -55,8 +78,7 @@ class VoicePack:
             if len(parts) < 3:
                 continue
             msg_id, wav = parts[0], parts[1]
-            if pathlib.Path(wav).is_absolute() or ".." in pathlib.Path(wav).parts:
-                raise ValueError(f"语音文件路径超出包目录：{wav}")
+            _inside_pack(root, wav)
             text = ",".join(parts[2:]).strip().strip('"')
             if wav.upper() == "NULL" or text == "NULL":
                 continue
@@ -98,7 +120,7 @@ class VoicePack:
         return [v.text for v in self.variants.get(msg_id, [])]
 
     def path_of(self, variant: Variant) -> pathlib.Path:
-        return (variant.dir or self.root) / variant.file
+        return _inside_pack(variant.dir or self.root, variant.file)
 
     def stats(self) -> dict:
         counts = [len(v) for v in self.variants.values()]

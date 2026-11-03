@@ -36,7 +36,9 @@ def main():
         wait_for(lambda:not wheel.pressed(binding))
         result={'device':meta['name'],'button_count':meta['buttons'],'captured_display_button':128,
                 'capture':True,'press':True,'release':True,'background_hint':True,'physical_device_writes':False}
-        out=ROOT.parent/'audit/wheel-virtual-selftest.json';out.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+        out=ROOT.parent/'audit/wheel-virtual-selftest.json'
+        out.parent.mkdir(parents=True,exist_ok=True)
+        out.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(result,ensure_ascii=False,indent=2))
     finally:
         sdl2.SDL_LockJoysticks()

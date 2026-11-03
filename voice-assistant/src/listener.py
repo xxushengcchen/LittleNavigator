@@ -17,7 +17,41 @@ import time
 from typing import Callable
 
 import numpy as np
-import sounddevice as sd
+
+# 审计 R06：sounddevice 依赖 PortAudio DLL，缺了会让模块 import 直接失败，
+# 进而拖垮整个 engine（连 TTS 播放、文本问答都用不了）。这里改成可选依赖：
+# 真正需要录音时才按需导入，缺库给结构化错误而不是 ImportError。
+try:                                    # pragma: no cover - 环境相关
+    import sounddevice as _sd
+except Exception:                       # noqa: BLE001
+    _sd = None
+
+
+class AudioBackendError(RuntimeError):
+    """录音后端不可用（例如缺少 PortAudio）。"""
+
+
+def _sounddevice():
+    global _sd
+    if _sd is None:
+        try:
+            import sounddevice as imported
+        except Exception as exc:        # noqa: BLE001
+            raise AudioBackendError(
+                "录音后端不可用：缺少 sounddevice/PortAudio，"
+                "可以改用文本输入或安装 PortAudio") from exc
+        _sd = imported
+    return _sd
+
+
+class _SoundDeviceProxy:
+    """保持既有 ``sd.xxx`` 调用写法，但每次访问时才解析真实模块。"""
+
+    def __getattr__(self, name):
+        return getattr(_sounddevice(), name)
+
+
+sd = _SoundDeviceProxy()
 
 VK_NAMES = {
     "RCONTROL": 0xA3, "LCONTROL": 0xA2, "RSHIFT": 0xA1, "LSHIFT": 0xA0,

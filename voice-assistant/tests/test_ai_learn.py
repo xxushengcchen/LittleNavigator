@@ -94,8 +94,9 @@ class FillTests(unittest.TestCase):
         # 只给 laps_of_fuel，say 里的占位符有值 → 正常填（整数不带小数点）
         self.assertEqual(fill_template(tpl, {"derived": {"laps_of_fuel": 6.0}}),
                          "够 6 圈")
-        # 上下文里完全没有该字段 → when 无法求值，走兜底
-        self.assertEqual(fill_template(tpl, {"derived": {}}), "不确定")
+        # 审计 A08：上下文里完全没有该字段时，不能拿兜底分支的结论冒充
+        # 「条件不成立」——那等于用缺数据说出确定的话。现在整份模板放弃。
+        self.assertIsNone(fill_template(tpl, {"derived": {}}))
 
     def test_integer_formatting_has_no_decimal(self):
         tpl = {"params": ["laps_remain"],

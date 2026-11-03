@@ -29,6 +29,12 @@ NEGATIVES = [
 
 
 def main() -> int:
+    # Keep the caller's encoding, but do not let diagnostic symbols abort the audit.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--collide", type=float, default=0.80,

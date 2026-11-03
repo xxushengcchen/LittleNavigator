@@ -286,8 +286,16 @@ class DerivedTracker:
         self.segments.update(s)
         if s.fuel_level is not None and self._last_fuel is not None and s.fuel_level > self._last_fuel + 0.05:
             self._valid_lap = False
-        if s.on_pit_road:
+        # 审计 T05：进站标记以前只在开圈时取一次，中途进站再出来就被当成
+        # 干净圈，AI 圈史会把维修区行驶/PIT 停留算成节奏变化。
+        # 只要本圈任何一帧在维修区（或停在维修位/该车 OnPitRoad），整圈记进站。
+        player_in_pits = bool(
+            s.car_in_pits and s.car_idx is not None
+            and 0 <= s.car_idx < len(s.car_in_pits) and s.car_in_pits[s.car_idx])
+        if s.on_pit_road or s.in_pit_stall or player_in_pits:
             self._valid_lap = False
+            if self._lap_open is not None:
+                self._lap_crossed_pit = True
         self._last_fuel = s.fuel_level
         # 每圈油量：用「上圈开始时的油量 − 本圈开始时的油量」估
         if s.lap is not None and s.fuel_level is not None:
@@ -673,8 +681,10 @@ class IrsdkTelemetry:
         try:
             sessions=(get('SessionInfo') or {}).get('Sessions') or []
             want=get('SessionNum')
-            row=next((r for r in sessions if r.get('SessionNum')==want),
-                     sessions[-1] if sessions else None)
+            # 审计 T08：会话切换瞬间 SDK 的 SessionInfo 可能还没刷新，
+            # 此时回退到「最后一场」等于拿上一场的数据冒充本场。
+            # 精确匹配不到就保持未知。
+            row=next((r for r in sessions if r.get('SessionNum')==want), None)
             if row:s.track_rubber=row.get('SessionTrackRubberState')
         except Exception:pass
         modified=driver.get('DriverSetupIsModified')
@@ -724,8 +734,9 @@ class IrsdkTelemetry:
         """
         sessions = (ir["SessionInfo"] or {}).get("Sessions") or []
         want = ir["SessionNum"]
-        row = next((r for r in sessions if r.get("SessionNum") == want),
-                   sessions[-1] if sessions else None)
+        # 审计 T08：精确匹配不到就不补，避免把上一场的名次/圈速/胶量
+        # 填进新会话（跨场串数据的根源）。
+        row = next((r for r in sessions if r.get("SessionNum") == want), None)
         results = (row or {}).get("ResultsPositions") or []
         if not results:
             return
@@ -772,9 +783,11 @@ class IrsdkTelemetry:
                     positions[idx] = pos
                 got_positions += 1
             cpos = result.get("ClassPosition")
-            if isinstance(cpos, int) and not isinstance(cpos, bool) and cpos > 0 \
-                    and not _positive(class_positions[idx]):
-                class_positions[idx] = cpos
+            # 审计 T03：iRacing 结果页的 ClassPosition 是零基（0 = 组别第一），
+            # 旧代码按一基直接写，导致组别名次整体偏一位、首名被丢。
+            if isinstance(cpos, int) and not isinstance(cpos, bool) \
+                    and 0 <= cpos < 1000 and not _positive(class_positions[idx]):
+                class_positions[idx] = cpos + 1
             fast = result.get("FastestTime")
             if _positive(fast) and not _positive(best_laps[idx]):
                 best_laps[idx] = fast

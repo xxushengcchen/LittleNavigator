@@ -744,6 +744,13 @@
   // 不接受任何覆盖参数（旧 GET 会 405）。列表只放内存，key 永远不进 DOM。
   // 拉取失败不阻塞手填：下拉收起，输入框照常可用。
   var aiModelCache = null;
+  // F06：每次切换服务商/改接口地址就作废在途的模型列表请求，
+  // 旧响应回来时既不能覆盖新服务商的下拉，也不能改它的缓存。
+  var aiModelsGeneration = 0;
+  function bumpAiModelsGeneration() {
+    aiModelsGeneration += 1;
+    aiModelCache = null;
+  }
 
   function aiModelsError(error) {
     var msg = String((error && error.message) || error || "").trim();
@@ -758,6 +765,26 @@
       return "拉取失败：连接超时或网络不可达" + tail;
     }
     return "拉取失败：" + (msg || "未知错误") + tail;
+  }
+
+  function aiDraftSnapshot(panel) {
+    // F03：全局档位开关会 save+loadSettings，整块面板按服务端值重绘。
+    // 重绘前把还没保存的地址/模型/密钥草稿抓下来，重绘后放回去。
+    var snap = {};
+    ["ira-ai-url", "ira-ai-model", "ira-ai-key"].forEach(function (id) {
+      var el = $("#" + id, panel);
+      if (el) { snap[id] = el.value; }
+    });
+    return snap;
+  }
+
+  function aiDraftRestore(panel, snap) {
+    Object.keys(snap || {}).forEach(function (id) {
+      var el = $("#" + id, panel);
+      if (el && typeof snap[id] === "string" && el.value !== snap[id]) {
+        el.value = snap[id];
+      }
+    });
   }
 
   function applyAiModelOptions(panel, current) {
@@ -1040,10 +1067,15 @@
         // 开：写 all；关：恢复进入页面时记下的档位（从 all 进来时回 whitelist）。
         var restore = globalAiRestoreMode || "whitelist";
         var patch = wantAll ? { ai: { mode: "all" } } : { ai: { mode: restore } };
+        // F03：切档位只该改 mode，不能顺手丢掉用户正在填、还没保存的
+        // 地址/模型/密钥草稿（loadSettings 会按服务端值重绘面板）。
+        var draft = aiDraftSnapshot(panel);
         globalSwitch.disabled = true;
         try {
           await save(patch, hint, "全局交给 AI");
           await loadSettings();
+          // 面板可能已经整体重绘，按 id 在新 DOM 里恢复草稿。
+          aiDraftRestore(document, draft);
         } catch (e) {
           globalSwitch.value = wantAll ? "0" : "1";
           reportError(e);
@@ -1060,14 +1092,14 @@
         if (p.url) $("#ira-ai-url", panel).value = p.url;
         if (p.model) $("#ira-ai-model", panel).value = p.model;
         // 换服务商后模型列表不再可信：收起下拉，回到手填。
-        aiModelCache = null;
+        bumpAiModelsGeneration();
         applyAiModelOptions(panel, $("#ira-ai-model", panel).value);
       });
     }
     var urlInput = $("#ira-ai-url", panel);
     if (urlInput) {
       urlInput.addEventListener("change", function () {
-        aiModelCache = null;
+        bumpAiModelsGeneration();
         applyAiModelOptions(panel, $("#ira-ai-model", panel).value);
       });
     }
@@ -1076,10 +1108,19 @@
       modelsBtn.addEventListener("click", async function () {
         var out = $("#ira-ai-models-out", panel);
         var input = $("#ira-ai-model", panel);
+        var gen = aiModelsGeneration;
+        var savedUrl = ($("#ira-ai-url", panel) || {}).value || "";
         modelsBtn.disabled = true;
         if (out) { out.textContent = "正在拉取模型列表…"; }
         try {
           var r = await api("/api/ai/models", {});
+          // F06：请求在路上时用户可能已经换了服务商或改了地址。
+          // 这时列表属于旧服务商，直接丢弃，不能污染当前下拉。
+          if (gen !== aiModelsGeneration ||
+              savedUrl !== (($("#ira-ai-url", panel) || {}).value || "")) {
+            if (out) { out.textContent = "服务商已经改过，这次拉取结果已丢弃；请重新拉取。"; }
+            return;
+          }
           var list = ((r && r.models) || []).map(function (m) {
             if (!m) { return ""; }
             if (typeof m === "string") { return m; }

@@ -4,7 +4,7 @@
 
 Windows 10 2004+ / Windows 11 x64 · 本地规则问答不需要 API Key · [源码公开 · 个人非商业免费](LICENSE)
 
-> **当前正式版 v1.6.1。** 从 v1.6.0 起，项目源码改用 PolyForm Noncommercial：个人、非商业用途免费，商业使用需另行取得[商业授权](COMMERCIAL-LICENSE.md)。v1.5.5 及更早版本仍按 MIT 授权。
+> **当前正式版 v1.6.2。** 从 v1.6.0 起，项目源码改用 PolyForm Noncommercial：个人、非商业用途免费，商业使用需另行取得[商业授权](COMMERCIAL-LICENSE.md)。v1.5.5 及更早版本仍按 MIT 授权。
 
 [⬇️ 下载最新版](https://github.com/xxushengcchen/LittleNavigator/releases/latest) · [完整使用指南](docs/guide/user-guide.md) · [三步开始使用](#三步开始使用) · [反馈问题](https://github.com/xxushengcchen/LittleNavigator/issues)
 
@@ -24,7 +24,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答不需要 API Key · [源
 2. 打开软件，在「语音输入」里选麦克风、采集键盘或方向盘上的说话键，然后开启监听。
 3. 进 iRacing，按住绑定键说「还剩多少时间」，松开等回答。
 
-更新内容与升级说明见 [v1.6.1 版本说明](docs/releases/v1.6.1.md)。
+更新内容与升级说明见 [v1.6.2 版本说明](docs/releases/v1.6.2.md)。
 
 ## 可以这样问
 
@@ -40,7 +40,7 @@ Windows 10 2004+ / Windows 11 x64 · 本地规则问答不需要 API Key · [源
 
 一次只问一个具体项目。全场第一名、赛道前后车、自己的车是三个不同对象；普通圈速问题默认读上一完整圈。赛段只到官方分段级，整份分段清单（「全部分段」「上一圈分段用时」）不会逐段念，但可以问具体某一段。
 
-![v1.6.1 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.5.0/dashboard.png)
+![v1.6.2 比赛控制台：最近回答、连接状态、核心遥测与进站服务读回。截图中的遥测为模拟数据。](docs/ui-preview/v1.5.0/dashboard.png)
 
 上图为真实软件界面，遥测使用明确标记的模拟数据。
 

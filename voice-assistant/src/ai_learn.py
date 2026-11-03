@@ -126,32 +126,42 @@ def validate_template(template: dict) -> str | None:
     return None
 
 
-def _eval_when(when: str, values: dict[str, float]) -> bool:
-    """对一条 when 子句求值。无法解析或字段缺失都当不匹配。"""
+def _eval_when(when: str, values: dict[str, float]) -> bool | None:
+    """对一条 when 子句求值：True / False / None（未知）。
+
+    审计 A08：以前「字段缺失」和「条件不成立」都返回 False，于是缺数据的
+    规则会被跳过，最后落到 ``when == "true"`` 的兜底分支——用缺条件的数据
+    说出一句确定的话。现在缺字段返回 None（未知），由 fill_template
+    整体放弃这个模板，而不是拿兜底句冒充结论。
+    """
     when = (when or "").strip()
     if when == "true":
         return True
     match = _WHEN_RE.match(when)
     if match is None:
-        return False
+        return None               # 解析不了 = 不知道，不是「不匹配」
 
     def resolve(token: str) -> float | None:
         token = token.strip()
         try:
             return float(token)
         except ValueError:
-            return values.get(token)
+            value = values.get(token)
+            return float(value) if isinstance(value, (int, float)) else None
 
     lhs = resolve(match.group("lhs"))
     if lhs is None:
-        return False
+        return None
     if match.group("rhs") is None:
         return float(lhs) != 0        # 极少数情况：只写了字段名
     rhs = resolve(match.group("rhs"))
     if rhs is None:
-        return False
+        return None
     if match.group("mul") is not None:
-        rhs = rhs * float(match.group("mul"))
+        try:
+            rhs = rhs * float(match.group("mul"))
+        except (TypeError, ValueError):
+            return None
 
     op = match.group("op")
     if op == ">=":
@@ -166,7 +176,7 @@ def _eval_when(when: str, values: dict[str, float]) -> bool:
         return abs(lhs - rhs) < 1e-9
     if op == "!=":
         return abs(lhs - rhs) >= 1e-9
-    return False
+    return None
 
 
 def fill_template(template: dict, ctx: dict) -> str | None:
@@ -175,7 +185,11 @@ def fill_template(template: dict, ctx: dict) -> str | None:
         return None
     values = _flatten_values(ctx)
     for rule in template["rules"]:
-        if not _eval_when(rule["when"], values):
+        matched = _eval_when(rule["when"], values)
+        if matched is None:
+            # 这条分支需要的字段读不到：不能确定该不该说，整份模板放弃。
+            return None
+        if not matched:
             continue
         say = rule["say"]
         placeholders = _PLACEHOLDER_RE.findall(say)
@@ -265,7 +279,11 @@ class LearnStore:
         answer = (record or {}).get("answer") or ""
         if not question.strip():
             return "rejected"
-        if record.get("dynamic"):
+        dynamic = (record or {}).get("dynamic")
+        if dynamic is not None and not isinstance(dynamic, bool):
+            # 说不清是不是动态的，就不能当静态知识存（审计 A05）。
+            return "rejected"
+        if dynamic is True:
             template = record.get("template")
             if not isinstance(template, dict):
                 return "rejected"
@@ -273,6 +291,10 @@ class LearnStore:
                 return "rejected"
             self.add_template(question, template)
             return "template"
+        if dynamic is None:
+            # 缺这个字段时保守处理：静态知识可能依赖会过期的数值，
+            # 除非明确标记 dynamic=false，否则不入库。
+            return "rejected"
         if not answer.strip():
             return "rejected"
         self.add_knowledge(question, answer, record.get("clip_path"))

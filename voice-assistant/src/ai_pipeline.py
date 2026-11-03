@@ -9,6 +9,10 @@
 """
 from __future__ import annotations
 
+import threading
+
+import collections
+
 import json
 import pathlib
 import re
@@ -17,7 +21,8 @@ import time
 from . import ai_constants as const
 from . import answer_checks, numbers as numbers_mod, race_context
 from .ai_learn import LearnStore, fill_template
-from .llm_engine import AdaptiveBreaker, LlmClient, LlmError
+from .llm_engine import (AdaptiveBreaker, LlmClient, LlmError,
+                         estimate_prompt_tokens)
 from .query_class import QueryKind
 from .tts_engine import TtsEngine, TtsError
 
@@ -86,7 +91,8 @@ class AiResult:
         self.reason = reason
         self.checks = checks or {}
         self.latency_ms = latency_ms
-        # 复盘入库用：动态型必须带合法模板，否则只能按知识型处理
+        # 复盘入库用：只有显式静态回答可作为知识；动态或未知回答
+        # 缺少模板时仍保留动态标记，由学习库拒绝缓存，不能降成静态。
         self.dynamic = dynamic
         self.template = template
         self.evidence = evidence or {}
@@ -152,6 +158,36 @@ def should_engage(kind: QueryKind, mode: str, rule_ok: bool,
     return mode == "full"
 
 
+class RateGate:
+    """进程内 60 秒滑窗限额（审计 A16）。
+
+    配置里一直有 ``ai.rate_limit_per_min``，但生产路径没有任何门禁，
+    模型可以被无限调用。这里在真正发请求前原子地占一个额度：
+    只统计**真正外发**的调用（学习库命中、未配置 AI、被取消都不扣）。
+    0 表示禁用自动外发。状态只在内存，不写用户配置。
+    """
+
+    WINDOW_S = 60.0
+
+    def __init__(self, limit_per_min, clock=None):
+        self.limit = max(0, int(limit_per_min))
+        self._clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._stamps: collections.deque[float] = collections.deque()
+
+    def acquire(self) -> bool:
+        now = self._clock()
+        with self._lock:
+            if self.limit <= 0:
+                return False
+            while self._stamps and now - self._stamps[0] >= self.WINDOW_S:
+                self._stamps.popleft()
+            if len(self._stamps) >= self.limit:
+                return False
+            self._stamps.append(now)
+            return True
+
+
 class AiPipeline:
     """把分类、学习库、模型、校验、TTS 串成一条链。
 
@@ -174,6 +210,9 @@ class AiPipeline:
             ai.get("max_answer_chars", const.MAX_ANSWER_CHARS_HARD),
             const.MAX_ANSWER_CHARS_HARD, "ai.max_answer_chars")
         self.max_input_tokens = const.MAX_INPUT_TOKENS_HARD
+        self.rate_limit_per_min = ai.get("rate_limit_per_min",
+                                         6)
+        self.rate_gate = RateGate(self.rate_limit_per_min)
         self.breaker = AdaptiveBreaker()
         self.store = store
         # 思考开关（v1.5.2）：配置层已校验 off/low；这里兜一层防坏值。
@@ -284,9 +323,20 @@ class AiPipeline:
         if self.breaker.should_skip():
             return done(AiResult(reason="模型连续超时，已暂停"))
 
+        # A18：system 提示词与问题本身也要计入输入预算。以前只按 ctx 裁剪，
+        # 一个很长的问题仍会整条发出去，总量远超上限。超预算就拒答，
+        # 不截断问题去猜用户想问什么。
+        budget = self.max_input_tokens - estimate_prompt_tokens(question)
+        if budget <= 0:
+            return done(AiResult(reason='问题太长，超出输入预算'))
         ctx = race_context.build(snap, laps, kind, question)
-        ctx = race_context.trim(ctx, self.max_input_tokens)
+        ctx = race_context.trim(ctx, budget)
+        if race_context.estimate_tokens(ctx) > budget:
+            return done(AiResult(reason='上下文与问题合计超出输入预算'))
 
+        # A16：真正外发前占额度；超限不发请求，也不消耗其它重试资源。
+        if not self.rate_gate.acquire():
+            return done(AiResult(reason="问得太频繁了：这一分钟的 AI 额度已经用完，稍后再问"))
         try:
             payload = self.client.ask(ctx, question)
         except LlmError as exc:
@@ -301,12 +351,35 @@ class AiPipeline:
         if not isinstance(payload, dict):
             return done(AiResult(reason=f"模型返回格式异常：{type(payload).__name__}"))
 
-        if payload.get("refused"):
-            return done(AiResult(reason=payload.get("reason") or "模型拒绝回答"))
-
-        text = (payload.get("answer") or "").strip()
+        # A15：字段类型先校验再使用。模型返回 answer=123 / refused="false"
+        # 这类东西时，后续 .strip() / 真值判断会走错分支，甚至抛异常。
+        refused = payload.get("refused")
+        if refused is not None and not isinstance(refused, bool):
+            return done(AiResult(reason="模型返回格式异常：refused 不是布尔值"))
+        if refused:
+            reason = payload.get("reason")
+            return done(AiResult(reason=(reason.strip() if isinstance(reason, str)
+                                         and reason.strip() else "模型拒绝回答")))
+        answer = payload.get("answer")
+        if answer is not None and not isinstance(answer, str):
+            return done(AiResult(reason="模型返回格式异常：answer 不是字符串"))
+        text = (answer or "").strip()
         if not text:
             return done(AiResult(reason="模型没有给出回答"))
+        data_used = payload.get("data_used")
+        if data_used is not None and not isinstance(data_used, list):
+            return done(AiResult(reason="模型返回格式异常：data_used 不是列表"))
+        dynamic = payload.get("dynamic")
+        if dynamic is not None and not isinstance(dynamic, bool):
+            return done(AiResult(reason="模型返回格式异常：dynamic 不是布尔值"))
+        template = payload.get("template")
+        if template is not None and not isinstance(template, dict):
+            return done(AiResult(reason="模型返回格式异常：template 不是对象"))
+        confidence = payload.get("confidence")
+        if confidence is not None and (isinstance(confidence, bool)
+                                       or not isinstance(confidence, (int, float))
+                                       or confidence != confidence):
+            return done(AiResult(reason="模型返回格式异常：confidence 不是有限数值"))
 
         ok, checks = answer_checks.run_all(payload, ctx, question,
                                            self.max_answer_chars)
@@ -314,11 +387,13 @@ class AiPipeline:
             return done(AiResult(reason="校验未通过：" + checks.get("reasons", ""),
                                  checks=checks, evidence={'answer': text, 'context': ctx}))
 
-        template = payload.get("template")
+        # A05：模板决定能否复用，不决定答案是否依赖会过期的数据。
+        # 缺失/null dynamic 也不能经 engine 的 bool() 变成静态知识；
+        # 当前已校验文字仍可显示，但没有明确动态声明时不接纳模板。
         result = AiResult(
             ok=True, text=text, source="model", checks=checks,
-            dynamic=bool(payload.get("dynamic")) and isinstance(template, dict),
-            template=template if isinstance(template, dict) else None)
+            dynamic=dynamic is not False,
+            template=template if dynamic is True else None)
         return speak(result)
 
     # ------------------------------------------------------------------
@@ -336,7 +411,18 @@ class AiPipeline:
         filled = fill_template(row.get("template") or {}, ctx)
         if filled is None:
             return None           # 填不出来就退回模型，不要播半句
-        return AiResult(ok=True, text=filled, source="learn")
+        # 审计 A07：学习库模板是「以前某次回答」的复现，同样可能编数字、
+        # 报长度或说出危险内容。以前它直接返回、完全绕过了三道闸；
+        # 现在和模型答案走同一套检查，不通过就退回模型重新回答。
+        ok, checks = answer_checks.run_all(
+            {"answer": filled, "data_used": []}, ctx, question,
+            self.max_answer_chars)
+        if not ok:
+            return None
+        # 再次复盘学习答案时也必须保留原模板，不能将本次填入的
+        # 遥测数值重新写成固定知识。
+        return AiResult(ok=True, text=filled, source="learn", checks=checks,
+                        dynamic=True, template=row.get("template"))
 
     def _expire(self, result: AiResult, reason: str) -> None:
         result.ok = False

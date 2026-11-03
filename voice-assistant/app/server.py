@@ -29,6 +29,7 @@ import argparse
 import collections
 import io
 import json
+import os
 import pathlib
 import socketserver
 import sys
@@ -927,15 +928,44 @@ class Service:
         if local.exists():
             data = yaml.safe_load(local.read_text(encoding="utf-8")) or {}
         data = cfg_mod._merge(data, patch)
-        candidate = cfg_mod._merge(self.cfg, patch)
-        cfg_mod.validate(candidate)
+        # 用要落盘的那份数据合成完整配置并校验；通过后才允许碰磁盘
+        # （审计 S07：以前是先写文件、再 reload 才发现非法，坏配置就留在盘上了）。
+        # 保存的是覆盖层，运行态却必须和 load() 一样包含基础 YAML。
+        # 只把覆盖层交给 compose 会在调音量时丢掉基础配置里的模型、密钥、
+        # 设备等设置；磁盘重载又恢复它们，造成磁盘/运行态不一致。
+        base_path = pathlib.Path(self.cfg['_path'])
+        base_data = {}
+        if base_path.is_file():
+            base_data = yaml.safe_load(base_path.read_text(encoding='utf-8')) or {}
+        candidate = cfg_mod.compose(cfg_mod._merge(base_data, data), self.cfg_path)
         was_running = bool(self.listener and self.listener.running)
         restart = "ptt" in patch or "asr" in patch
         if restart and self.stop_listener().get("running"):
             return {"ok": False, "error": "监听尚未结束，配置未保存"}
-        tmp = local.with_suffix(".tmp")
-        tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
-        tmp.replace(local)
+        # 同目录唯一临时文件 + 原子替换：并发保存不会互相覆盖半截文件。
+        tmp = local.with_name(f"{local.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                           encoding="utf-8")
+            tmp.replace(local)
+        except Exception:
+            # 磁盘失败发生在安装候选配置之前；内存与旧文件均未提交。
+            # 如果为此次保存停了监听，须用原配置恢复，而不是悄悄留在关闭态。
+            if restart and was_running:
+                try:
+                    restored = self.start_listener()
+                    if not restored.get('running'):
+                        self.listener_err = (restored.get('error') or
+                                             '配置未保存，监听恢复失败，请手动重新开启')
+                except Exception:
+                    self.listener_err = '配置未保存，监听恢复失败，请手动重新开启'
+            raise
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
         # 热生效
         live = {}
         if "playback" in patch:
@@ -945,8 +975,12 @@ class Service:
                     live[mapped] = pb[key]
             if "enabled" in pb:
                 live["enabled"] = pb["enabled"]
-        # 写回内存配置，state() 立即可见
-        self.cfg = cfg_mod.load(self.cfg_path)
+        # 直接安装已经校验过的候选，不再 reload 一遍（reload 失败会让内存
+        # 与磁盘不一致，而磁盘此刻已经是对的）。
+        candidate["_path"] = self.cfg.get("_path")
+        candidate["_root"] = self.cfg.get("_root")
+        candidate["_local_path"] = str(local)
+        self.cfg = candidate
         self.asst.cfg = self.cfg
         switched = {}
         with self.asst._operation_lock:
@@ -968,6 +1002,24 @@ class Service:
 
 
 # ---------------------------------------------------------------------- HTTP
+
+def _token_matches(supplied, expected) -> bool:
+    """常数时间比较本机界面凭据，且不对非 ASCII 值抛异常。
+
+    审计 S10：``secrets.compare_digest`` 只接受纯 ASCII ``str``；
+    请求头按 latin-1 解码，一旦客户端塞进非 ASCII 字节（例如 ``X-Assistant-Token:
+    密钥``），比较会抛 TypeError，异常逃出错误处理变成 500 且打日志。
+    这里先统一编码成 bytes 再比较：类型不对一律按不匹配处理。
+    """
+    if not isinstance(supplied, str) or not isinstance(expected, str):
+        return False
+    try:
+        left = supplied.encode('utf-8', 'surrogateescape')
+        right = expected.encode('utf-8', 'surrogateescape')
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return secrets.compare_digest(left, right)
+
 
 class Handler(BaseHTTPRequestHandler):
     service: Service
@@ -1223,15 +1275,55 @@ class Handler(BaseHTTPRequestHandler):
         if host not in allowed or (origin and origin != f"http://{host}"):
             self._json({"error": "仅允许当前本机界面访问"}, 403)
             return False
-        if mutation and not secrets.compare_digest(self.headers.get("X-Assistant-Token", ""), self.service.api_token):
+        if mutation and not _token_matches(self.headers.get("X-Assistant-Token", ""), self.service.api_token):
             self._json({"error": "请求缺少有效的本机界面凭据"}, 403)
             return False
         return True
 
 
 class Server(ThreadingHTTPServer):
+    """有界的本机 HTTP 服务。
+
+    审计 S04：ThreadingHTTPServer 默认来一个连接起一个线程、socket 也没有
+    读超时。本机任意进程不停开连接就能把线程数堆到耗尽内存，慢速滴字节的
+    连接还能把线程永久占住。这里做三件事：
+      · 活跃连接数用信号量封顶，取不到槽位直接关连接（不派生线程）；
+      · 每个连接设 socket 空闲超时，慢客户端会被断开；
+      · 线程收尾（含异常）时归还槽位。
+    """
+
     daemon_threads = True
     allow_reuse_address = True
+    max_connections = 32
+    request_idle_timeout_s = 5.0
+
+    def __init__(self, *args, **kwargs):
+        self._slots = threading.BoundedSemaphore(self.max_connections)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.close()
+            except OSError:
+                pass
+            return
+        try:
+            request.settimeout(self.request_idle_timeout_s)
+        except (OSError, AttributeError):
+            # 真实 socket 一定有 settimeout；测试替身可能没有，不影响其余逻辑。
+            pass
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 def main(argv: list[str] | None = None) -> int:

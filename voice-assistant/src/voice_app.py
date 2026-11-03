@@ -19,6 +19,20 @@ from .engine import Assistant
 from .listener import PttListener
 
 
+def _close_quietly(asst) -> None:
+    """关闭引擎资源；清理失败只提示，不改变退出码、也不掩盖原始异常。
+
+    审计 R13：以前只有正常走完 PTT 的路径会 close()，--wav、设备错误、
+    初始化后任何早退或抛异常的地方都会把监听线程与日志句柄留在进程里。
+    """
+    if asst is None:
+        return
+    try:
+        asst.close()
+    except Exception as exc:          # noqa: BLE001
+        print(f"⚠ 关闭资源时出错（不影响退出）：{exc}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     cfg_mod.fix_console_encoding()
     ap = argparse.ArgumentParser(description=__doc__,
@@ -76,6 +90,13 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         print(f"✗ 语音包读不到：{exc}")
         return 2
+    try:
+        return _run_with_assistant(asst, cfg, args, model, threads)
+    finally:
+        _close_quietly(asst)
+
+
+def _run_with_assistant(asst, cfg, args, model, threads) -> int:
     for line in asst.info_lines():
         print(line)
     if asst.tel_warn:

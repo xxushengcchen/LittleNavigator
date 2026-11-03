@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+import copy
 import math
 import os
 import shutil
@@ -227,15 +228,34 @@ def _clamp_ai(cfg: dict) -> None:
 
 
 
+def _finite_number(value) -> bool:
+    """是不是一个有限实数：排除 bool，int 直接算有限。
+
+    把 10**400 交给 math.isfinite 会抛 OverflowError，接口层当成 500
+    吐出去（审计 S11）。int 本身就是有限值，不必问浮点。
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
+
+
 def _merge(base: dict, override: dict) -> dict:
+    """合并配置层。必须深拷贝 base。
+
+    以前是 dict(base) 浅拷贝，用户没覆盖的嵌套段仍与 DEFAULTS 共享对象；
+    _apply_ai_env 再往 cfg["ai"]["api_key"] 写环境变量时，改的就是
+    DEFAULTS 本身——下一次 load() 会带上一次的环境密钥（审计 S09）。
+    """
     if not isinstance(base, dict) or not isinstance(override or {}, dict):
         raise ValueError("配置内容必须为对象")
-    out = dict(base)
+    out = copy.deepcopy(base)
     for k, v in (override or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _merge(out[k], v)
         else:
-            out[k] = v
+            out[k] = copy.deepcopy(v)
     return out
 
 
@@ -255,7 +275,23 @@ def load(path: str | pathlib.Path | None = None) -> dict:
         migrate_user_data(data_dir())
     if local.exists():
         user = _merge(user, yaml.safe_load(local.read_text(encoding="utf-8")) or {})
+    cfg = compose(user, path)
+    cfg["_path"] = str(p)
+    cfg["_root"] = str(p.parent)
+    cfg['_local_path'] = str(local)
+    return cfg
+
+
+def compose(user: dict, path: str | pathlib.Path | None = None) -> dict:
+    """把「用户层」合成为一份完整配置并**在返回前校验**。
+
+    load() 与保存配置共用这一条管线：保存时先用它验证要写盘的候选，
+    通过了才落盘——避免「先写坏文件、再 reload 报错」把用户配置卡死
+    （审计 S07）。返回的字典仍然不含 _path/_root/_local_path，
+    由调用方决定（保存流程不需要重读文件）。
+    """
     cfg = _merge(DEFAULTS, user)
+    managed = path is None and installed_mode()
     if managed:
         # 用户覆盖层不能把可写文件重新定向到只读安装目录。
         data = data_dir()
@@ -265,11 +301,9 @@ def load(path: str | pathlib.Path | None = None) -> dict:
         cfg['intent']['miss_log']['path'] = str(data / 'logs' / 'intent_miss.jsonl')
     _clamp_ai(cfg)
     _apply_ai_env(cfg)
-    cfg['_ai_learn_dir'] = str(_ai_learn_dir())
+    cfg['_ai_learn_dir'] = str(_ai_learn_dir(
+        pathlib.Path(path) if path is not None else None))
     validate(cfg)
-    cfg["_path"] = str(p)
-    cfg["_root"] = str(p.parent)
-    cfg['_local_path'] = str(local)
     return cfg
 
 
@@ -280,11 +314,18 @@ def _apply_ai_env(cfg: dict) -> None:
         cfg.setdefault("ai", {})["api_key"] = key
 
 
-def _ai_learn_dir() -> pathlib.Path:
+def _ai_learn_dir(origin: pathlib.Path | None = None) -> pathlib.Path:
     """学习库目录：安装版放用户数据目录，便携版放运行目录。
 
     绝不写进安装目录——那里是只读的，而且升级会覆盖。
+
+    审计 A17：显式 ``--config`` 是「换一套配置跑」的意思，但学习库以前
+    一律落在共享运行目录，两套配置会互相污染对方的学习数据。现在只要
+    配置来自显式路径，学习库就跟着那份配置走（同目录 ai_learn），
+    默认路径的行为保持不变。
     """
+    if origin is not None:
+        return origin.parent / "ai_learn"
     return data_dir() / "ai_learn"
 
 
@@ -319,7 +360,7 @@ def validate(cfg: dict) -> None:
     ]
     for section, key, lo, hi in checks:
         value = cfg[section][key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not lo <= value <= hi:
+        if not _finite_number(value) or not lo <= value <= hi:
             raise ValueError(f"{section}.{key} 必须在 {lo}–{hi} 范围内")
     for section, key in [("asr", "num_threads"), ("voice_pack", "cooldown")]:
         if not isinstance(cfg[section][key], int):
@@ -421,6 +462,19 @@ def _validate_ai(cfg: dict) -> None:
         raise ValueError("ai.global_stop_local 必须为布尔值")
     if ai.get("thinking_mode") not in THINKING_MODES:
         raise ValueError(f"ai.thinking_mode 必须是 {THINKING_MODES} 之一")
+    tts = ai.get("tts")
+    if not isinstance(tts, dict):
+        raise ValueError("ai.tts 必须是配置对象")
+    if tts.get("adapter") not in _TTS_ADAPTERS:
+        raise ValueError(f"ai.tts.adapter 必须是 {_TTS_ADAPTERS} 之一")
+    # 以前只校验 ai.timeout_s，TTS 自己的超时从未校验：NaN / 负数 / 字符串
+    # 都能写进覆盖层，下次启动才炸（审计 S07）。写盘前先挡住。
+    tts_timeout = tts.get("timeout_s")
+    if not _finite_number(tts_timeout) or not 0 < tts_timeout <= 2.5:
+        raise ValueError("ai.tts.timeout_s 必须是 0–2.5 之间的有限数")
+    sample_rate = tts.get("sample_rate")
+    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int)             or not 8000 <= sample_rate <= 192000:
+        raise ValueError("ai.tts.sample_rate 必须是 8000–192000 的整数")
     if ai.get("mode") not in _AI_MODES:
         raise ValueError(f"ai.mode 必须是 {_AI_MODES} 之一")
     for key in ("base_url", "api_key", "model"):
@@ -429,8 +483,7 @@ def _validate_ai(cfg: dict) -> None:
     for key in ("timeout_s", "max_tokens", "max_answer_chars",
                 "rate_limit_per_min"):
         value = ai.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                or not math.isfinite(value) or value < 0:
+        if not _finite_number(value) or value < 0:
             raise ValueError(f"ai.{key} 必须为非负数")
     if not isinstance(ai.get("whitelist_intents"), list) or \
             not all(isinstance(x, str) for x in ai["whitelist_intents"]):
