@@ -19,8 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 构建/工具链审计回归（stdlib 子进程 fixture）
-        run: python -m pytest voice-assistant/tests/test_audit_build_batch2.py -q
+      - name: 构建/工具链审计回归（stdlib unittest，不依赖 pytest）
+        run: python -m unittest voice-assistant.tests.test_audit_build_batch2 -v
       - name: README/文档链接（递归）
         run: python scripts/check_readme_links.py
       - name: 发行配置安全闸门（无内联密钥/危险开关）
@@ -47,9 +47,16 @@ jobs:
         run: python -m pytest tests -q
 
   secret-scan:
-    # 密钥扫描工作流保持独立（.github/workflows/secret-scan.yml 已有），这里
-    # 只做汇总占位，避免两个 workflow 重复配置同一检查。
-    name: 密钥扫描（见 secret-scan.yml）
+    # 审计复审：占位式 echo 让「ci 绿」不代表扫过密钥。这里真跑一次；
+    # 独立 secret-scan.yml 继续负责更严格的定时/全历史扫描。
+    name: 密钥扫描（全历史）
     runs-on: ubuntu-latest
     steps:
-      - run: echo "secret scan runs in secret-scan.yml"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 扫描全部 git 历史
+        run: python scripts/secret_scan.py --all

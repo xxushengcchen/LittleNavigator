@@ -24,17 +24,19 @@ from .race_context import ALLOWED_FIELDS
 # 允许的比较运算符。顺序无关，解析时按长度降序匹配避免 >= 被 > 吃掉。
 _OPS = (">=", "<=", "==", "!=", ">", "<")
 
+# 字段路径：审计复审 A19，数组叶子要能写成 segments.best_loss[0].delta_s。
+_FIELD_PATH = r"[A-Za-z_][A-Za-z0-9_]*(?:\[\d+\]|\.[A-Za-z_][A-Za-z0-9_]*)*"
 # when 子句必须整体匹配：左值 [op] 右值 或 true
 _WHEN_RE = re.compile(
     r"^\s*(?:true|"
-    r"(?P<lhs>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?P<lhs>" + _FIELD_PATH + r")\s*"
     r"(?P<op>>=|<=|==|!=|>|<)\s*"
-    r"(?P<rhs>[A-Za-z_][A-Za-z0-9_]*|-?\d+(?:\.\d+)?)"
+    r"(?P<rhs>" + _FIELD_PATH + r"|-?\d+(?:\.\d+)?)"
     r"(?:\s*\*\s*(?P<mul>-?\d+(?:\.\d+)?))?"
     r")\s*$"
 )
 
-_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_PLACEHOLDER_RE = re.compile(r"\{(" + _FIELD_PATH + r")\}")
 
 # 匹配阈值：规范化后字符相似度。0.82 是在「换个说法也能命中」与
 # 「别把不同问题混在一起」之间取的折中。
@@ -50,7 +52,12 @@ _DISABLE_AFTER_ERRORS = 2
 _GUARD_TARGET_WORDS = (
     "前车", "后车", "前轮", "后轮", "左前", "右前", "左后", "右后",
     "前面", "后面", "前方", "后方", "头车", "领跑", "对手", "队友",
-    "自己", "别人", "我", "你",
+    "别人",
+    # 审计复审：第一/二人称几乎出现在每个问题里，放进护栏会让
+    # 「我上一圈圈速」永远匹配不上库里的「上一圈圈速」，白多一次模型调用。
+    # 这里只保留真正会换对象的限定词。
+    "最快", "最慢", "最好", "最差", "平均", "本场", "上一场", "上场比赛",
+    "正赛", "排位", "练习", "本节", "本段", "上一段",
 )
 _GUARD_LAP_WORDS = (
     "上一圈", "下一圈", "上圈", "下圈", "这一圈", "那一圈", "这圈", "那圈",
@@ -115,24 +122,51 @@ def _flatten_values(ctx: dict) -> dict[str, float | str]:
             return
         values[key] = value
 
-    def walk(node, key: str | None = None) -> None:
+    def walk(node, key: str | None = None, *,
+             short: str | None = None, full: str = "") -> None:
+        """short 是叶子短名（含 [i] 索引），full 是带父路径的全名。
+
+        审计复审：只按叶子名去重会让「best_loss 有两段」整键丢弃，
+        模板永远算不出来。这里同时登记带索引的键（delta_s[0] /
+        segments.best_loss[0].delta_s），模板可以显式引用某一段；
+        不带索引的短名只在所有数组元素一致时才保留。
+        """
         if isinstance(node, dict):
             for child_key, value in node.items():
-                walk(value, str(child_key))
+                child = str(child_key)
+                walk(value, child,
+                     short=(f"{short}.{child}" if short else child),
+                     full=(f"{full}.{child}" if full else child))
         elif isinstance(node, (list, tuple)):
-            for value in node:
-                walk(value, key)
+            for index, value in enumerate(node):
+                walk(value, key,
+                     short=(f"{short}[{index}]" if short else f"{key}[{index}]"),
+                     full=(f"{full}[{index}]" if full else f"{key}[{index}]"))
         elif isinstance(node, bool) or node is None:
             return
-        elif isinstance(node, (int, float)) and key:
-            put(key, float(node))
-        elif isinstance(node, str) and key and key.endswith("_spoken"):
-            put(key, node)
+        elif isinstance(node, (int, float)) and short:
+            put(short, float(node))
+            if full and full != short:
+                put(full, float(node))
+            if key and key != short:
+                put(key, float(node))
+        elif isinstance(node, str) and short and short.endswith("_spoken"):
+            put(short, node)
+            if full and full != short:
+                put(full, node)
+            # 保留不带父路径的叶子名（模板里通常直接写 lap_last_spoken）。
+            if key and key != short:
+                put(key, node)
 
     walk(ctx)
     for key in ambiguous:
         values.pop(key, None)
     return values
+
+
+def _base_field(name: str) -> str:
+    """``segments.best_loss[0].delta_s`` -> ``segments``（用于白名单判断）。"""
+    return re.split(r"[\[.]", str(name or ""), maxsplit=1)[0]
 
 
 def validate_template(template: dict) -> str | None:
@@ -155,7 +189,11 @@ def validate_template(template: dict) -> str | None:
         return "rules 必须是非空列表"
 
     for name in params:
-        if not isinstance(name, str) or name not in ALLOWED_FIELDS:
+        # 审计复审 A19：允许带索引的路径（segments.best_loss[0].delta_s），
+        # 白名单按第一段判断，其余段仍受 _FIELD_PATH 正则约束。
+        if (not isinstance(name, str)
+                or not re.fullmatch(_FIELD_PATH, name)
+                or _base_field(name) not in ALLOWED_FIELDS):
             return f"params 含白名单外字段：{name!r}"
 
     has_fallback = False

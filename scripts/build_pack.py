@@ -57,14 +57,33 @@ def ffmpeg(*args: str) -> None:
         raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:400])
 
 
-def needs_convert(src: pathlib.Path, dst: pathlib.Path, force: bool) -> bool:
-    """MP3 比 WAV 新（或 WAV 缺失/强制）时必须重转：改文案或重合成后不能复用旧 WAV。"""
+def needs_convert(src: pathlib.Path, dst: pathlib.Path, force: bool,
+                  fingerprint: str | None = None) -> bool:
+    """MP3 比 WAV 新（或 WAV 缺失/强制/转档参数变了）时必须重转。
+
+    审计复审：只比 mtime 会让“换了 --rate/--sample-fmt/淡入淡出等参数”的
+    重跑复用旧 WAV，索引文字却是新的。这里额外比对转档参数指纹 sidecar。
+    """
     if force or not dst.exists():
         return True
+    if fingerprint is not None:
+        sidecar = pathlib.Path(str(dst) + ".fp")
+        try:
+            if not sidecar.exists() or sidecar.read_text(encoding="utf-8").strip() != fingerprint:
+                return True
+        except OSError:
+            return True
     try:
         return src.stat().st_mtime > dst.stat().st_mtime
     except OSError:
         return True
+
+
+def write_convert_fingerprint(dst: pathlib.Path, fingerprint: str) -> None:
+    try:
+        pathlib.Path(str(dst) + ".fp").write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def decode_mono(src: pathlib.Path, rate: int, tempo: float = 1.0):
@@ -314,6 +333,16 @@ def main() -> int:
         "fade_out_ms": fade_out_ms,
         "peak_ceiling_db": args.peak_ceiling_db,
     }
+    # 审计复审 Q07：转档参数也要进指纹，否则改了 rate/淡出/归一化参数重跑
+    # 仍会复用旧 WAV（索引文字却是新的）。
+    import hashlib as _hashlib
+    import json as _json
+    wav_fingerprint = _hashlib.sha256(_json.dumps({
+        "rate": args.rate,
+        "sample_fmt": args.sample_fmt,
+        "opts": wav_opts,
+        "frag_tempo": args.frag_tempo,
+    }, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:32]
 
     for item in items:
         mid = item["msgId"]
@@ -329,8 +358,9 @@ def main() -> int:
                 continue
             wav_name = f"{mid}_{idx:02d}.WAV"
             dst = pack_dir / wav_name
-            if needs_convert(src, dst, args.force):
+            if needs_convert(src, dst, args.force, wav_fingerprint):
                 to_pack_wav(src, dst, args.rate, args.sample_fmt, wav_opts, tempo)
+                write_convert_fingerprint(dst, wav_fingerprint)
                 converted += 1
             entries.append((mid, wav_name, text))
             covered[mid] = covered.get(mid, 0) + 1
@@ -343,8 +373,17 @@ def main() -> int:
 
     # 補上沒寫到的 msgId
     nulled = 0
-    if not args.no_null and (root / args.msgids).exists():
-        all_ids = [l.strip() for l in (root / args.msgids).read_text(encoding="utf-8").splitlines()
+    if not args.no_null:
+        msgids_path = root / args.msgids
+        # 审计复审：清单缺失时旧代码静默跳过 NULL 兜底并 exit 0，干净 clone
+        # 构建出的包会让 iRacing 对未写 msgId 回退英文。这里改为失败。
+        if not msgids_path.exists():
+            print(f"錯誤：找不到 msgId 清單 {msgids_path}（--msgids 可指定）。",
+                  file=sys.stderr)
+            print("      沒有 NULL 兜底就發包會讓未寫入的 msgId 在遊戲裡回退英文；"
+                  "若確定不需要，請顯式加 --no-null。", file=sys.stderr)
+            return 2
+        all_ids = [l.strip() for l in msgids_path.read_text(encoding="utf-8").splitlines()
                    if l.strip()]
         for mid in all_ids:
             if mid not in covered:

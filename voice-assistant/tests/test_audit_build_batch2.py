@@ -415,7 +415,10 @@ class Q13Q14InstallerTests(unittest.TestCase):
         iss = (PKG / "installer.iss").read_text(encoding="utf-8")
         self.assertIn("intents_examples.yaml", iss)
         self.assertIn("onlyifdoesntexist", iss)
-        self.assertIn("uninsnofile", iss)
+        # Inno Setup 没有 uninsnofile 这个 flag；想表达「卸载不删除」必须用
+        # uninsneveruninstall，否则 ISCC 直接编译失败（v1.6.3 构建时踩到）。
+        self.assertIn("uninsneveruninstall", iss)
+        self.assertNotIn("uninsnofile", iss)
 
     def test_installer_can_sync_spotter_pack_into_game_dir(self):
         iss = (PKG / "installer.iss").read_text(encoding="utf-8")
@@ -429,7 +432,8 @@ class Q13Q14InstallerTests(unittest.TestCase):
 class Q03Q06GateTests(unittest.TestCase):
     def test_ci_workflow_runs_real_regressions(self):
         wf = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        for token in ("check_readme_links.py", "test_audit_build_batch2.py",
+        # CI 必须先装依赖再跑 pytest；Q 组用 stdlib unittest（runner 不保证带 pytest）。
+        for token in ("check_readme_links.py", "test_audit_build_batch2",
                       "pytest", "check-config-only"):
             self.assertIn(token, wf)
 

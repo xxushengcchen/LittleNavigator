@@ -30,8 +30,13 @@ SEED_FILES = [
     'docs/releases/v1.6.0.md',
     'docs/releases/v1.6.1.md',
     'docs/releases/v1.6.2.md',
+    'RELEASE_NOTES.md',
 ]
+# 审计复审：固定清单漏掉新版本说明会让「链接全 PASS」名不副实；
+# 这里把 docs/releases 下所有说明都纳入，新增版本无需再改清单。
+_RELEASES_GLOB = 'docs/releases/*.md'
 MAX_DOCS = 400
+_TRUNCATED = False
 
 
 def slugs(text):
@@ -51,7 +56,10 @@ def main():
                     help='额外的起始文档（可重复；给 --root 做 fixture 测试时用）')
     args = ap.parse_args()
     root = args.root.resolve()
-    seeds = args.seed or SEED_FILES
+    seeds = args.seed or list(SEED_FILES)
+    if not args.seed:
+        seeds.extend(sorted(p.relative_to(root).as_posix()
+                            for p in root.glob(_RELEASES_GLOB)))
 
     queue = deque()
     for name in seeds:
@@ -92,6 +100,11 @@ def main():
     for tag in re.findall(r'<img\b[^>]*>', homepage):
         if not re.search(r'\balt="[^"]+"', tag):
             errors.append('README.md: image missing alt text')
+    if queue:
+        # 审计复审：被 MAX_DOCS 截断时不能打印 PASS——那等于“没查完就说全绿”。
+        print(f'FAIL: 文档数超过上限 {MAX_DOCS}，还有 {len(queue)} 份没检查')
+        return 1
+
     if errors:
         print('\n'.join(errors))
         return 1

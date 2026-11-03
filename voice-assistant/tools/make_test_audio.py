@@ -112,7 +112,16 @@ def main() -> int:
         intent, phrase, neg, voice, rate = job
         speaker, resource, instruct = VOICES[voice]
         tag = "n" if neg else "p"
-        name = f"{tag}__{safe_name(intent)}__{safe_name(phrase)[:24]}__{voice}__r{rate}.wav"
+        # 审计复审：文件名只截 24 字符且不含音色参数，改长句后半段或换
+        # speaker/resource/instruct 都会被当成 cached 复用。这里把完整
+        # 文案与参数哈希进文件名，缓存键就是“内容+参数”。
+        import hashlib as _hashlib
+        fingerprint = _hashlib.sha256(
+            "\x00".join([phrase, voice, str(speaker), str(resource),
+                          str(instruct), str(rate)]).encode("utf-8")
+        ).hexdigest()[:10]
+        name = (f"{tag}__{safe_name(intent)}__{safe_name(phrase)[:24]}"
+                f"__{voice}__r{rate}__{fingerprint}.wav")
         dst = out_dir / name
         if dst.exists():
             return {"file": name, "phrase": phrase, "intent": intent, "neg": neg,

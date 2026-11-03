@@ -1178,7 +1178,8 @@
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "未在 v1.6.1 内修复；保留为后续版本待办（审查证据仍在）。"
+      "resolution": "可核实部分已交付：docs/assets-provenance.md 给出随包模型/语音包的文件与目录 SHA-256、仓库内可核实的来源声明；仍需维护者提供四项外部证据（SenseVoice 上游版本与许可证全文、语音再分发授权、Spotter 原包授权、品牌展示许可）。因此状态保持 deferred，不把未核实内容写成结论。",
+      "partial_progress": true
     },
     {
       "id": "Q23",
@@ -1216,6 +1217,41 @@
     "deferred_ids": [
       "Q22"
     ],
-    "total_fixed": 98
+    "total_fixed": 98,
+    "q22_progress": "已交付可复现的素材指纹与来源清单（docs/assets-provenance.md），四项授权/版本凭据待维护者提供；Q22 仍为 deferred。",
+    "independent_reviews": {
+      "rounds": 2,
+      "reviewers": [
+        "AI/运行期复审",
+        "构建/前端复审"
+      ],
+      "verdict": "未发现阻断级 Critical 之外的发布阻断；共 2 Critical（Q23 闸门绕过）、8 Important、若干 Minor，已按条修入 v1.6.5 并补回归。",
+      "fixed_in_v1_6_5": [
+        "Q23 发行闸门（yes/on/TRUE/1、flow 写法、access_key 等）",
+        "Q07 语音包转档参数指纹 + 测试音频内容哈希命名",
+        "Q11 qc_audio --fix 成功仍退出 1",
+        "Q08 msgids 缺失静默跳过 NULL",
+        "Q03 CI 未装 pytest / secret-scan 占位",
+        "Q16 链接检查漏版本说明与截断后仍 PASS",
+        "A06 最快/最慢护栏、代词导致漏命中",
+        "A09 复盘标记的假成功/误报错误",
+        "A10 单位校验 fail-open",
+        "A12 取消后 Overlay 停在思考中/旧答案",
+        "A19 数组模板只对单元素有效",
+        "R01 录音异常后状态卡住、投递后仍显示录音中",
+        "R05 wheel 延迟失败未上报",
+        "R14 立体声自检声道交织",
+        "F10 焦点恢复未转义用户可编辑 key"
+      ]
+    },
+    "known_limitations": [
+      "语音包实测为 24 kHz/16-bit/单声道（官方 1015 源），与 DEVELOPMENT.md 里「发行 16k」的表述不一致；audit_offline 默认按 16k 检查会报错。需要维护者确认发行规格后再统一文档或转档流程。",
+      "Q13 采用「只首次写入、升级不覆盖」策略：老用户的 intents_examples.yaml 不会自动获得新问法，也没有 merge 机制；需要产品决策后再做合并策略。",
+      "R01 的 stop()/start() 极端时序（worker 卡在 ASR/AI 超过 2 秒后立刻重启）仍可能出现两个消费者；需要引入 generation 令牌彻底收尾。",
+      "Q14 游戏目录同步只覆盖默认 iRacing 路径，Steam/自定义库未探测；安装器为 lowest 权限，写 Program Files 失败时提示手动复制。",
+      "F06 仍有小窗口：改了地址但未保存就点「拉取模型」，会按已保存地址返回并显示在新地址下。",
+      "A10 前提豁免只认比较/差距语境，「如果我能跑 82.0 秒」这类假设题可能被误拒（方向安全）。",
+      "tts_doubao 的待处理判定仍以文件名/存在性为主，未复用 telemetry 的缓存指纹；build_pack 的转档指纹已覆盖参数变化。"
+    ]
   }
 }

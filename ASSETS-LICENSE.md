@@ -22,7 +22,7 @@
 - pywebview、pythonnet、Microsoft WebView2、PySDL2/SDL2、拼音/繁简转换等依赖保留各自许可证。
 - 字体 Public Sans、JetBrains Mono 以 SIL Open Font License 1.1 分发，安装包保留对应 OFL 文件。
 
-完整清单与来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+完整清单与来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；随包模型与音频的版本指纹、来源声明以及仍待补的授权凭据，见 [docs/assets-provenance.md](docs/assets-provenance.md)。
 
 ## 品牌与赞助商标识
 

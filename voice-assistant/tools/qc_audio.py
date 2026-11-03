@@ -131,7 +131,9 @@ def main() -> int:
           f"缺失未处理 {len(missing)} 条")
     for r, text, score in again:
         print(f"  [{score:.2f}] {r['file']}  识别：{text!r}  期望：{r['phrase']!r}")
-    return outcome_exit(missing, bad, True, fix_failed, again or again_missing)
+    # 审计复审：修复前的 bad 列表已经处理过，不能再计入退出码；
+    # 只看“缺失未处理 / 修复失败 / 复检仍可疑”。
+    return outcome_exit(missing, [], True, fix_failed, again or again_missing)
 
 
 if __name__ == "__main__":

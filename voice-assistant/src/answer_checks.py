@@ -219,8 +219,17 @@ def _unit_matches(category: str, matched: list[tuple[str, float]]) -> bool:
         for name, fields in _UNIT_FIELD_CATEGORIES.items():
             if leaf in fields:
                 known.add(name)
+    # 审计复审：候选都不属于任何已知量纲时，旧实现直接放行（fail-open），
+    # 于是「还剩 3 圈」可以随便对上 segments.count 这类未映射字段。
+    # 带单位的数字属于最容易播错的类型，这里改为 fail-closed：
+    # 不能证明单位对得上就拒绝，让问题退回模型/规则而不是播错。
+    #
+    # 唯一例外：数字只出现在「圈号」字段上。圈号本身不是计时/计量值，
+    # 「还剩 12 秒」和「第 12 圈」本就是两回事，保持旧的宽容以避免误杀。
     if not known:
-        return True
+        leaves = {_leaf_name(path) for path, _ in matched}
+        if leaves and leaves <= {"lap"}:
+            return True
     return category in known
 
 

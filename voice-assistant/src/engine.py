@@ -129,7 +129,8 @@ class Assistant:
         try:
             return AiPipeline(cfg, store=store, out=self.out, player=self.player,
                               snapshot_provider=lambda: self.snapshot(),
-                              on_live=self._on_ai_answer)
+                              on_live=self._on_ai_answer,
+                              on_cancel=self._on_ai_cancel)
         except Exception as exc:   # noqa: BLE001
             print(f"  ⚠ AI 初始化失败：{exc}", file=self.out)
             return None
@@ -148,6 +149,10 @@ class Assistant:
     def set_heard(self, text: str) -> None:
         """记下最近一次听到的问题（Overlay 第一行）。"""
         self._live(heard=(text or "").strip())
+
+    def _on_ai_cancel(self) -> None:
+        """审计 A12：AI 关闭/切换导致在途回答作废时，Overlay 不能停在旧内容。"""
+        self._live(state="idle", answer="", error="AI 已关闭或切换，这条回答已取消")
 
     def _on_ai_answer(self, text: str) -> None:
         """AI 文案已生成、TTS 之前：先把答案写进 live。
@@ -190,10 +195,18 @@ class Assistant:
         """
         before = {"ai": self.ai is not None,
                   "car": bool(self.car and self.car.enabled)}
+        # 审计复审 A12：只在 AI 相关配置真的变化时才撤销在途请求。
+        # 以前改车/音量也会 ++epoch，正在生成的正常回答会被静默丢弃。
+        old_ai = (self.cfg or {}).get("ai") or {}
+        new_ai = (cfg or {}).get("ai") or {}
+        ai_keys = ("enabled", "mode", "model", "base_url", "api_key",
+                   "analysis_key", "preset", "tts", "global", "thinking")
+        ai_changed = any(old_ai.get(k) != new_ai.get(k) for k in ai_keys)
         self.cfg = cfg
-        # A12：关闭/切换 AI 时先撤销在途请求；旧实例的 handle 即使返回，
-        # 也不得再写 live、播 TTS 或覆盖 Overlay。
-        self._ai_epoch = getattr(self, "_ai_epoch", 0) + 1
+        if ai_changed:
+            # A12：关闭/切换 AI 时先撤销在途请求；旧实例的 handle 即使返回，
+            # 也不得再写 live、播 TTS 或覆盖 Overlay。
+            self._ai_epoch = getattr(self, "_ai_epoch", 0) + 1
 
         # AI：未启用时置 None，已启用时重建（模型/密钥可能也改了）
         try:
@@ -873,6 +886,9 @@ class Assistant:
         # A12：handle 内部已在写 live / 播放前检查过；这里兜住
         # 「handle 刚返回、用户恰好关闭 AI」的窗口——不写答案、不播 fallback。
         if ai_cancelled():
+            # 审计复审：取消分支只丢 rec 不够，live 若停在 thinking/旧答案
+            # 会一直挂到下一次提问。这里主动复位。
+            self._on_ai_cancel()
             rec.update({"ok": False, "ai_source": "refused", "ai_text": "",
                         "ai_checks": {"cancelled": "yes"},
                         "reason": "AI 已关闭或切换，在途回答已取消并丢弃",

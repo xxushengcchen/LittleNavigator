@@ -112,7 +112,12 @@ def main(argv: list[str] | None = None) -> int:
         audio = sd.rec(int(args.selftest * rate), samplerate=rate,
                        channels=channels, dtype="float32", device=device)
         sd.wait()
-        x = _trim_silence(np.asarray(audio).reshape(-1), rate)
+        raw = np.asarray(audio)
+        # 审计复审：立体声 reshape(-1) 会把左右声道交织成 2 倍长度的假波形，
+        # 与正式 PTT（listener 用按行取均值）不一致，自检必然识别失败。
+        if raw.ndim == 2 and raw.shape[1] > 1:
+            raw = raw.mean(axis=1)
+        x = _trim_silence(raw.reshape(-1), rate)
         if rate != 16000:
             from tools.audio_io import resample
             x = resample(x, rate, 16000)

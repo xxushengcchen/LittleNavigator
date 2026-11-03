@@ -393,6 +393,13 @@ class PttListener:
         while not self._stop.is_set() and (self._down() or self._analysis_down()):
             self._stop.wait(self.poll_s)
         while not self._stop.is_set():
+            # 审计复审 R05：wheel 的失败可能晚于构造时的等待才出现，
+            # 只在 _loop 开头查一次会留下「running=True 但按不出东西」。
+            late_err = getattr(self.wheel, "error", None)
+            if late_err:
+                self.error = late_err
+                print(f"✗ {late_err}", file=self.out)
+                return
             # 两个输入源共用一套录音管线，用 pressed() 区分是谁；
             # 同时按下时 PTT 优先——它是比赛中的主入口，AI 是补充。
             pressed = self._down
@@ -420,10 +427,16 @@ class PttListener:
                 audio = self._record_while(lambda: not pressed())
                 # 审计 R01：只投递，不在轮询线程里跑识别+回调。
                 self._work_q.put((audio, source))
+                # 审计复审：idle 只在 worker 的 finally 里设，录音结束到处理完
+                # 之间会一直显示“录音中”。投递后立刻转 thinking 更贴近实际。
+                self.state = "thinking"
             except Exception as exc:  # noqa: BLE001
                 self.error = str(exc)
                 print(f"✗ PTT 处理失败：{exc}", file=self.out)
                 self.stats["errors"] += 1
+                # 审计复审：异常时没有投递队列，worker 的 finally 不会跑，
+                # state 会永远停在 recording。这里必须自己复位。
+                self.state = "idle"
             finally:
                 self._capture_lock.release()
             # 超时或失败后必须等到松键；一次按住只产生一条录音。

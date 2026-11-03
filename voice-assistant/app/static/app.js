@@ -1971,23 +1971,33 @@
 
   // F10：图谱/矩阵每次选中都会 innerHTML 重建整棵树，焦点会掉回 BODY。
   // 重建后按选中身份找回同一节点/行/格子，键盘连续探索才不中断。
+  // 审计复审：intents_examples.yaml 是用户可编辑文件，key 里可能出现
+  // 引号/中括号；直接拼进选择器会抛 SyntaxError，必须转义。
+  function kbCssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(String(value));
+    }
+    return String(value).replace(/["\\\]\[]/g, "\\$&");
+  }
+
   function kbFocusSelection() {
     var panel = $('[data-view-panel="knowledge"]');
     if (!panel || !KB.selected) { return; }
     var key = kbSelectedKey(), kind = kbSelectedKind(), target = null;
     if (KB.mode === "matrix") {
       if (kind === "intent" && KB.category) {
-        target = panel.querySelector('[data-kb-cell="' + key + "|" + KB.category + '"]');
+        target = panel.querySelector('[data-kb-cell="' + kbCssEscape(key) + "|"
+                                    + kbCssEscape(KB.category) + '"]');
       }
       if (!target && kind === "intent") {
-        target = panel.querySelector('[data-kb-row="' + key + '"]');
+        target = panel.querySelector('[data-kb-row="' + kbCssEscape(key) + '"]');
       }
     }
     if (!target && kind === "intent") {
-      target = panel.querySelector('.kb-node[data-key="intent:' + key + '"]');
+      target = panel.querySelector('.kb-node[data-key="intent:' + kbCssEscape(key) + '"]');
     }
     if (!target && (kind === "field" || kind === "out")) {
-      target = panel.querySelector('.kb-node[data-key="' + KB.selected + '"]');
+      target = panel.querySelector('.kb-node[data-key="' + kbCssEscape(KB.selected) + '"]');
     }
     if (target && typeof target.focus === "function") { target.focus({ preventScroll: true }); }
   }

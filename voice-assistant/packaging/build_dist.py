@@ -44,14 +44,24 @@ class ReleaseConfigError(ValueError):
 _SAFE_SECRET_VALUES = frozenset({"", '""', "''", "null", "~", "None"})
 _FIELD_LINE = re.compile(r"(?s)^(\s*)([A-Za-z0-9_.-]+)\s*:\s*(.*?)\s*$")
 # 只有“字段名本身就是密钥”才拦：max_tokens / token_budget 这类计数不算。
-_SECRET_SUFFIXES = ("api_key", "apikey", "secret", "token", "password", "passwd")
+# 审计复审发现 access_key / app_key 这类常见云厂商字段名不在表里，补上；
+# 判定同时看“等于”和“以_结尾”，大小写/连字符/点号统一成下划线后再比。
+_SECRET_SUFFIXES = ("api_key", "apikey", "secret", "token", "password", "passwd",
+                    "access_key", "app_key", "secret_key", "private_key",
+                    "credential", "credentials")
+_SECRET_WORD = re.compile(r"(?i)(api_?key|access_?key|app_?key|private_?key|secret|token|passwd|password|credential)")
+# 这些是“计数/预算/键盘绑定”，名字里带 token/key 但不是密钥。
+_NON_SECRET_FIELD = re.compile(
+    r"(?i)(max_?tokens?|tokens?_(budget|limit|used)|token_?count|analysis_?key)")
 
 
 def _is_secret_field(name: str) -> bool:
     low = name.lower().replace("-", "_").replace(".", "_")
-    if low == "analysis_key":
+    if _NON_SECRET_FIELD.search(low):   # max_tokens / token_budget / 键盘绑定
         return False
-    return low in _SECRET_SUFFIXES or any(low.endswith("_" + s) for s in _SECRET_SUFFIXES)
+    if low in _SECRET_SUFFIXES or any(low.endswith("_" + s) for s in _SECRET_SUFFIXES):
+        return True
+    return bool(_SECRET_WORD.search(low))
 _DANGEROUS_SECTIONS = frozenset({"ai", "car_control"})
 
 
@@ -83,13 +93,56 @@ def sanitize_release_config(text: str) -> tuple[str, list[str]]:
             if value not in _SAFE_SECRET_VALUES and not value.startswith(("$", "${", "{{")):
                 leaked.append(m.group(2))
         if section in _DANGEROUS_SECTIONS:
-            sw = re.match(r"^(\s*)enabled:\s*(true|True)\s*(#.*)?$", line)
+            # PyYAML 把 yes/on/TRUE/1 都当 true，只认 true/True 会漏；
+            # 这里统一按布尔字面量匹配（含大小写）。
+            sw = re.match(r"^(\s*)enabled:\s*(?i:true|yes|on|1)\s*(?P<comment>#.*)?$", line)
             if sw and child_indent is not None and len(sw.group(1)) == child_indent:
-                comment = f"  {sw.group(3).strip()}" if sw.group(3) else ""
+                # 用命名分组，避免「非捕获组 + 可选注释组」导致组号漂移。
+                comment = f"  {sw.group('comment').strip()}" if sw.group('comment') else ""
                 out.append(f"{sw.group(1)}enabled: false{comment}")
                 warnings.append(f"{section}.enabled 已强制关闭（发行配置不允许默认开启）")
                 continue
         out.append(line)
+    # 审计复审：上面的逐行处理只是保注释的快速路径，不能作为唯一保证。
+    # 这里再用 YAML 解析复核一遍：流式写法（ai: {enabled: true}）、多行
+    # 密钥值、别名等都只有解析器才能可靠识别；仍未收敛的强制改掉再输出。
+    try:
+        import yaml
+        parsed = yaml.safe_load("\n".join(out)) or {}
+    except Exception:      # noqa: BLE001 - 解析不了就按原文本返回，交给下游报错
+        parsed = None
+    if isinstance(parsed, dict):
+        leftover: list[str] = []
+
+        def walk(node, path: str = "") -> None:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    key_text = str(key)
+                    full = f"{path}.{key_text}" if path else key_text
+                    if _is_secret_field(key_text) and isinstance(value, str) \
+                            and value.strip() not in _SAFE_SECRET_VALUES \
+                            and not value.startswith(("$", "${", "{{")):
+                        leftover.append(full)
+                    walk(value, full)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item, path)
+
+        walk(parsed)
+        if leftover:
+            raise ReleaseConfigError(
+                "发行配置包含内联密钥：" + ", ".join(sorted(set(leftover)))
+                + "。请改用 config.local.yaml 或环境变量。")
+        changed = False
+        for sec in _DANGEROUS_SECTIONS:
+            block = parsed.get(sec)
+            if isinstance(block, dict) and bool(block.get("enabled")) is True:
+                block["enabled"] = False
+                changed = True
+                warnings.append(f"{sec}.enabled 已强制关闭（发行配置不允许默认开启）")
+        if changed:
+            out = yaml.safe_dump(parsed, allow_unicode=True, sort_keys=False).splitlines()
+
     if leaked:
         raise ReleaseConfigError(
             "发行配置含未清空的内联密钥字段：" + "、".join(sorted(set(leaked)))
@@ -252,6 +305,15 @@ def main() -> int:
                    "COMMERCIAL-LICENSE.md", "TRADEMARK.md",
                    "INSTALLER-EULA.md", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(PROJ / notice, out_dir / notice)
+    # 审计 Q22：ASSETS-LICENSE 指向的素材追溯清单也要随包提供，
+    # 否则安装后那个相对链接是断的（用户看不到来源与指纹）。
+    provenance = PROJ / "docs" / "assets-provenance.md"
+    # 审计复审：这是 ASSETS-LICENSE 里引用的必需素材，缺了就是断链，
+    # 不能“有就复制、没有也发版”。
+    if not provenance.is_file():
+        raise SystemExit(f"缺少必需素材：{provenance}（ASSETS-LICENSE 引用它）")
+    (out_dir / "docs").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(provenance, out_dir / "docs" / "assets-provenance.md")
     if not args.no_assets:
         print("铺模型与语音包（几百 MB，慢一点）…")
         n1 = copy_tree(PROJ / "models" / "sense-voice", out_dir / "models" / "sense-voice")

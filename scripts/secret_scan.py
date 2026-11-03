@@ -125,7 +125,11 @@ def scan_text(text: str, path: str) -> list[tuple[str, str, str, int]]:
         value = match.group(2)
         if value in ALLOW_EXACT or PLACEHOLDER.match(value) or ALLOW_VALUE.match(value):
             continue
-        if "." in value:  # 代码属性访问（args.api_key / os.environ.get），不是字面量密钥
+        # 代码属性访问（args.api_key / os.environ.get）不是字面量密钥，可以跳过；
+        # 但 `abc.def.123456` 这种带数字的点分值更像密钥，必须继续扫。
+        if ("." in value
+                and not any(ch.isdigit() for ch in value)
+                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+", value)):
             continue
         if len(set(value)) < 5 or entropy(value) < 3.0:
             continue
@@ -249,6 +253,11 @@ def scan_all_refs() -> int:
                 text = data.decode("utf-8", "replace")
                 for path in sorted(paths_by_oid[_oid]):
                     findings.extend(scan_text(text, path))
+            # 审计复审：cat-file 提前结束/报错时旧代码照样 report() 并返回 0，
+            # 等于“没扫完也绿”。这里 fail-closed。
+            if proc.wait() != 0:
+                print("FAIL: git cat-file --batch 读取失败，扫描不完整", file=sys.stderr)
+                return 2
         return report(findings, scanned)
     finally:
         os.unlink(handle.name)

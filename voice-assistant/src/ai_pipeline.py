@@ -198,7 +198,8 @@ class AiPipeline:
     """
 
     def __init__(self, cfg: dict, store: LearnStore | None = None, out=None,
-                 player=None, snapshot_provider=None, on_live=None):
+                 player=None, snapshot_provider=None, on_live=None,
+                 on_cancel=None):
         import sys
 
         self.cfg = cfg
@@ -244,6 +245,9 @@ class AiPipeline:
         # 文案生成后、TTS 出声前通知引擎（Overlay 要在这时就能读到答案）。
         # 刻意做成回调而不是让流水线直接改引擎状态：这一层不认识 Overlay。
         self.on_live = on_live
+        # 审计复审 A12：取消发生在 TTS 合成期时 live 已经写了旧答案，
+        # 需要一个显式回调让上层把 Overlay 复位（不写旧答案、也不停在“思考中”）。
+        self.on_cancel = on_cancel
 
     # ------------------------------------------------------------------
     @property
@@ -311,9 +315,11 @@ class AiPipeline:
 
         def speak(result: AiResult) -> AiResult:
             result.checks['pre_tts_data_age_s'] = round(initial_age + time.monotonic() - started, 3)
+            cancel_notified = {"done": False}
             # 取消检查必须在写 Overlay / 出声之前：旧回答一旦写进 live，
             # 就会覆盖用户当前应该看到的内容（审计 A12）。
             if is_cancelled():
+                self._notify_cancel()
                 return done(self._mark_cancelled(result))
             stale = freshness()
             if stale:
@@ -327,6 +333,10 @@ class AiPipeline:
                 self._notify_live(result.text)
                 self._maybe_speak(result.text, result, before_play=freshness,
                                   cancelled=is_cancelled)
+                # 审计复审：取消可能发生在 TTS 合成期间，此时 live 已经写了
+                # 旧答案；取消后必须把 Overlay 复位，不能停在旧答案/思考中。
+                if result.checks.get("cancelled") or is_cancelled():
+                    self._notify_cancel()
             return done(result)
 
         # 已在取消状态的请求连模型都不该再发（关闭 AI 后才启动的旧任务）。
@@ -475,6 +485,15 @@ class AiPipeline:
         result.checks = {**result.checks, 'freshness': 'expired'}
         # 固定提示不引用遥测数值，不把过期回答或模板留给播放/学习路径。
         self._maybe_speak(result.text, result)
+
+    def _notify_cancel(self) -> None:
+        """把 Overlay 从“思考中/旧答案”复位到“本次回答已取消”。"""
+        if self.on_cancel is None:
+            return
+        try:
+            self.on_cancel()
+        except Exception:      # noqa: BLE001 - 界面提示失败不能影响主流程
+            pass
 
     def _notify_live(self, text: str) -> None:
         """把「答案已生成、即将出声」告诉引擎（Overlay 数据源）。

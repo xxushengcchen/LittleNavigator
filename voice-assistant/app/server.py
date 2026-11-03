@@ -768,12 +768,25 @@ class Service:
         if verdict == "ok":
             record = (self.asst.learn_candidate(entry_id) or {})
             kind = store.add_from_review(record)
+            # 审计复审：add_from_review 返回 rejected 时条目并没有入库，
+            # 旧代码照样回 ok:true，又是一次「假成功」。
+            if kind == "rejected":
+                # 保留 stored_as 供程序判断，同时 ok=False 让界面如实报错。
+                return {"ok": False, "stored_as": kind,
+                        "error": "这条回答不能入库（缺少模板或找不到对应问答）"}
             return {"ok": True, "stored_as": kind}
         # 审计 A09：mark() 没命中也会返回 False，旧代码却照样回 ok，
         # 界面显示「已标记」，学习库里什么都没变，自动禁用形同虚设。
+        # 审计复审：但“模型回答本来就不在学习库”是正常情况，不能当错误弹给用户；
+        # 只有连这条历史记录都找不到时才算无效请求。
         if not store.mark(entry_id, ok=(verdict != "bad")):
+            known = any(rec.get("review_id") == entry_id
+                        for rec in (getattr(self.asst, "history", []) or []))
+            if known:
+                return {"ok": True, "stored_as": "ignored",
+                        "note": "模型回答不在学习库里，本次标记只记录反馈"}
             return {"ok": False,
-                    "error": "这条回答不在学习库里：只有从学习库命中的回答才能标记"}
+                    "error": "这条回答不在复盘记录里，无法标记"}
         return {"ok": True}
 
     def ai_clear_learn(self) -> dict:
