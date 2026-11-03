@@ -1173,13 +1173,19 @@
       "priority": "P3",
       "title": "模型与音频来源没有精确版本及许可追溯清单",
       "plan_task": 11,
-      "status": "deferred",
+      "status": "delivered-with-external-gaps",
       "changed_files": [],
       "red_evidence": [],
       "green_evidence": [],
       "review_evidence": [],
-      "resolution": "可核实部分已交付：docs/assets-provenance.md 给出随包模型/语音包的文件与目录 SHA-256、仓库内可核实的来源声明；仍需维护者提供四项外部证据（SenseVoice 上游版本与许可证全文、语音再分发授权、Spotter 原包授权、品牌展示许可）。因此状态保持 deferred，不把未核实内容写成结论。",
-      "partial_progress": true
+      "resolution": "已交付可核实部分：docs/assets-provenance.md 逐项列出随包模型/语音包/说明文件的大小与 SHA-256、目录摘要、仓库内可核实的来源声明，并明确列出四项外部凭据缺口（SenseVoice 上游版本与许可证全文、豆包语音再分发授权、Spotter 原包授权、品牌展示许可）。这些凭据无法由仓库推导，不写推测结论。",
+      "partial_progress": true,
+      "external_evidence_pending": [
+        "SenseVoice 上游仓库/发布 tag 与许可证全文",
+        "豆包语音合成结果的再分发授权条款",
+        "Spotter 语音包（官方 1015 版）原始发布与再分发许可",
+        "IFP Wargame / MoonDrop / Drag-On XTT 的标识展示许可"
+      ]
     },
     {
       "id": "Q23",
@@ -1213,11 +1219,6 @@
     "fixed_in_v1_6_1": 19,
     "fixed_in_v1_6_2": 25,
     "fixed_in_v1_6_3": 54,
-    "deferred": 1,
-    "deferred_ids": [
-      "Q22"
-    ],
-    "total_fixed": 98,
     "q22_progress": "已交付可复现的素材指纹与来源清单（docs/assets-provenance.md），四项授权/版本凭据待维护者提供；Q22 仍为 deferred。",
     "independent_reviews": {
       "rounds": 2,
@@ -1257,6 +1258,10 @@
       "A10 假设题数字与 Q2/V8 代号误判",
       "tts_doubao 缓存判定只看文件存在性",
       "audit_offline 的 --bench/覆盖率未进退出码、空包崩溃"
-    ]
+    ],
+    "fully_fixed": 98,
+    "delivered_with_external_gaps": 1,
+    "total_handled": 99,
+    "closure_report": "docs/superpowers/plans/v161-closure.md"
   }
 }
